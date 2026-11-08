@@ -22,9 +22,9 @@ import { outgoingness } from './trip.js';
 export const XP_PER = 10;          // 一维攒满 10 点经验涨 1
 export const BASE_CAP = 80;        // 出生当天的单维上限（= 出生时单项最高可能值）
 export const GROWN_CAP = 95;       // 单维上限爬到顶是多少
-export const GROWN_DAYS = 14;      // 单维上限爬满要几天
-export const TOTAL_PER_WEEK = 10;  // 总量上限每周 +10（按天摊开，不再每 7 天跳一格）
-export const BIRTH_ROOM = 5;       // 出生总量是 200，上限从 205 起步：第一天就有地方长
+export const GROWN_DAYS = 42;      // 单维上限爬满要几天（慢一点：六周才到 95）
+export const TOTAL_PER_WEEK = 4;   // 总量上限每周 +4（按天摊开；一周大概长 1–2 点，不是想长多少长多少）
+export const BIRTH_ROOM = 3;       // 出生总量是 200，上限从 203 起步：第一天有一点地方长，但不多
 export const STABLE_DAYS = 3;      // 新性格要连续成立几天才转
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -57,8 +57,10 @@ export function freshGrowth(fish, day) {
 const sum = (pts) => ATTR_KEYS.reduce((s, k) => s + pts[k], 0);
 /**
  * 活了几天 → 总点数上限、单维上限。两条线都随年龄连续长：
- * 总量每天 +1.43（≈ 原来的每周 +10），单维 14 天从 80 爬到 95。
- * 出生当天总量上限 205，比出生值 200 多 5 点——第一天就有地方长，不是出生即封顶。
+ * 总量每周 +4（每天约 +0.57），单维 42 天从 80 爬到 95。
+ * 出生当天总量上限 203，比出生值 200 多 3 点——第一天有地方长，但不是出生即封顶。
+ * 故意让上限涨得比日常经验慢：一天正常活动能攒 1 点多经验，上限只放开 0.57，
+ * 所以成长是被上限卡着的，慢而稳；勤快只决定长哪一维，闲着她也不会掉队太多。
  */
 export function capsAt(ageDays) {
   const age = Math.max(0, Number(ageDays) || 0);
