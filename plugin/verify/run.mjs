@@ -62,7 +62,7 @@ ok(!/function\s+createElement|react\.production/i.test(clientOut), 'React 没被
 ok(clientOut.length < 400_000, 'client 产物体积', `${(clientOut.length / 1024).toFixed(1)} KB`);
 const pkg = JSON.parse(read('package.json'));
 ok(pkg.name === 'dsh-plugin-yushe' && pkg.dsh?.bundle?.patch && pkg.dsh?.client?.platform === 'web', 'package.json 的 dsh 声明齐全');
-ok(pkg.files.every((f) => existsSync(join(plugin, f))), 'files 白名单里的文件都在', pkg.files.filter((f) => !existsSync(join(plugin, f))).join(', '));
+ok(pkg.files.every((f) => existsSync(join(plugin, f.replace(/\/\*[^/]*$/, '')))), 'files 白名单里的文件都在（通配符看目录）', pkg.files.filter((f) => !existsSync(join(plugin, f.replace(/\/\*[^/]*$/, '')))).join(', '));
 
 /* ---------- 3. 宿主端行为 ---------- */
 section('宿主端');
@@ -1481,6 +1481,11 @@ section('发版');
   const pkgV = JSON.parse(read('package.json')).version;
   const hostV = (read('src/host/index.js').match(/export const VERSION = '([^']+)'/) || [])[1];
   ok(pkgV && pkgV === hostV, `版本号两处一致：package.json ${pkgV} / host VERSION ${hostV}`);
+  const PJ = JSON.parse(read('package.json'));
+  const iconFile = join(plugin, PJ.icon || '');
+  ok(PJ.icon && existsSync(iconFile) && statSync(iconFile).size <= 256 * 1024 && /\.(svg|png|jpe?g|webp)$/.test(PJ.icon) && PJ.files.some((f) => PJ.icon.endsWith(f)), `插件图标存在、进包、不超过 256KB（DSH 超过就不显示）：${PJ.icon}`);
+  const LZ = JSON.parse(read('locale/zh.json')), LEN = JSON.parse(read('locale/en.json'));
+  ok(PJ.exports['./locale/*.json'] && PJ.files.includes('locale/*.json') && /\u5927\u80a5\u9c7c/.test(LZ.meta.title) && LEN.meta.title, `插件详情页标题来自 locale：${LZ.meta.title}`);
   ok(JSON.parse(read('package.json')).name === 'dsh-plugin-yushe' && /name:\s*dsh-plugin-yushe/.test(read('cordis.patch.yml')), '包名和 cordis.patch.yml 里的插件名都是 dsh-plugin-yushe');
 }
 

@@ -2,7 +2,7 @@
 
 <img src="https://raw.githubusercontent.com/yuna78/dsh-plugin-yushe/main/docs/icon.png" alt="鱼社" width="128">
 
-# 鱼社 · YuShe
+# 鱼社 · 大肥鱼虚拟养成系统
 
 **点几下，就能养一条自己的大肥鱼。**
 
@@ -60,6 +60,11 @@ DeepSeek Harness（DSH）插件 · 可视化引导、一键配置，<br>孵一�
 ## 每位都有 16 个姿势
 
 看新闻时盘腿看平板、写日记时趴着写、在 DSH 帮你干活时敲小电脑；喂她零食会啃饼干、摸摸头会害羞；闲着的时候随机换姿势，心情不好会鼓起腮帮子，困了打哈欠。
+
+<div align="center">
+<img src="https://raw.githubusercontent.com/yuna78/dsh-plugin-yushe/main/docs/screenshots/poses.gif" alt="摸摸头会害羞，闲着自己换姿势" width="720">
+<br><sub>摸摸头会害羞，闲着的时候自己换姿势</sub>
+</div>
 
 <div align="center">
 <img src="https://raw.githubusercontent.com/yuna78/dsh-plugin-yushe/main/docs/screenshots/poses.webp" alt="河豚 · 严谨鱼的 16 个姿势" width="900">
