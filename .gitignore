@@ -1,0 +1,6 @@
+node_modules
+plugin/lib/
+plugin/game/
+*.tgz
+.DS_Store
+AGENTS.local.md

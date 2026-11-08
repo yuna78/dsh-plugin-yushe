@@ -1,0 +1,737 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>鱼社 · 领养</title>
+<!-- 插件版：由 plugin/scripts/build.mjs 从 plugin/src/game/index.html 拷到 plugin/game/，勿改产物 -->
+<link rel="stylesheet" href="./assets/font.css">
+<style>
+/* ===== 卡通 2D 游戏 UI：粗描边 + 硬投影 + 平涂 + 会弹 ===== */
+:root{
+  --ol:#2a2440; --cream:#fff7e6; --cream-2:#ffe9c2; --paper:#fffdf6;
+  --gold:#ffcf4a; --gold-d:#e9a21f; --pink:#ff7aa8; --pink-d:#e2507f; --blue:#46c2ff; --blue-d:#1f94d6;
+  --green:#6fd06a; --green-d:#3fa53e; --wood:#c9773a; --wood-d:#9c5424; --ink:#3a2f4d; --mute:#8b7f9c;
+  --N:#b8c4d0; --R:#46c2ff; --SR:#b57bff; --SSR:#ffc23a; --UR:#ff5fa8;
+  --game:"ZCOOL KuaiLe","Hiragino Maru Gothic ProN","Yuanti SC",sans-serif;
+  --body:"PingFang SC","Hiragino Sans GB",sans-serif;
+  --bounce:cubic-bezier(.34,1.56,.64,1);
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden;background:#7fd0f2;color:var(--ink);font:600 15px/1.55 var(--body);-webkit-font-smoothing:antialiased}
+#sea{position:fixed;inset:0;width:100%;height:100%;display:block}
+/* hidden 属性永远赢（之前 .walletrow / .gb 的 display 盖过了 hidden，存钱罐模式也露出「每天给」） */
+[hidden]{display:none!important}
+#ui{position:fixed;inset:0;pointer-events:none;user-select:none}
+#ui button,#ui input,#ui .hit,#ui details,#ui .panel,#ui .flip,#ui .s-reveal,#ui #dex,#ui #walletChip{pointer-events:auto}
+#walletChip{cursor:pointer}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none;padding:0}
+
+/* 描边字 */
+.ot{color:#fff;-webkit-text-stroke:6px var(--ol);paint-order:stroke fill;font-family:var(--game);letter-spacing:2px}
+
+/* 面板 */
+.panel{background:var(--cream);border:4px solid var(--ol);border-radius:24px;
+  box-shadow:inset 0 -7px 0 var(--cream-2),inset 0 3px 0 #fff,0 7px 0 var(--ol);position:relative}
+.ribbon{position:absolute;left:50%;top:-26px;transform:translateX(-50%);white-space:nowrap;
+  padding:6px 38px 8px;font:28px/1.2 var(--game);color:#fff;-webkit-text-stroke:5px var(--ol);paint-order:stroke fill;letter-spacing:3px;
+  background:var(--pink);border:4px solid var(--ol);box-shadow:inset 0 -5px 0 var(--pink-d),0 5px 0 var(--ol);
+  clip-path:polygon(0 0,100% 0,calc(100% - 16px) 50%,100% 100%,0 100%,16px 50%);border-radius:6px}
+.ribbon.blue{background:var(--blue);box-shadow:inset 0 -5px 0 var(--blue-d),0 5px 0 var(--ol)}
+
+/* 游戏按钮 */
+.gb{position:relative;display:inline-flex;white-space:nowrap;align-items:center;justify-content:center;gap:8px;
+  padding:10px 26px 14px;font:22px/1.2 var(--game);letter-spacing:3px;color:#fff;-webkit-text-stroke:5px var(--ol);paint-order:stroke fill;
+  background:var(--gold);border:4px solid var(--ol);border-radius:18px;
+  box-shadow:inset 0 -7px 0 var(--gold-d),inset 0 3px 0 rgba(255,255,255,.6),0 6px 0 var(--ol);
+  transition:transform .08s,box-shadow .08s}
+.gb:hover{transform:translateY(-2px);box-shadow:inset 0 -7px 0 var(--gold-d),inset 0 3px 0 rgba(255,255,255,.6),0 8px 0 var(--ol)}
+.gb:active{transform:translateY(5px);box-shadow:inset 0 -3px 0 var(--gold-d),0 1px 0 var(--ol)}
+.gb.pink{background:var(--pink);box-shadow:inset 0 -7px 0 var(--pink-d),inset 0 3px 0 rgba(255,255,255,.5),0 6px 0 var(--ol)}
+.gb.blue{background:var(--blue);box-shadow:inset 0 -7px 0 var(--blue-d),inset 0 3px 0 rgba(255,255,255,.5),0 6px 0 var(--ol)}
+.gb.green{background:var(--green);box-shadow:inset 0 -7px 0 var(--green-d),inset 0 3px 0 rgba(255,255,255,.5),0 6px 0 var(--ol)}
+.gb.plain{background:var(--paper);color:var(--ink);-webkit-text-stroke:0;box-shadow:inset 0 -6px 0 var(--cream-2),0 6px 0 var(--ol)}
+.gb.sm{font-size:17px;padding:7px 18px 10px;border-radius:14px}
+.gb.big{font-size:30px;padding:14px 40px 20px;border-radius:22px}
+.gb:disabled{filter:grayscale(1) brightness(.92);opacity:.7;cursor:not-allowed;transform:none}
+.gb .cnt{font-size:.7em;background:var(--ol);color:#fff;-webkit-text-stroke:0;border-radius:999px;padding:1px 8px;letter-spacing:0}
+
+/* ===== HUD ===== */
+#hud{position:absolute;z-index:10;left:0;right:0;top:0;display:flex;justify-content:space-between;align-items:flex-start;padding:14px 18px;gap:12px}
+.sign{display:flex;align-items:center;gap:10px;padding:6px 18px 10px 10px;background:var(--wood);border:4px solid var(--ol);border-radius:16px;
+  box-shadow:inset 0 -6px 0 var(--wood-d),inset 0 3px 0 rgba(255,255,255,.3),0 5px 0 var(--ol);transform:rotate(-2deg)}
+.sign svg{width:40px;height:40px}
+.sign b{font:30px/1 var(--game);color:#fff;-webkit-text-stroke:5px var(--ol);paint-order:stroke fill;letter-spacing:4px}
+.res{display:flex;gap:10px;align-items:center}
+.chipres{display:flex;align-items:center;gap:6px;height:42px;padding:0 14px 0 6px;background:var(--paper);border:4px solid var(--ol);border-radius:999px;box-shadow:0 4px 0 var(--ol);font:20px var(--game)}
+.chipres svg{width:30px;height:30px}
+.ibtn{width:52px;height:52px;display:grid;place-items:center;background:var(--paper);border:4px solid var(--ol);border-radius:16px;box-shadow:inset 0 -5px 0 var(--cream-2),0 5px 0 var(--ol);position:relative}
+.ibtn:active{transform:translateY(4px);box-shadow:0 1px 0 var(--ol)}
+.ibtn svg{width:30px;height:30px}
+.ibtn .ic{width:40px;height:40px;vertical-align:0}
+.tri{display:inline-block;width:0;height:0;margin-left:6px;border-top:6px solid transparent;border-bottom:6px solid transparent;border-left:9px solid currentColor;vertical-align:middle}
+/* 升降小箭头（别叫 .up：「她」面板里 UP 主的标签也叫 .up，撞了会把箭头画成白色胶囊） */
+.trend-up,.trend-dn{display:inline-block;width:12px;height:12px;vertical-align:-1px}
+.empty .ic.big{width:72px;height:72px;margin-bottom:6px}
+.nowtag{display:inline-block;margin-left:6px;padding:0 8px;font:12px var(--game);color:#fff;background:var(--pink,#ff7aa8);border:2px solid var(--ol);border-radius:999px}
+.ic{width:1.3em;height:1.3em;object-fit:contain;vertical-align:-.3em;display:inline-block;pointer-events:none}
+.qa .ic{width:26px;height:26px;margin-right:2px}
+.chipres .ic{width:30px;height:30px}
+.xg{width:22px;height:22px;display:block}
+.lifebar .ic{width:20px;height:20px;vertical-align:-5px}
+.her h4 .ic{width:20px;height:20px;vertical-align:-4px}
+.sch .ic{width:22px;height:22px}
+.papp .ic{width:30px;height:30px;display:block;margin:0 auto 2px}
+.moodfx .ic{width:40px;height:40px}
+.ibtn .lbl{position:absolute;bottom:-20px;left:50%;transform:translateX(-50%);font:12px var(--game);color:#fff;-webkit-text-stroke:3px var(--ol);paint-order:stroke fill;white-space:nowrap;pointer-events:none}
+.ibtn .dot{position:absolute;top:-8px;right:-10px;font:13px/1 var(--game);background:var(--pink);color:#fff;border:3px solid var(--ol);border-radius:999px;padding:3px 6px}
+
+/* ===== 屏 ===== */
+.screen{position:absolute;inset:0;display:none}
+body[data-screen="pond"] .s-pond,body[data-screen="casting"] .s-casting,body[data-screen="reveal"] .s-reveal,
+body[data-screen="work"] .s-work,body[data-screen="homes"] .s-homes,body[data-screen="setup"] .s-setup,body[data-screen="pick"] .s-pick,body[data-screen="name"] .s-name,body[data-screen="done"] .s-done,body[data-screen="forge"] .s-forge,body[data-screen="home"] .s-home{display:flex}
+.dim{position:absolute;inset:0;background:rgba(14,40,70,.45);pointer-events:none}
+
+/* ===== 对话框（视觉小说式） ===== */
+#talk{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);width:min(980px,calc(100% - 32px));height:150px;display:none}
+body[data-screen="pond"] #talk,body[data-screen="casting"] #talk,body[data-screen="reveal"] #talk,body[data-screen="intro"] #talk,body[data-screen="hatch"] #talk{display:block}
+#talk .panel{position:absolute;inset:0 0 0 190px;padding:26px 28px 18px 34px;display:flex;align-items:center;gap:18px}
+#talk .who{position:absolute;top:-20px;left:24px;padding:3px 18px 6px;font:20px var(--game);color:#fff;-webkit-text-stroke:4px var(--ol);paint-order:stroke fill;
+  background:var(--blue);border:4px solid var(--ol);border-radius:12px;box-shadow:inset 0 -4px 0 var(--blue-d),0 4px 0 var(--ol);letter-spacing:3px}
+#line{flex:1;font:21px/1.6 var(--game);color:var(--ink);letter-spacing:1px;min-height:68px}
+#line::after{content:"";display:inline-block;margin-left:8px;width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-top:10px solid var(--pink);vertical-align:middle;animation:nudge .8s ease-in-out infinite}
+@keyframes nudge{50%{transform:translateY(4px)}}
+#talk .acts{display:flex;flex-direction:column;gap:12px;align-items:flex-end}
+#portrait{position:absolute;left:-6px;bottom:-16px;height:250px;filter:drop-shadow(0 6px 0 rgba(42,36,64,.35));transform-origin:50% 100%;pointer-events:none}
+.bob{animation:bob 2.4s ease-in-out infinite}
+@keyframes bob{50%{transform:translateY(-6px) rotate(-1deg)}}
+.boing{animation:boing .5s var(--bounce)}
+@keyframes boing{0%{transform:scale(.8,1.15)}60%{transform:scale(1.08,.94)}100%{transform:none}}
+.odds{font:13px var(--body);color:var(--mute);margin-top:6px;text-align:right}
+
+/* ===== 揭晓 ===== */
+.s-reveal{flex-direction:column;align-items:center;justify-content:flex-start;padding-top:52px}
+.rk{font:84px/1 var(--game);color:var(--rc,#fff);-webkit-text-stroke:9px var(--ol);paint-order:stroke fill;transform:rotate(-5deg);margin-bottom:6px;
+  text-shadow:0 7px 0 var(--ol);animation:stamp .6s var(--bounce) both}
+.rk small{font-size:30px;margin-left:8px;color:#fff}
+@keyframes stamp{0%{transform:scale(2.6) rotate(-12deg);opacity:0}100%{transform:rotate(-5deg);opacity:1}}
+.rk[data-r="UR"]{color:#fff;background:linear-gradient(90deg,#ff5fa8,#ffcf4a,#6fd06a,#46c2ff,#b57bff);-webkit-background-clip:text;background-clip:text}
+.s-reveal .card{width:290px;animation:cardIn .7s var(--bounce) .1s both}
+@keyframes cardIn{0%{transform:translateY(120px) scale(.4) rotate(12deg);opacity:0}100%{transform:none;opacity:1}}
+
+/* ===== 卡牌（游戏卡） ===== */
+.card{--rc:var(--N);position:relative;width:260px;aspect-ratio:5/7.2;border:5px solid var(--ol);border-radius:22px;background:var(--rc);padding:9px;
+  box-shadow:inset 0 -6px 0 rgba(0,0,0,.18),inset 0 4px 0 rgba(255,255,255,.45),0 8px 0 var(--ol);transform-style:preserve-3d;transition:transform .2s}
+.card[data-r="R"]{--rc:var(--R)} .card[data-r="SR"]{--rc:var(--SR)} .card[data-r="SSR"]{--rc:var(--SSR)} .card[data-r="UR"]{--rc:var(--UR)}
+.card .in{position:relative;height:100%;border:4px solid var(--ol);border-radius:14px;overflow:hidden;background:var(--paper);display:flex;flex-direction:column}
+.card .art{position:relative;flex:1;overflow:hidden;
+  background:repeating-conic-gradient(from 0deg at 50% 70%,color-mix(in srgb,var(--rc) 55%,#fff) 0 10deg,color-mix(in srgb,var(--rc) 30%,#fff) 10deg 20deg)}
+.card .art img{position:absolute;left:50%;bottom:-6%;height:112%;transform:translateX(-50%);filter:drop-shadow(0 4px 0 rgba(42,36,64,.25))}
+.card .plate{position:absolute;left:10px;right:10px;bottom:8px;text-align:center;padding:2px 8px 4px;font:22px/1.25 var(--game);color:#fff;-webkit-text-stroke:5px var(--ol);paint-order:stroke fill;letter-spacing:3px;
+  background:var(--rc);border:3px solid var(--ol);border-radius:10px;box-shadow:inset 0 -4px 0 rgba(0,0,0,.18),0 3px 0 var(--ol)}
+.card .gem{position:absolute;top:8px;left:8px;min-width:46px;height:30px;padding:0 8px;display:grid;place-items:center;font:17px var(--game);color:#fff;-webkit-text-stroke:4px var(--ol);paint-order:stroke fill;
+  background:var(--rc);border:3px solid var(--ol);border-radius:10px;box-shadow:0 3px 0 var(--ol)}
+.card .stars{position:absolute;top:10px;right:8px;display:flex;gap:1px;filter:drop-shadow(1.5px 0 0 var(--ol)) drop-shadow(-1.5px 0 0 var(--ol)) drop-shadow(0 1.5px 0 var(--ol)) drop-shadow(0 -1.5px 0 var(--ol))}
+.card .stars i{width:18px;height:18px;background:var(--gold);clip-path:polygon(50% 0,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%);filter:drop-shadow(0 0 0 var(--ol))}
+.card .meta{padding:6px 10px 8px;border-top:4px solid var(--ol);background:var(--paper)}
+.card .sp{font:12px/1.3 var(--body);color:var(--mute);text-align:center;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .st{display:grid;grid-template-columns:22px 1fr 24px;gap:3px 6px;align-items:center}
+.card .st span{width:20px;height:20px;border-radius:6px;background:var(--ink);color:#fff;display:grid;place-items:center;font:12px var(--game)}
+.card .st i{height:10px;border:2.5px solid var(--ol);border-radius:999px;background:#eadfcf;overflow:hidden;display:block}
+.card .st i b{display:block;height:100%;background:var(--blue)}
+.card .st i b.pk{background:var(--pink)}
+.card .st em{font:13px var(--game);font-style:normal;text-align:right}
+.card .st em.pk{color:var(--pink-d)}
+.card .shine{position:absolute;inset:0;pointer-events:none;border-radius:14px;opacity:0;mix-blend-mode:overlay;
+  background:linear-gradient(115deg,transparent 30%,rgba(255,255,255,.8) 45%,transparent 60%);background-size:250% 100%;animation:sweep 3s ease-in-out infinite}
+@keyframes sweep{0%{background-position:150% 0}60%,100%{background-position:-60% 0}}
+.card[data-r="SR"] .shine,.card[data-r="SSR"] .shine,.card[data-r="UR"] .shine{opacity:1}
+.card[data-r="UR"] .in{box-shadow:0 0 0 3px #fff inset}
+
+/* 卡背 */
+.flip{perspective:1000px;position:relative}
+.flip .inner{position:relative;transition:transform .6s var(--bounce);transform-style:preserve-3d}
+.flip.open .inner{transform:rotateY(180deg)}
+.flip .face{backface-visibility:hidden;-webkit-backface-visibility:hidden}
+.flip .front{position:absolute;inset:0;transform:rotateY(180deg)}
+.back{width:260px;aspect-ratio:5/7.2;border:5px solid var(--ol);border-radius:22px;padding:9px;background:var(--blue);box-shadow:inset 0 -6px 0 var(--blue-d),0 8px 0 var(--ol)}
+.back div{height:100%;border:4px solid var(--ol);border-radius:14px;display:grid;place-items:center;
+  background:repeating-linear-gradient(45deg,#7fdcff 0 14px,#5ccbf7 14px 28px)}
+.back b{width:96px;height:96px;border-radius:50%;background:var(--gold);border:5px solid var(--ol);box-shadow:inset 0 -6px 0 var(--gold-d),0 5px 0 var(--ol);
+  display:grid;place-items:center;font:52px var(--game);color:#fff;-webkit-text-stroke:5px var(--ol);paint-order:stroke fill}
+.flip .q{position:absolute;left:50%;bottom:-40px;transform:translateX(-50%);white-space:nowrap;font:18px var(--game);color:#fff;-webkit-text-stroke:4px var(--ol);paint-order:stroke fill;animation:nudge 1s ease-in-out infinite}
+.flip.open .q{display:none}
+
+/* ===== 面板屏通用 ===== */
+.s-work,.s-homes,.s-setup,.s-pick,.s-name,.s-done{align-items:center;justify-content:center;padding:84px 16px 20px}
+.big-panel{padding:40px 30px 24px;max-width:1040px;width:100%;max-height:calc(100vh - 110px);display:flex;flex-direction:column}
+.big-panel>.body{overflow:auto;min-height:0;padding:4px 6px 10px;margin:0 -6px}
+.peek{position:absolute;width:140px;left:-96px;bottom:-12px;pointer-events:none;transform:rotate(-4deg);z-index:2}
+.bubble{align-self:center;margin:0 0 14px;padding:5px 16px 7px;background:#fff;border:3px solid var(--ol);border-radius:999px;font:17px/1.4 var(--game);box-shadow:0 3px 0 var(--ol);text-align:center}
+.bubble::before{content:"鱼见未来本鱼：";color:var(--blue-d)}
+.bubble br{display:none}
+
+/* 挑一条 */
+.trio{display:flex;gap:28px;justify-content:center;margin:0 0 46px;padding-top:26px}
+.trio .flip{cursor:pointer;transition:transform .2s var(--bounce)}
+.trio .card,.trio .back{width:210px}
+.trio .card .plate{font-size:18px}
+.trio .card .st{gap:2px 5px} .trio .card .st span{width:18px;height:18px;font-size:11px}
+.trio .flip.sel{transform:translateY(-14px) rotate(-2deg) scale(1.05)}
+.trio .flip.sel::before{content:"就她了！";position:absolute;top:-22px;left:50%;transform:translateX(-50%) rotate(-4deg);z-index:3;white-space:nowrap;
+  font:20px var(--game);color:#fff;-webkit-text-stroke:5px var(--ol);paint-order:stroke fill;background:var(--pink);border:4px solid var(--ol);border-radius:12px;padding:0 12px 3px;box-shadow:0 4px 0 var(--ol)}
+.trio.has-sel .flip.open:not(.sel){filter:saturate(.5) brightness(.9);transform:scale(.95)}
+.skills{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-bottom:22px;min-height:20px}
+.skill{width:290px;text-align:left;padding:10px 14px 12px;background:var(--paper);border:4px solid var(--ol);border-radius:16px;box-shadow:inset 0 -5px 0 var(--cream-2),0 5px 0 var(--ol);transition:transform .15s var(--bounce)}
+.skill:hover{transform:translateY(-3px)}
+.skill.on{background:#fff2c2;box-shadow:inset 0 -5px 0 var(--gold),0 5px 0 var(--ol);transform:translateY(-3px)}
+.skill b{font:19px var(--game);letter-spacing:1px}
+.skill small{display:block;font:12.5px/1.55 var(--body);color:#6c6080;margin-top:2px}
+.tier{float:right;font:13px var(--game);color:#fff;-webkit-text-stroke:3px var(--ol);paint-order:stroke fill;padding:0 8px 2px;border:3px solid var(--ol);border-radius:8px}
+.bar{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;align-items:center}
+.label{font:16px var(--game);color:var(--mute);text-align:center;margin:-6px 0 12px;letter-spacing:2px}
+
+/* 起名 */
+.namegrid{display:grid;grid-template-columns:auto 1fr;gap:34px;align-items:start}
+.f{margin-bottom:14px}
+.f>b{display:block;font:18px var(--game);margin-bottom:6px;letter-spacing:2px}
+.f input{width:100%;padding:10px 16px;font:24px var(--game);letter-spacing:2px;color:var(--ink);background:#fff;border:4px solid var(--ol);border-radius:16px;box-shadow:inset 0 4px 0 #eee;outline:none}
+.f input:focus{border-color:var(--blue-d);box-shadow:inset 0 4px 0 #eee,0 0 0 4px rgba(70,194,255,.35)}
+.err{font:14px var(--game);color:var(--pink-d);min-height:20px;margin-top:4px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{padding:4px 14px 6px;font:17px var(--game);background:#fff;border:3px solid var(--ol);border-radius:999px;box-shadow:0 3px 0 var(--ol)}
+.chip:active{transform:translateY(3px);box-shadow:none}
+.chip.on{background:var(--blue);color:#fff;-webkit-text-stroke:4px var(--ol);paint-order:stroke fill}
+.chip.lock,.chip.on.lock{background:var(--pink)} .chip.lock::after{content:"";display:inline-block;width:14px;height:14px;margin-left:4px;vertical-align:-2px;background:url(./assets/icons/lock.webp) center/contain no-repeat}
+details{border:3px dashed var(--ol);border-radius:14px;background:#fff;margin:6px 0 16px}
+details summary{cursor:pointer;padding:8px 14px;font:16px var(--game)}
+details pre{margin:0;padding:0 14px 12px;max-height:180px;overflow:auto;white-space:pre-wrap;font:12.5px/1.65 var(--body);color:#5a4e6b}
+
+/* 上工 */
+.opt{display:flex;gap:12px;align-items:center;width:100%;text-align:left;margin-bottom:12px;padding:12px 16px 14px;background:#fff;border:4px solid var(--ol);border-radius:18px;box-shadow:inset 0 -5px 0 #eee,0 5px 0 var(--ol);transition:transform .15s var(--bounce)}
+.opt:hover{transform:translateY(-3px)}
+.opt.on{background:#e6f7ff;box-shadow:inset 0 -5px 0 var(--blue),0 5px 0 var(--ol)}
+.opt .ic{flex:none;width:48px;height:48px;border-radius:14px;border:3px solid var(--ol);display:grid;place-items:center;font:24px var(--game);color:#fff;-webkit-text-stroke:4px var(--ol);paint-order:stroke fill}
+.opt b{font:19px var(--game);letter-spacing:1px}
+.opt .rec{font:13px var(--game);color:#fff;-webkit-text-stroke:3px var(--ol);paint-order:stroke fill;background:var(--pink);border:3px solid var(--ol);border-radius:8px;padding:0 6px 1px;margin-left:6px}
+.opt small{display:block;font:13px/1.5 var(--body);color:#6c6080}
+.opt.warn small{color:#c0592e}
+.ok{display:none;margin:4px 0 12px;padding:10px 14px;border:4px solid var(--ol);border-radius:16px;background:#dff7d8;font:16px/1.55 var(--game);box-shadow:0 4px 0 var(--ol)}
+.ok.on{display:block} .ok code{font:12px "SF Mono",Menlo,monospace;background:#fff;border:2px solid var(--ol);border-radius:6px;padding:0 4px}
+.mock{font:12.5px var(--body);color:var(--mute);margin:-2px 0 12px}
+.mock button{text-decoration:underline;color:var(--blue-d);font-weight:700}
+.code{padding:8px 12px;border:3px dashed var(--ol);border-radius:12px;background:#fff;font:11px/1.5 "SF Mono",Menlo,monospace;color:#6c6080;word-break:break-all;margin-bottom:14px}
+
+#toast{position:fixed;left:50%;top:auto;bottom:28px;transform:translate(-50%,-20px) scale(.8);opacity:0;padding:6px 18px 9px;background:var(--paper);border:4px solid var(--ol);border-radius:999px;box-shadow:0 4px 0 var(--ol);font:18px var(--game);transition:all .25s var(--bounce);pointer-events:none}
+#toast.on{opacity:1;transform:translate(-50%,0) scale(1)}
+#skip{position:absolute;right:18px;bottom:180px;display:none}
+body[data-screen="casting"] #skip{display:inline-flex}
+
+/* 图鉴弹窗 */
+#dex{position:absolute;inset:0;z-index:20;display:none;align-items:center;justify-content:center;background:rgba(14,40,70,.5);pointer-events:auto}
+#dex.on{display:flex}
+#dex .panel{padding:44px 26px 24px;width:min(760px,calc(100% - 32px))}
+.dexgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.dexgrid div{aspect-ratio:3/4;border:4px solid var(--ol);border-radius:16px;overflow:hidden;position:relative;background:repeating-conic-gradient(#e7f7ff 0 10deg,#d3f0ff 10deg 20deg);box-shadow:0 4px 0 var(--ol)}
+.dexgrid img{position:absolute;left:50%;bottom:-4%;height:108%;transform:translateX(-50%);filter:brightness(0) opacity(.25)}
+.dexgrid .own img{filter:none}
+.dexgrid span{position:absolute;left:6px;right:6px;bottom:6px;text-align:center;font:15px var(--game);background:#fff;border:3px solid var(--ol);border-radius:8px}
+#dex .x{position:absolute;top:-18px;right:-18px}
+
+@media (max-width:900px){
+  #talk{height:auto;min-height:150px} #talk .panel{inset:auto 0 0 0;position:relative;padding:26px 18px 16px;flex-direction:column;align-items:stretch}
+  .gb.big{font-size:24px;padding:10px 28px 15px}
+  #portrait{height:150px;left:auto;right:6px;bottom:calc(100% - 34px);z-index:2} #line{font-size:17px;padding-right:70px} #talk .acts{flex-direction:row;justify-content:flex-end}
+  .trio{gap:10px} .trio .card,.trio .back{width:28vw} .trio .card .meta{display:none} .trio .card .plate{font-size:13px} .trio .card .stars{display:none}
+  .namegrid{grid-template-columns:1fr} .namegrid .card{width:180px;margin:0 auto}
+  .peek,.bubble{display:none} .rk{font-size:56px} .s-reveal .card{width:220px}
+  .sign b{font-size:22px} .chipres:not(#walletChip){display:none} #walletText small{display:none} .dexgrid{grid-template-columns:repeat(4,1fr);gap:8px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* ===== M2 插件版新增 ===== */
+#choices{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;max-width:420px}
+#choices .gb{min-width:0}
+#callBox{display:none;gap:8px;align-items:center}
+#callBox.on{display:flex}
+#callBox input{width:150px;padding:8px 12px;font:20px var(--game);border:4px solid var(--ol);border-radius:14px;outline:none}
+#talk.wait #line::after{display:none}
+#talk .tapnext{position:absolute;right:22px;bottom:10px;font:13px var(--game);color:var(--mute)}
+#closeX{position:absolute;top:14px;right:18px;z-index:5}
+body[data-screen="hatch"] #portrait{height:280px}
+/* 捏鱼台 */
+.s-forge{align-items:center;justify-content:center;padding:84px 16px 20px}
+.fgrid{display:grid;grid-template-columns:230px 1fr 1.2fr;gap:22px;align-items:start}
+.fgrid .card{width:220px}
+.fgrid h3{margin:0 0 8px;font:20px var(--game);letter-spacing:2px}
+.ftag{margin:12px 0 2px;text-align:center;font:28px var(--game);color:#fff;-webkit-text-stroke:6px var(--ol);paint-order:stroke fill;letter-spacing:3px}
+.ftagline{text-align:center;color:#6c6080;font:13px var(--body);margin-bottom:10px}
+.pool{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;padding:8px 12px;background:#fff;border:3px solid var(--ol);border-radius:14px;box-shadow:0 3px 0 var(--ol)}
+.pool b{font:22px var(--game)} .pool small{color:var(--mute);font:12px var(--body)}
+.stat{display:grid;grid-template-columns:32px 1fr 32px 38px 32px;gap:7px;align-items:center;margin-bottom:9px}
+.stat .k{width:32px;height:32px;border-radius:10px;background:var(--ink);color:#fff;display:grid;place-items:center;font:17px var(--game)}
+.stat .bar2{height:18px;border:3px solid var(--ol);border-radius:999px;background:#eadfcf;position:relative;overflow:hidden}
+.stat .bar2 i{position:absolute;inset:0 auto 0 0;background:var(--blue);transition:width .15s}
+.stat .bar2 i.hi{background:var(--pink)} .stat .bar2 i.lo{background:#a9b6c4}
+.stat .n{font:19px var(--game);text-align:center}
+.pm{width:32px;height:32px;border:3px solid var(--ol);border-radius:10px;background:#fff;font:19px var(--game);box-shadow:0 3px 0 var(--ol)}
+.pm:active{transform:translateY(3px);box-shadow:none}
+.stat .desc{grid-column:2/6;font:12px/1.5 var(--body);color:#6c6080;margin-top:-4px}
+.story{display:flex;flex-direction:column;gap:7px}
+.sf{display:grid;grid-template-columns:80px 1fr 32px;gap:8px;align-items:start;background:#fff;border:3px solid var(--ol);border-radius:14px;padding:5px 8px;box-shadow:0 3px 0 var(--ol)}
+.sf b{font:15px var(--game);padding-top:3px}
+.sf .v{min-height:22px;padding:3px 6px;border-radius:8px;outline:none;font:13px/1.5 var(--body)}
+.sf .v:focus{background:#fff6d8;box-shadow:inset 0 0 0 2px var(--gold)}
+.sf .v.edited{color:var(--pink-d)}
+.sf.locked{opacity:.45} .sf.locked .v{pointer-events:none}
+.dice{width:28px;height:28px;border:3px solid var(--ol);border-radius:9px;background:var(--gold);box-shadow:0 2px 0 var(--ol);font-size:14px}
+.dice:active{transform:translateY(2px);box-shadow:none}
+.donebox{text-align:center;max-width:620px}
+.donebox .card{margin:0 auto 16px}
+.donebox p{font:17px/1.7 var(--game);margin:8px 0}
+.donebox .hint2{font:13px/1.6 var(--body);color:var(--mute)}
+@media (max-width:980px){.fgrid{grid-template-columns:1fr}}
+
+/* 房间 */
+.s-home{flex-direction:column;align-items:center;justify-content:flex-start;padding-top:70px;pointer-events:none}
+.s-home .card{width:250px;pointer-events:auto}
+.status{margin-top:14px;padding:5px 16px 7px;font:17px var(--game);border:4px solid var(--ol);border-radius:999px;box-shadow:0 4px 0 var(--ol);background:#fff;pointer-events:auto}
+.status.work{background:#dff7d8} .status.rest{background:#ffe9c2}
+#homeActs{display:none;flex-direction:column;gap:10px;align-items:flex-end}
+body[data-screen="home"] #homeActs{display:flex}
+/* 配置 */
+#cfg{position:absolute;inset:0;z-index:20;display:none;align-items:center;justify-content:center;background:rgba(14,40,70,.5);pointer-events:auto}
+#cfg.on{display:flex}
+/* 面板本身不裁切（丝带和关闭按钮伸出顶边），只让里面的内容滚动 */
+#cfg .panel{padding:44px 14px 18px 26px;width:min(640px,calc(100% - 32px));max-height:calc(100vh - 110px);display:flex;flex-direction:column;overflow:visible;margin-top:30px}
+#cfg .cfgbody{flex:1;min-height:0;overflow:auto;padding:4px 12px 6px 0}
+#cfg .x{position:absolute;top:-18px;right:-18px}
+.cfgrow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;background:#fff;border:3px solid var(--ol);border-radius:14px;box-shadow:0 3px 0 var(--ol);margin-bottom:10px}
+.cfgrow b{font:17px var(--game)} .cfgrow small{display:block;font:12.5px/1.5 var(--body);color:var(--mute)}
+.fishrow{display:flex;align-items:center;gap:12px}
+.fishrow img{width:46px;height:46px;object-fit:cover;object-position:50% 10%;border:3px solid var(--ol);border-radius:12px;background:#e7f7ff}
+.fishrow.cur{background:#fff2c2}
+.cfgnote{font:12.5px/1.6 var(--body);color:var(--mute);margin-top:10px}
+
+.actgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.actgrid .gb{padding:6px 12px 9px;font-size:16px}
+.lifebar{margin-top:10px;display:flex;gap:10px;flex-wrap:wrap;justify-content:center;pointer-events:auto}
+.lifebar span{padding:3px 12px 5px;font:14px var(--game);background:#fff;border:3px solid var(--ol);border-radius:999px;box-shadow:0 3px 0 var(--ol)}
+.meter{display:inline-block;width:70px;height:10px;border:2.5px solid var(--ol);border-radius:999px;background:#eee;overflow:hidden;vertical-align:middle;margin-left:4px}
+.meter i{display:block;height:100%;background:var(--pink)} .meter.en i{background:var(--green)}
+/* 聊天 / 日记弹窗 */
+.modal{position:absolute;inset:0;z-index:20;display:none;align-items:center;justify-content:center;background:rgba(14,40,70,.5);pointer-events:auto}
+.modal.on{display:flex}
+.modal .panel{padding:44px 22px 18px;width:min(620px,calc(100% - 32px));height:min(620px,calc(100vh - 90px));display:flex;flex-direction:column}
+.modal .x{position:absolute;top:-18px;right:-18px}
+.msgs{flex:1;overflow:auto;display:flex;flex-direction:column;gap:10px;padding:4px 6px 10px}
+.msg{max-width:78%;padding:8px 12px 10px;border:3px solid var(--ol);border-radius:16px;font:15px/1.6 var(--body);box-shadow:0 3px 0 var(--ol)}
+.msg.me{align-self:flex-end;background:#e6f7ff;border-bottom-right-radius:4px}
+.msg.fish{align-self:flex-start;background:#fff;border-bottom-left-radius:4px;display:flex;gap:8px;align-items:flex-start}
+.msg.fish img{width:30px;height:30px;border-radius:50%;object-fit:cover;object-position:50% 12%;border:2px solid var(--ol);flex:none;background:#e7f7ff}
+.msg .t{white-space:pre-wrap}
+.chatin{display:flex;gap:8px;padding-top:8px}
+.chatin input{flex:1;padding:10px 14px;font:16px var(--body);border:3px solid var(--ol);border-radius:14px;outline:none}
+.diary{flex:1;overflow:auto;display:flex;flex-direction:column;gap:10px;padding:4px 6px 10px}
+.dentry{background:#fffdf3;border:3px solid var(--ol);border-radius:14px;padding:10px 14px;box-shadow:0 3px 0 var(--ol);background-image:repeating-linear-gradient(transparent 0 25px,#f1e6cc 25px 26px)}
+.dentry b{font:16px var(--game)} .dentry p{margin:4px 0 0;font:14px/26px var(--body);white-space:pre-wrap}
+.empty{font:14px var(--body);color:var(--mute);text-align:center;margin-top:30px}
+
+/* ===== 房间 v2：人物居中放大 + 右侧面板 + 底部输入 ===== */
+.s-home{padding:0;pointer-events:auto}
+.room{position:absolute;inset:0;display:grid;grid-template-columns:1fr 300px;grid-template-rows:auto 1fr auto;gap:0 16px;padding:78px 18px 16px}
+.nameplate{grid-column:1;grid-row:1;align-self:start;display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+.nameplate b{font:30px var(--game);color:#fff;-webkit-text-stroke:6px var(--ol);paint-order:stroke fill;letter-spacing:3px}
+.nameplate small{font:14px var(--game);padding:2px 10px 4px;background:#fff;border:3px solid var(--ol);border-radius:999px;box-shadow:0 3px 0 var(--ol)}
+.nameplate .lifebar{margin:0;justify-content:flex-start;width:100%}
+.stagewrap{grid-column:1;grid-row:2;position:relative;min-height:0;display:flex;align-items:flex-end;justify-content:center}
+.fishbig{height:min(64vh,560px);max-width:90%;object-fit:contain;filter:drop-shadow(0 8px 0 rgba(42,36,64,.25));position:relative;z-index:1;transform-origin:50% 100%}
+.floor-shadow{position:absolute;bottom:6px;left:50%;width:220px;height:26px;margin-left:-110px;border-radius:50%;background:rgba(42,36,64,.22);filter:blur(2px)}
+.bubble2{position:absolute;z-index:2;left:calc(50% + 70px);top:4%;max-width:min(380px,42%);padding:12px 16px 14px;background:#fff;border:4px solid var(--ol);border-radius:22px;box-shadow:0 5px 0 var(--ol);font:18px/1.6 var(--game);color:var(--ink);opacity:0;transform:scale(.8);transform-origin:0 100%;transition:opacity .2s,transform .25s var(--bounce)}
+.bubble2.on{opacity:1;transform:none}
+.bubble2::after{content:"";position:absolute;left:34px;bottom:-14px;width:22px;height:22px;background:inherit;border-right:4px solid var(--ol);border-bottom:4px solid var(--ol);border-bottom-right-radius:5px;transform:rotate(45deg)}
+.dots{display:inline-flex;gap:6px;padding:4px 2px}
+.dots i{width:9px;height:9px;border-radius:50%;background:var(--blue-d,#4a7bd0);animation:dot 1s infinite ease-in-out}
+.dots i:nth-child(2){animation-delay:.15s}.dots i:nth-child(3){animation-delay:.3s}
+@keyframes dot{0%,80%,100%{transform:translateY(0);opacity:.35}40%{transform:translateY(-7px);opacity:1}}
+.fishbig.ponder{animation:ponder 1.6s ease-in-out infinite;transform-origin:50% 100%}
+@keyframes ponder{0%,100%{transform:rotate(0)}25%{transform:rotate(-2deg) translateY(-3px)}75%{transform:rotate(2deg) translateY(-3px)}}
+@media (prefers-reduced-motion:reduce){.dots i,.fishbig.ponder{animation:none}}
+.bubble2.think{background:#f4f0ff}
+.side{grid-column:2;grid-row:1/3;padding:14px 14px 12px;display:flex;flex-direction:column;min-height:0}
+.tabs{display:flex;gap:6px;margin-bottom:10px}
+.tab{flex:1;padding:5px 0 7px;font:16px var(--game);background:#fff;border:3px solid var(--ol);border-radius:12px;box-shadow:0 3px 0 var(--ol)}
+.tab.on{background:var(--blue);color:#fff;-webkit-text-stroke:3px var(--ol);paint-order:stroke fill}
+.tabbody{flex:1;overflow:auto;padding:2px 2px 6px}
+.tl{display:grid;grid-template-columns:44px 1fr;gap:6px 8px;font:13px/1.5 var(--body);margin-bottom:8px}
+.tl i{font-style:normal;font:12px var(--game);color:var(--mute)}
+.sch{display:grid;grid-template-columns:28px 92px 1fr;gap:6px;align-items:center;padding:6px 8px;border-radius:10px;font:13px var(--body)}
+.sch.now{background:#fff2c2;border:2px solid var(--ol)}
+.sch b{font:13px var(--game)}
+.dock{grid-column:1/3;grid-row:3;padding-top:10px}
+.quick{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.qa{padding:5px 12px 7px;font:15px var(--game);background:#fff;border:3px solid var(--ol);border-radius:999px;box-shadow:0 3px 0 var(--ol)}
+.qa:hover{transform:translateY(-2px)} .qa:active{transform:translateY(2px);box-shadow:none}
+.qa.work{background:var(--gold)} .qa:disabled{opacity:.5}
+.inbar{display:flex;gap:8px}
+.inbar input{flex:1;padding:11px 16px;font:16px var(--body);border:4px solid var(--ol);border-radius:16px;outline:none;box-shadow:inset 0 3px 0 #eee}
+.inbar input:focus{border-color:var(--blue-d)}
+/* 手机 */
+.phone{width:330px;height:min(620px,calc(100vh - 80px));border:6px solid var(--ol);border-radius:40px;background:#1f1b33;padding:14px;box-shadow:0 10px 0 var(--ol);position:relative;display:flex;flex-direction:column}
+.phone::before{content:"";position:absolute;top:8px;left:50%;width:90px;height:16px;margin-left:-45px;border-radius:0 0 12px 12px;background:var(--ol)}
+.pscreen{flex:1;border-radius:28px;background:linear-gradient(180deg,#bfe9ff,#ffe3f1);overflow:auto;padding:30px 12px 12px}
+.papps{display:flex;gap:10px;justify-content:center;margin-bottom:12px}
+.papp{display:flex;flex-direction:column;align-items:center;gap:3px;font:12px var(--game)}
+.papp span{width:52px;height:52px;border-radius:16px;border:3px solid var(--ol);display:grid;place-items:center;font-size:26px;background:#fff;box-shadow:0 3px 0 var(--ol)}
+.papp.on span{background:var(--gold)}
+.pcard{background:#fff;border:3px solid var(--ol);border-radius:14px;padding:10px 12px;margin-bottom:10px;box-shadow:0 3px 0 var(--ol);font:13px/1.55 var(--body)}
+.pcard b{font:14px var(--game)} .pcard a{color:var(--blue-d)}
+#phoneM .x{position:absolute;top:-14px;right:-14px;z-index:2}
+@media (max-width:900px){.room{grid-template-columns:1fr}.side{display:none}.bubble2{left:auto;right:4%;max-width:56%}}
+.walletrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;font:14px var(--body)}.walletrow input{width:120px;padding:6px 8px;border:3px solid var(--ol);border-radius:10px;font:14px var(--body)}
+#walletModes{margin-top:8px}#walletModes .chip.on{background:var(--yellow,#ffcf4a)}
+.chipres.skew{background:#ffe1ec;font-size:15px}
+.chipres.broke{background:#ffd9d9}
+.schhead{margin:2px 0 8px;font:15px var(--game);color:var(--ink)}.schhead small{display:block;font:11.5px var(--body);color:var(--mute)}
+.drafts{margin-bottom:12px;padding:10px 12px;background:#fff6d6;border:3px solid var(--ol);border-radius:12px;box-shadow:0 3px 0 var(--ol)}.drafts h4{margin:0 0 6px;font:15px var(--game)}.drafts h4 .ic{width:22px;height:22px;vertical-align:-5px}.drafts .trust{display:block;margin:4px 0;font:12px var(--body);color:var(--mute)}
+.dcard{margin:8px 0;padding:8px 10px;background:#fff;border:2px solid var(--ol);border-radius:10px}.dcard b{font:13px var(--game)}.dcard a{font:12px var(--body);color:var(--blue-d)}.dcard textarea{display:block;width:100%;box-sizing:border-box;margin:6px 0;min-height:56px;padding:6px 8px;border:2px solid var(--ol);border-radius:8px;font:14px/1.6 var(--body);resize:vertical}.dacts{display:flex;gap:8px;justify-content:flex-end}
+.habits{display:grid;gap:8px;margin-top:10px}.hrow{display:flex;align-items:center;justify-content:space-between;gap:10px;font:14px var(--body)}.hrow.later{opacity:.45}.hrow .later-tag{margin-left:6px;font:11px var(--game);color:#fff;background:#8a94a6;border-radius:6px;padding:0 6px}
+.stepper{display:inline-flex;align-items:center;gap:6px}.stepper b{min-width:24px;text-align:center;font:16px var(--game)}.stepper button{width:30px;height:30px;border:3px solid var(--ol);border-radius:10px;background:#fff;font:18px/1 var(--game);cursor:pointer}.stepper button:disabled{opacity:.4}
+.hrow input[type=time]{padding:4px 6px;border:3px solid var(--ol);border-radius:10px;font:14px var(--body)}
+.report{padding:6px 4px}.report .rhint{margin:0 0 8px;font:14px/1.6 var(--body)}.report textarea{display:block;width:100%;box-sizing:border-box;min-height:120px;margin:8px 0;padding:8px 10px;border:3px solid var(--ol);border-radius:12px;font:14px/1.6 var(--body);resize:vertical}.report .dacts{align-items:center;justify-content:space-between}.report .dacts small{color:var(--mute);font:12px var(--body)}
+.followask{margin-top:10px;padding:10px 12px;background:#fff6e0;border:2px solid var(--ol);border-radius:12px}.followask p{margin:0 0 8px;font:14px/1.6 var(--body)}
+.hrow .knob .chip{font-size:15px;padding:3px 12px 5px}.hrow .knob .chip.custom{background:#fff6d6}
+.fine{margin-top:4px;font:13px var(--body)}.fine summary{cursor:pointer;font:15px var(--game)}.fine h4{margin:10px 0 4px;font:14px var(--game)}.fine .frow{display:flex;justify-content:space-between;gap:10px;padding:2px 0;border-bottom:1px dashed #d8dde6}.fine .frow i{font-style:normal;color:var(--mute)}
+.hrow input.uidin{width:150px;padding:4px 8px;border:3px solid var(--ol);border-radius:10px;font:14px var(--body)}
+.dmconv{margin:8px 0;padding:8px 10px;background:#fff;border:2px solid var(--ol);border-radius:10px}.dmconv.parent{background:#fff6e0}.dmconv>b{display:block;margin-bottom:4px;font:13px var(--game)}
+.dml{display:flex;align-items:flex-end;gap:6px;margin:4px 0}.dml span{max-width:78%;padding:5px 10px;border-radius:12px;font:14px/1.5 var(--body);background:#eef2f7}.dml.me{flex-direction:row-reverse}.dml.me span{background:#d9f0ff}.dml i{font:11px var(--body);font-style:normal;color:var(--mute)}
+.switch{width:52px;height:30px;border:3px solid var(--ol);border-radius:999px;background:#ddd;position:relative;cursor:pointer}.switch.on{background:#7bd88f}.switch::after{content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;border:2px solid var(--ol);transition:left .15s}.switch.on::after{left:24px}
+@keyframes poseIn{from{opacity:.35;transform:translateY(6px) scale(.98)}to{opacity:1;transform:none}}#fishBig.swap{animation:poseIn .35s ease-out}
+.wsgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;padding:4px;max-height:52vh;overflow:auto}
+.wscard{border:4px solid var(--ol);border-radius:14px;background:#fff;padding:10px 12px;cursor:pointer;box-shadow:0 4px 0 var(--ol)}.wscard.on{outline:5px solid var(--gold,#ffcf4a)}.wscard b{display:block;font:16px var(--game)}.wscard small{display:block;margin-top:4px;font:12px/1.4 var(--body);color:var(--mute);word-break:break-all}.wscard.all{background:#f3f7ff}
+.homegrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;padding:4px}
+.hcard{border:4px solid var(--ol);border-radius:14px;background:#fff;overflow:hidden;cursor:pointer;box-shadow:0 4px 0 var(--ol);transition:transform .15s}
+.hcard:hover{transform:translateY(-2px)}.hcard.on{outline:5px solid var(--gold,#ffcf4a);transform:translateY(-3px)}
+.hcard .hpic{aspect-ratio:3/2;background-size:cover;background-position:center}
+.hcard b{display:block;padding:6px 10px 0;font:16px var(--game)}.hcard small{display:block;padding:2px 10px 8px;font:12px/1.5 var(--body);color:var(--mute)}
+.sign b,.chipres{white-space:nowrap}
+@media (max-width:820px){.ibtn{width:44px;height:44px;border-radius:13px}.ibtn .ic{width:32px;height:32px}.res{gap:7px}.chipres{height:38px;padding:0 10px 0 4px;font-size:16px}.chipres .ic{width:24px;height:24px}.sign b{font-size:22px}}
+.bookpanel{width:min(720px,calc(100% - 32px));height:min(640px,calc(100vh - 90px));padding:44px 22px 18px;display:flex;flex-direction:column}
+.bookbody{flex:1;min-height:0;overflow:auto;padding:4px 6px}
+.lview{display:flex;flex-direction:column;height:100%}
+.lpaper{flex:1;min-height:0;overflow:auto;padding:22px 26px;background:#fffbe6;border:3px solid var(--ol);border-radius:10px;box-shadow:0 4px 0 var(--ol);background-image:repeating-linear-gradient(transparent 0 31px,rgba(42,36,64,.08) 31px 32px)}
+.lpaper .lhead{font:13px var(--game);color:var(--mute);margin-bottom:10px}.lpaper .lhead .newtag{display:inline-block;margin-right:6px;padding:0 8px;color:#fff;background:var(--pink,#ff7aa8);border:2px solid var(--ol);border-radius:999px}
+.lpaper p{margin:0;font:18px/32px var(--game);color:var(--ink);white-space:pre-wrap}
+.lnav{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;font:15px var(--game)}
+.lnav .gb[disabled]{opacity:.4}
+.tri.l{border-left:none;border-right:9px solid currentColor;margin:0 6px 0 0}
+.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.ptile{background:#fff;border:3px solid var(--ol);border-radius:6px;padding:6px 6px 8px;box-shadow:0 4px 0 var(--ol);cursor:pointer;transform:rotate(-1deg)}.ptile:nth-child(2n){transform:rotate(1.2deg)}
+.ptile img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:2px;display:block;background:#eee}.ptile span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-top:6px;font:12px/1.5 var(--game);color:var(--mute)}
+.pview{display:flex;flex-direction:column;height:100%}.pview .pbig{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:10px;background:#fff;border:3px solid var(--ol);border-radius:6px}.pview .pbig img{max-width:100%;max-height:100%;object-fit:contain}
+.pview .pcap{margin-top:8px;font:16px/1.6 var(--game);text-align:center}
+.needcfg{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;height:100%;text-align:center;font:15px/1.7 var(--body)}.needcfg .ic{width:80px;height:80px}
+.jentry{margin-bottom:10px;padding:12px 14px;background:#fff;border:3px solid var(--ol);border-radius:12px;box-shadow:0 3px 0 var(--ol)}.jentry b{font:13px var(--game);color:var(--mute)}.jentry p{margin:4px 0 6px;font:15px/1.6 var(--game)}.jentry a{font:13.5px var(--body);color:var(--blue-d)}.jentry.final{background:#fff6d6}
+.note{white-space:pre-line}
+.gearslot{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:#fff;border:3px dashed var(--ol);border-radius:12px;font:14px var(--body)}.gearslot b{font:15px var(--game)}.gearslot .gi{display:inline-flex;align-items:center;gap:4px;font:15px var(--game)}.gearslot .gi .ic{width:30px;height:30px}.gempty{color:var(--mute);font-size:12.5px}
+.bitem{display:flex;gap:10px;align-items:flex-start;margin-bottom:8px;padding:8px 10px;background:#fff;border:3px solid var(--ol);border-radius:12px;box-shadow:0 3px 0 var(--ol)}.bitem.on{background:#fff6d6}.bitem img{width:52px;height:52px;object-fit:contain;flex:0 0 auto}.bitem b{font:16px var(--game)}.bitem em{font-style:normal;margin-left:4px;font:13px var(--game);color:var(--mute)}.bitem small{margin-left:6px;padding:0 6px;border-radius:6px;font:11px var(--game);color:#fff;background:#8a94a6}.bitem small.r-R{background:#3fa7d6}.bitem small.r-SR{background:#8b5cf6}.bitem small.r-SSR{background:#f59e0b}.bitem p{margin:2px 0 4px;font:12.5px/1.6 var(--body)}.bitem i{font-style:normal;color:var(--blue-d)}
+.bookh{margin:14px 0 6px;font:15px var(--game)}.bookh .ic{width:22px;height:22px;vertical-align:-5px}
+.bookgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:6px}.bk{display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px;background:#fff;border:2px solid var(--ol);border-radius:10px;font:11px var(--game);text-align:center}.bk img{width:40px;height:40px;object-fit:contain;filter:brightness(0) opacity(.25)}.bk.got img{filter:none}
+.tipcard{position:absolute;z-index:4;left:12px;bottom:10px;display:flex;align-items:flex-end;gap:4px;max-width:min(420px,70%);animation:tipin .35s var(--bounce)}
+.tipcard[hidden]{display:none}
+.tipcard img{width:96px;flex:0 0 auto;margin-bottom:-6px;filter:drop-shadow(0 4px 0 rgba(42,36,64,.25))}
+.tipbody{padding:10px 14px 10px;background:#fffbe6;border:3px solid var(--ol);border-radius:16px;box-shadow:0 4px 0 var(--ol)}
+.tipbody b{font:14px var(--game);color:var(--blue-d)}.tipbody p{margin:4px 0 8px;font:15px/1.6 var(--game);color:var(--ink)}
+.tipacts{display:flex;gap:6px}
+@keyframes tipin{0%{opacity:0;transform:translateY(16px) scale(.95)}100%{opacity:1;transform:none}}
+.tipsbody{overflow:auto;min-height:0;padding:2px 4px}.tipsbody h4{margin:12px 0 6px;font:16px var(--game)}.tipsbody .tp{display:flex;gap:8px;align-items:flex-start;margin:6px 0;font:14px/1.6 var(--body)}.tipsbody .tp img{width:34px}.tipsbody .tp.unseen{opacity:.45}.tipsbody dl{margin:0;font:13.5px/1.7 var(--body)}.tipsbody dt{font:14px var(--game);margin-top:8px}.tipsbody dd{margin:0}
+.her h4{margin:12px 0 6px;font:15px var(--game);color:var(--ink)}.her h4:first-child{margin-top:2px}
+.her .ptype{font:20px var(--game);color:var(--blue-d)}.her .ptype small{display:block;font:12px var(--body);color:var(--mute)}
+.her .mood7{display:flex;align-items:flex-end;gap:6px;height:56px;padding:4px 0}.her .mood7 i{flex:1;max-width:30px;background:var(--pink,#ff7aa8);border:2px solid var(--ol);border-radius:4px 4px 0 0;min-height:4px;position:relative}.her .mood7 i span{position:absolute;bottom:-18px;left:50%;transform:translateX(-50%);font:10px var(--body);color:var(--mute)}
+.her .mood7wrap{padding-bottom:16px}
+.her .st2{display:grid;grid-template-columns:36px 1fr 28px;align-items:center;gap:6px;font:13px var(--body);margin:3px 0}.her .st2 .bar3{height:10px;background:#eee;border:2px solid var(--ol);border-radius:6px;position:relative;overflow:hidden}.her .st2 .bar3 b{position:absolute;inset:0 auto 0 0;background:var(--blue,#46c2ff)}.her .st2 .bar3 em{position:absolute;top:-2px;bottom:-2px;width:0;border-left:2px dashed var(--ol)}
+.her .int{display:grid;grid-template-columns:1fr 64px 18px;align-items:center;gap:6px;font:13px var(--body);margin:4px 0}.her .int small{grid-column:1/-1;margin-top:-4px;color:var(--mute);font-size:11px}.her .int .bar3{height:8px;background:#eee;border:2px solid var(--ol);border-radius:6px;overflow:hidden}.her .int .bar3 b{display:block;height:100%;background:#ffcf4a}
+.her .up{display:inline-block;margin:2px 4px 2px 0;padding:2px 10px;font:12px var(--body);background:#fff;border:2px solid var(--ol);border-radius:999px}
+.her .glog{font:12px/1.6 var(--body);color:var(--ink)}.her .glog i{color:var(--mute);font-style:normal;margin-right:6px}
+#mailDot[hidden]{display:none}
+.letter{margin-bottom:10px;padding:12px 14px;background:#fffbe6;border:3px solid var(--ol);border-radius:8px;box-shadow:0 3px 0 var(--ol)}.letter b{font:13px var(--game);color:var(--mute)}.letter p{margin:6px 0 0;font:15px/1.7 var(--game);white-space:pre-wrap}.letter.new{background:#fff0f5}
+.moodfx{position:absolute;z-index:3;left:50%;top:30%;font:26px var(--game);pointer-events:none;animation:moodfx 1.8s ease-out forwards;text-shadow:0 2px 0 #fff}
+@keyframes moodfx{0%{opacity:0;transform:translate(-50%,10px) scale(.8)}20%{opacity:1;transform:translate(-50%,0) scale(1.1)}100%{opacity:0;transform:translate(-50%,-50px)}}
+.away[hidden],.zzz[hidden],.chipres[hidden]{display:none}
+#walletChip{position:relative;cursor:pointer}#walletText{display:flex;flex-direction:column;line-height:1.05}#walletText small{font:11px var(--body);color:var(--mute)}
+.chipres.low{background:#fff1c7}
+.spend{position:absolute;right:8px;top:100%;font:18px var(--game);color:#e0475b;text-shadow:0 2px 0 #fff;pointer-events:none;animation:spend 1.6s ease-out forwards}
+@keyframes spend{0%{opacity:0;transform:translateY(-6px)}15%{opacity:1}100%{opacity:0;transform:translateY(26px)}}
+.fishbig.sleeping{height:min(52vh,460px)}
+.zzz{position:absolute;z-index:2;left:calc(50% + 60px);bottom:62%;font:28px var(--game);color:#fff;text-shadow:0 2px 0 var(--ol),0 0 6px rgba(0,0,0,.4);pointer-events:none}
+.zzz i{display:inline-block;font-style:normal;animation:zz 2.4s infinite ease-in-out}.zzz i:nth-child(2){animation-delay:.5s;font-size:34px}.zzz i:nth-child(3){animation-delay:1s;font-size:42px}
+@keyframes zz{0%{opacity:0;transform:translate(0,10px)}40%{opacity:1}100%{opacity:0;transform:translate(14px,-26px)}}
+.away{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding-top:4%;gap:12px;z-index:1}
+.awaysign{position:relative;width:min(340px,70%);animation:swing 3s ease-in-out infinite;transform-origin:50% 0}
+.awaysign img{width:100%;display:block;filter:drop-shadow(0 6px 0 rgba(42,36,64,.25))}
+.awaysign b{position:absolute;left:0;right:0;top:50%;text-align:center;font:clamp(26px,4vw,40px) var(--game);color:#5a3412;letter-spacing:4px}
+.awaysign small{position:absolute;left:0;right:0;top:76%;text-align:center;font:14px var(--game);color:#7a4a1c}
+@keyframes swing{0%,100%{transform:rotate(-3deg)}50%{transform:rotate(3deg)}}
+.note{max-width:min(360px,80%);padding:12px 16px;background:#fffbe6;border:3px solid var(--ol);border-radius:6px;box-shadow:0 4px 0 var(--ol);font:16px/1.6 var(--game);color:var(--ink);transform:rotate(-2deg)}
+.note:empty{display:none}
+@media (prefers-reduced-motion:reduce){.zzz i,.awaysign{animation:none}}
+.steps{display:flex;gap:10px;justify-content:center;margin:2px 0 14px}.step{padding:4px 14px 6px;font:15px var(--game);border:3px solid var(--ol);border-radius:999px;background:#fff;opacity:.55}.step.on{opacity:1;background:var(--yellow,#ffcf4a)}.step.ok::after{content:"";display:inline-block;width:14px;height:14px;margin-left:4px;vertical-align:-2px;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7' fill='none' stroke='%232fbf71' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat}
+.setcard{display:flex;gap:22px;align-items:flex-start;padding:16px;background:#fff;border:3px solid var(--ol);border-radius:16px;box-shadow:0 3px 0 var(--ol)}
+.setcard[hidden]{display:none}
+.qrbox{flex:0 0 200px;height:200px;display:flex;align-items:center;justify-content:center;border:3px dashed var(--ol);border-radius:12px;background:#fff;position:relative}.qrbox svg{width:186px;height:186px}
+.qrbox.done::after{content:"";position:absolute;inset:0;background:rgba(255,255,255,.85) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7' fill='none' stroke='%232fbf71' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/96px no-repeat;border-radius:10px}
+.qrph{font:15px var(--game);color:var(--mute)}
+.settext b{font:18px var(--game)}.settext p,.settext ol{font:14px/1.7 var(--body);margin:6px 0}.settext small{display:block;font:12px/1.5 var(--body);color:var(--mute)}
+.qrstate{font:16px var(--game)!important;color:var(--blue-d)}
+@media (max-width:700px){.setcard{flex-direction:column;align-items:center}}
+.imgform{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}.imgform input{padding:8px 10px;font:13px var(--body);border:3px solid var(--ol);border-radius:10px;outline:none}.imgform .gb{grid-column:2;justify-self:end}
+</style>
+</head>
+<body data-screen="intro">
+<canvas id="sea"></canvas>
+
+<div id="ui">
+  <header id="hud">
+    <div class="sign">
+      <svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="21" fill="#46c2ff" stroke="#2a2440" stroke-width="4"/><path d="M34 24c-4-7-14-8-19-1l-6-5 2 6-2 6 6-5c5 7 15 6 19-1z" fill="#fff" stroke="#2a2440" stroke-width="3" stroke-linejoin="round"/><circle cx="29" cy="22" r="2" fill="#2a2440"/></svg>
+      <b>鱼社</b>
+    </div>
+    <div class="res">
+      <div class="chipres" id="walletChip" title="零花钱：她自己做 AI 的事花的 token"><img class="ic" src="./assets/icons/coin.webp" alt=""><span id="walletText">零花钱</span></div><div class="chipres skew" id="clockChip" hidden title="开发时钟在拨：删掉 storage 里的 dev.json 就恢复"><img class="ic" src="./assets/icons/clock.webp" alt=""><span id="clockText"></span></div>
+      <button class="ibtn" id="mailBtn" title="信箱"><img class="ic" src="./assets/icons/mail.webp" alt=""><span class="dot" id="mailDot" hidden>0</span><span class="lbl">信箱</span></button><button class="ibtn" id="albumBtn" title="相册"><img class="ic" src="./assets/icons/album.webp" alt=""><span class="lbl">相册</span></button><button class="ibtn" id="journalBtn" title="见闻"><img class="ic" src="./assets/icons/magnifier.webp" alt=""><span class="lbl">见闻</span></button><button class="ibtn" id="bagBtn" title="背包"><img class="ic" src="./assets/icons/bag.webp" alt=""><span class="lbl">背包</span></button><button class="ibtn" id="dexBtn" title="图鉴"><img class="ic" src="./assets/icons/dex.webp" alt=""><span class="lbl">图鉴</span></button>
+      
+      <button class="ibtn" id="cfgBtn" title="鱼社设置"><img class="ic" src="./assets/icons/gear.webp" alt=""><span class="lbl">设置</span></button>
+      <button class="ibtn" id="closeBtn" title="关掉鱼社"><svg class="xg" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"/></svg></button>
+    </div>
+  </header>
+
+  <!-- 对话框：引导 / 水塘 / 撒谷子 / 揭晓 / 破壳 共用；剧本由 ink 驱动 -->
+  <div id="talk">
+    <img id="portrait" class="bob" src="./assets/benyu/wave.webp" alt="">
+    <div class="panel">
+      <div class="who" id="who">鱼见未来本鱼</div>
+      <div id="line"></div>
+      <div class="acts">
+        <div id="choices"></div>
+        <div id="homeActs"><div class="actgrid"><button class="gb sm" id="greetBtn"><img class="ic" src="./assets/icons/hand.webp" alt=""> 招呼</button><button class="gb blue sm" id="chatBtn"><img class="ic" src="./assets/icons/speech.webp" alt=""> 聊天</button><button class="gb green sm" id="feedBtn"><img class="ic" src="./assets/icons/cookie.webp" alt=""> 喂零食</button><button class="gb pink sm" id="diaryBtn"><img class="ic" src="./assets/icons/diary.webp" alt=""> 日记</button></div><button class="hit" id="newFishBtn" style="display:none"></button></div>
+        <div id="callBox"><input id="callInput" maxlength="6" placeholder="比如：老妈"><button class="gb sm" id="callOk">就这样叫</button></div>
+        <div class="s-pond screen" style="position:static;flex-direction:column;align-items:flex-end">
+          <button class="gb big" id="castBtn">撒谷子！</button>
+          <div class="odds">N55 · R28 · SR12 · SSR4.5 · UR0.5（%）<br><span id="guarantee">首颗卵保底 SR</span></div>
+        </div>
+      </div>
+      <div class="tapnext" id="tapnext">点一下继续<i class="tri"></i></div>
+    </div>
+  </div>
+  <button class="gb plain sm" id="skip">跳过 ››</button>
+
+  <section class="screen s-reveal" id="reveal">
+    <div class="rk" id="rk"></div>
+    <div id="rcard"></div>
+  </section>
+
+  <section class="screen s-pick">
+    <div class="dim"></div>
+    <div class="panel big-panel">
+      <div class="ribbon">挑一颗带回家</div>
+      <img class="peek" src="./assets/benyu/look.webp" alt=""><div class="bubble" id="pickTip">另外两颗还没开，点开看看！</div>
+      <div class="body"><div class="trio" id="trio"></div>
+      <div class="label" id="skillLabel"></div>
+      <div class="skills" id="skills"></div>
+      <div class="bar">
+        <button class="gb plain sm" id="recast">重新撒一把</button>
+        <button class="gb blue sm" id="reroll">换一批习惯 <span class="cnt" id="rerollN">3</span></button>
+        <button class="gb pink" id="toForge" disabled>就她了！</button>
+      </div>
+    </div></div>
+  </section>
+
+  <section class="screen s-forge">
+    <div class="dim"></div>
+    <div class="panel big-panel" style="max-width:1120px">
+      <div class="ribbon blue">她是个什么样的孩子</div>
+      <img class="peek" src="./assets/benyu/hype.webp" alt=""><div class="bubble">200 点性格，加一点别处就少一点；身世点骰子重抽，点文字直接改</div>
+      <div class="body"><div class="fgrid">
+        <div><div id="forgeCard"></div><div class="ftag" id="ftag"></div><div class="ftagline" id="ftagline"></div></div>
+        <div>
+          <h3>性格 · 200 点</h3>
+          <div class="pool"><div><b id="psum">200</b> / 200 <small>每项 10–80</small></div><div class="row"><button class="gb blue sm" id="prand"><img class="ic" src="./assets/icons/dice.webp" alt=""> 随机</button><button class="gb plain sm" id="preset"> 天生</button></div></div>
+          <div id="stats"></div>
+        </div>
+        <div><h3>身世</h3><div class="story" id="story"></div></div>
+      </div>
+      <div class="bar" style="margin-top:16px">
+        <button class="gb plain sm" id="backPick">回去再挑</button>
+        <button class="gb pink" id="toName">下一步：起名字</button>
+      </div>
+    </div></div>
+  </section>
+
+  <section class="screen s-name">
+    <div class="dim"></div>
+    <div class="panel big-panel" style="max-width:860px">
+      <div class="ribbon blue">给她起个名字</div>
+      <img class="peek" src="./assets/benyu/sign.webp" alt=""><div class="bubble">名字别太长哦，也别想骗模型～</div>
+      <div class="body"><div class="namegrid">
+        <div id="nameCard"></div>
+        <div>
+          <div class="f"><b>名字</b><input id="fName" maxlength="16"><div class="err" id="fErr"></div></div>
+          <div class="f"><b>她怎么称呼自己</b><div class="chips" id="fSelf"></div></div>
+          <div class="f"><b>口头禅（最多两个）</b><div class="chips" id="fTics"></div></div>
+          <div class="f"><b>不聊的话题</b><div class="chips" id="fBan"></div></div>
+          <details><summary><img class="ic" src="./assets/icons/scroll.webp" alt=""> 偷看她的人设全文</summary><pre id="fPreview"></pre></details>
+          <div class="bar" style="justify-content:flex-start">
+            <button class="gb plain sm" id="backForge">回去改性格</button>
+            <button class="gb green" id="hatchBtn">孵化！</button>
+          </div>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <section class="screen s-work">
+    <div class="dim"></div>
+    <div class="panel big-panel" style="max-width:860px">
+      <div class="ribbon blue" id="workTitle">她在哪儿上工</div>
+      <img class="peek" src="./assets/benyu/point.webp" alt=""><div class="bubble" id="workTip">在这个工作区里跟 DSH 说的话，都是她在帮你干活；别的工作区里她不出现～</div>
+      <div class="body"><div class="wsgrid" id="wsGrid"></div>
+        <div class="bar"><button class="gb plain sm" id="workCancel" hidden>不换了</button><button class="gb green" id="workOk">就在这里上工！</button></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="screen s-homes">
+    <div class="dim"></div>
+    <div class="panel big-panel" style="max-width:980px">
+      <div class="ribbon blue" id="homesTitle">挑一个家</div>
+      <img class="peek" src="./assets/benyu/point.webp" alt=""><div class="bubble" id="homesTip">点一间看看，背景会换成那里～</div>
+      <div class="body"><div class="homegrid" id="homeGrid"></div>
+        <div class="bar"><button class="gb plain sm" id="homesCancel" hidden>不换了</button><button class="gb green" id="homesOk">就住这里！</button></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="screen s-setup">
+    <div class="dim"></div>
+    <div class="panel big-panel" style="max-width:860px">
+      <div class="ribbon blue">开局设置</div>
+      <img class="peek" src="./assets/benyu/point.webp" alt=""><div class="bubble" id="setupTip">两件小事，都能以后再弄～</div>
+      <div class="body">
+        <div class="steps"><span class="step on" data-step="bili">① 她的 B站号</span><span class="step" data-step="img">② 画画用的 API</span></div>
+        <div class="setcard" id="setBili">
+          <div class="qrbox" id="qrBox"><div class="qrph">二维码生成中…</div></div>
+          <div class="settext">
+            <b>给她一个自己的 B站号</b>
+            <p>她出门会刷 B站，还会在评论区冒泡、发动态、回私信（都按你在设置里定的规矩和频率）。<br><b>请用一个新号</b>，别用你自己的。</p>
+            <ol><li>手机 B站 App 先切换到<b>给她的那个号</b></li><li>首页右上角「扫一扫」扫左边的码</li><li>在手机上点「确认登录」</li></ol>
+            <p class="qrstate" id="qrState">等你扫码…</p>
+            <div class="followask" id="followAsk" hidden><p></p><div class="dacts"><button class="gb plain sm" id="followNo">先不用</button><button class="gb green sm" id="followYes">关注</button></div></div>
+            <small>登录凭证只存在你这台电脑（只有你能读），不会发回网页，也不会进任何仓库。</small>
+          </div>
+        </div>
+        <div class="setcard" id="setImg" hidden>
+          <div class="settext" style="flex:1">
+            <b>画画用的 API（生图）</b>
+            <p>换衣服、AI 明信片、表情包都要用它（OpenAI 兼容的 /v1/images/generations）。不填也能玩，这几样会显示「去配置」。</p>
+            <div class="imgform"><input id="setImgBase" placeholder="https://…/v1"><input id="setImgModel" placeholder="模型，如 gpt-image-1"><input id="setImgKey" type="password" placeholder="API key" autocomplete="off"></div>
+            <small>key 只存在你这台电脑，网页里只看得到末 4 位。</small>
+          </div>
+        </div>
+        <div class="bar"><button class="gb plain sm" id="setupSkip">以后再说</button><button class="gb green" id="setupNext">下一步</button></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="screen s-home">
+    <div class="room">
+      <div class="nameplate"><b id="rName"></b><small id="rSub"></small><div class="lifebar" id="lifeBar"></div></div>
+      <div class="stagewrap">
+        <div class="bubble2" id="bubble"><span id="bubbleText"></span></div>
+        <img class="fishbig bob" id="fishBig" alt="">
+        <div class="tipcard" id="tipCard" hidden><img id="tipPose" alt=""><div class="tipbody"><b>鱼见未来本鱼 · 小贴士</b><p id="tipText"></p><div class="tipacts"><button class="gb sm" id="tipOk">知道了</button><button class="gb plain sm" id="tipAll">全部小贴士</button></div></div></div>
+        <div class="zzz" id="zzz" hidden><i>z</i><i>z</i><i>Z</i></div>
+        <div class="away" id="away" hidden><div class="awaysign"><img src="./assets/prop/sign.webp" alt=""><b>暂停营业</b><small>出门闲逛中</small></div><div class="note" id="awayNote"></div></div>
+        <div class="floor-shadow"></div>
+      </div>
+      <aside class="side panel">
+        <div class="tabs"><button class="tab on" data-tab="today">今天</button><button class="tab" data-tab="sched">日程</button><button class="tab" data-tab="diary">日记</button><button class="tab" data-tab="her">她</button></div>
+        <div class="tabbody" id="tabBody"></div>
+        <button class="gb sm" id="diaryWrite2" style="display:none;margin-top:8px">让她写今天的日记</button>
+      </aside>
+      <div class="dock">
+        <div class="quick">
+          <button class="qa" data-act="news"><img class="ic" src="./assets/icons/news.webp" alt=""> 念新闻</button><button class="qa" data-act="surf"><img class="ic" src="./assets/icons/door.webp" alt=""> 问她出门吗</button><button class="qa" data-act="feed"><img class="ic" src="./assets/icons/cookie.webp" alt=""> 喂零食</button><button class="qa" data-act="pat"><img class="ic" src="./assets/icons/hand.webp" alt=""> 摸摸头</button><button class="qa" data-act="nap"><img class="ic" src="./assets/icons/pillow.webp" alt=""> 哄她午睡</button><button class="qa" data-act="greet"><img class="ic" src="./assets/icons/think.webp" alt=""> 她在想啥</button><button class="qa work" data-act="work"><img class="ic" src="./assets/icons/work.webp" alt=""> 找她干活</button>
+        </div>
+        <div class="inbar"><input id="sayIn" maxlength="300" placeholder="跟她说点什么…（回车发送）"><button class="gb sm" id="saySend">发送</button></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="screen s-done">
+    <div class="dim"></div>
+    <div class="panel big-panel" style="max-width:760px">
+      <div class="ribbon" id="doneTitle">到家啦！</div>
+      <div class="body"><div class="donebox">
+        <div id="doneCard"></div>
+        <p id="doneLine"></p>
+        <p class="hint2" id="doneHint"></p>
+        <div class="bar">
+          <button class="gb plain sm" id="again">再领养一条</button>
+          <button class="gb green" id="goWork">好，让她上工！</button>
+        </div>
+      </div></div>
+    </div>
+  </section>
+
+  <div id="cfg"><div class="panel"><div class="ribbon">鱼社设置</div><button class="gb pink sm x" id="cfgX"><svg class="xg" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"/></svg></button><div class="cfgbody">
+    <div class="cfgrow"><div><b id="cfgWorkTitle">上工</b><small id="cfgWorkSub"></small></div><button class="gb sm" id="cfgWork"></button></div>
+    <div class="cfgrow" style="flex-direction:column;align-items:stretch">
+      <div><b><img class="ic" src="./assets/icons/coin.webp" alt=""> 零花钱</b><small>她自己聊天、写日记、念新闻、出门都要花 token，花光了就歇着（不调模型）。她在 DSH 里替你干活不算她的钱。</small></div>
+      <div class="chips" id="walletModes"><button class="chip" data-mode="jar">存钱罐</button><button class="chip" data-mode="daily">每天零花钱</button><button class="chip" data-mode="free">不限</button></div>
+      <div class="walletrow" id="walletJarRow"><span id="walletLeft"></span><button class="gb sm" data-top="1000000">放 100 万</button><button class="gb sm" data-top="5000000">放 500 万</button></div>
+      <div class="walletrow" id="walletDailyRow" hidden><span>每天给</span><input id="walletDaily" type="number" min="0" step="10000"><span>token</span><button class="gb sm" id="walletDailySave">保存</button></div>
+      <small id="walletSpent"></small>
+    </div>
+    <div class="cfgrow" style="flex-direction:column;align-items:stretch"><div><b>她的上网习惯</b><small>三个档位一拖就整套换：爱不爱出门、读多深、互动多少。更细的（每天点赞几个、多看哪个分区、字幕读多少…）在 DSH 里跟她说就行，比如「多看点做饭的，少点赞」，她会复述一遍，你说行才改。</small></div><div class="habits" id="habitsBox"></div><small id="habitsSum" style="color:var(--mute)"></small></div>
+    <div class="cfgrow"><div><b>她的家</b><small id="cfgHomeSub"></small></div><button class="gb sm" id="cfgHome">换一间</button></div>
+    <div class="cfgrow" style="flex-wrap:wrap"><div><b>鱼塘场景</b><small>白天浅湾、傍晚樱花池、夜里水族馆（只是领养时鱼塘的背景；她的房间在上面「她的家」里换）</small></div><div class="chips" id="cfgScene"></div></div>
+    <div class="cfgrow"><div><b>她在哪儿上工</b><small id="cfgWsSub">查询中…</small></div><button class="gb sm" id="cfgWs">换一个</button></div>
+    <div class="cfgrow"><div><b>她的 B站号</b><small id="cfgBiliSub">查询中…</small></div><div style="display:flex;gap:6px"><button class="gb sm" id="cfgBiliLogin">扫码登录</button><button class="gb green sm" id="cfgFollow" hidden>关注接生员</button><button class="gb plain sm" id="cfgBiliOut" hidden>退出</button></div></div>
+    <div class="cfgrow" style="flex-direction:column;align-items:stretch">
+      <div><b>生图 API</b><small>明信片配图、表情包、换装要用（OpenAI 兼容 /v1/images/generations）。key 只存在你这台电脑，不会发回网页</small></div>
+      <div class="imgform"><input id="imgBase" placeholder="https://…/v1"><input id="imgModel" placeholder="模型，如 gpt-image-1"><input id="imgKey" type="password" placeholder="API key（留空不改）" autocomplete="off"><button class="gb sm" id="imgSave">保存</button></div><div style="display:flex;gap:8px;align-items:center;margin-top:8px"><button class="gb blue sm" id="imgTest">试拍一张</button><small style="color:var(--mute)">用这个 API 给她拍一张照片放进相册（会花一次出图的钱，约半分钟）</small></div>
+      <small id="imgState"></small>
+    </div>
+    <div class="cfgrow"><div><b>报告问题</b><small>遇到 bug、有想法？私信发给 B站上的「鱼见未来本鱼」（要先关注）</small></div><button class="gb sm" id="cfgReport">写给鱼见未来本鱼</button></div>
+    <div class="cfgrow"><div><b>小贴士和说明书</b><small>鱼见未来本鱼会在合适的时候提醒你怎么玩；看过的都在这里，也能让它们重新出现</small></div><div style="display:flex;gap:6px"><button class="gb sm" id="cfgTips">看看</button><button class="gb plain sm" id="cfgTipsReset">重新显示</button></div></div>
+    <div class="label" style="text-align:left;margin:16px 0 8px">我的鱼塘</div>
+    <div id="cfgPond"></div>
+    <div class="cfgrow"><div><b>再领养一条</b><small>鱼见未来本鱼会再带你走一遍引导；新的鱼领养后会接班上工</small></div><button class="gb pink sm" id="cfgAdopt">再孵一条</button></div>
+    <div class="cfgnote">人设注入：上工的鱼会作为 DSH 系统提示词里的一段人设，下一条消息起生效，不用重启。<br>宿主状态和 AI 探针在 DSH 的「设置」里的「鱼社」。</div>
+  </div>
+  </div></div>
+  <div class="modal" id="phoneM"><div class="panel bookpanel"><div class="ribbon" id="bookTitle">信箱</div><button class="gb pink sm x" id="phoneX"><svg class="xg" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"/></svg></button><div class="bookbody" id="phoneBody"></div></div></div>
+  <div class="modal" id="reportM"><div class="panel"><div class="ribbon blue">报告问题</div><button class="gb pink sm x" id="reportX"><svg class="xg" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"/></svg></button>
+    <div class="report">
+      <p class="rhint" id="reportHint">遇到了什么？在哪一步？说得越具体越好～会私信发给 B站上的「鱼见未来本鱼」，自动带上版本号（不带任何密钥）。</p>
+      <div class="followask" id="reportFollow" hidden><p>要先关注「鱼见未来本鱼」才能给她发私信。关注一下吧？以后有新鱼、新玩法也会第一个知道。</p><div class="dacts"><button class="gb green sm" id="reportFollowYes">关注</button></div></div>
+      <textarea id="reportText" maxlength="400" placeholder="比如：保存好画画的 API 以后没有下一步了……"></textarea>
+      <div class="dacts"><small id="reportLeft"></small><button class="gb green sm" id="reportSend">发送</button></div>
+    </div>
+  </div></div>
+  <div class="modal" id="tipsM"><div class="panel"><div class="ribbon blue">小贴士和说明书</div><button class="gb pink sm x" id="tipsX"><svg class="xg" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"/></svg></button><div class="tipsbody" id="tipsBody"></div></div></div>
+  <div class="modal" id="chatM"><div class="panel"><div class="ribbon blue" id="chatTitle">聊天</div><button class="gb pink sm x" id="chatX"><svg class="xg" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"/></svg></button>
+    <div class="msgs" id="msgs"></div>
+    <div class="chatin"><input id="chatIn" maxlength="300" placeholder="跟她说点什么…"><button class="gb sm" id="chatSend">发送</button></div>
+  </div></div>
+  <div class="modal" id="diaryM"><div class="panel"><div class="ribbon" id="diaryTitle">她的日记</div><button class="gb pink sm x" id="diaryX"><svg class="xg" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"/></svg></button>
+    <div class="diary" id="diaryList"></div>
+    <div class="bar" style="padding-top:8px"><button class="gb sm" id="diaryWrite">让她写今天的日记</button></div>
+  </div></div>
+  <div id="dex"><div class="panel"><div class="ribbon blue">渔娘图鉴</div><button class="gb pink sm x" id="dexX"><svg class="xg" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"/></svg></button><div class="dexgrid" id="dexGrid"></div></div></div>
+  <div id="toast"></div>
+</div>
+
+<script type="module" src="./game.js"></script>
+</body>
+</html>

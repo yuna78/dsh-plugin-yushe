@@ -1,0 +1,26 @@
+{
+  "name": "dsh-yushe",
+  "version": "0.0.1",
+  "private": true,
+  "description": "鱼社 — AI 原生的养鱼游戏 DSH 插件",
+  "type": "module",
+  "scripts": {
+    "build": "node plugin/scripts/build.mjs",
+    "build:watch": "node plugin/scripts/build.mjs --watch",
+    "verify": "node plugin/verify/run.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "bili:login": "node tools/bili-login.mjs",
+    "bili:check": "node tools/bili-login.mjs --check"
+  },
+  "dependencies": {
+    "@fontsource/zcool-kuaile": "^5.3.0",
+    "gsap": "^3.15.1",
+    "inkjs": "^2.4.0",
+    "pixi-filters": "^6.1.5",
+    "pixi.js": "^8.22.0",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.12"
+  }
+}

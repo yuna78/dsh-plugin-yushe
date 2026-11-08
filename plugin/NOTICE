@@ -1,0 +1,9 @@
+dsh-yushe
+Copyright (c) 2026 Yuna. MIT License.
+
+借鉴的思路 / 片段（均为 MIT）：
+- dsh-persona-dafeiyu（huaizhuanghub）：动态人设段落、三档作用域、回环路由校验
+- dsh-dafeiyu-life（minedalang / c1overzz）：宿主模型无工具调用、headless overlay 工具白名单、B站扫码登录流程、往会话递消息、WBI 签名换位表与首页推荐的过滤思路（JS 自写）
+- bilibili-mcp（adoresever）：B站接口清单
+
+打包进插件的第三方库：qrcode（MIT，soldair）、pixi.js / pixi-filters（MIT）、gsap（GreenSock 标准许可）、inkjs（MIT）

@@ -1,0 +1,5 @@
+# dsh-plugin-yushe bundle patch：把「鱼社」行插进 profile 的插件树。
+# 安装：dsh plugin --profile <profile> add link:<本目录>（开发）或 add dsh-plugin-yushe（发布后）
+- insert:
+    - id: yushe
+      name: dsh-plugin-yushe

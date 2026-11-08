@@ -1,0 +1,16 @@
+name: verify
+on:
+  push: { branches: [main] }
+  pull_request:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - name: 构建产物与提交的一致（lib/ 和 game/ 进 git，忘了构建会在这里红）
+        run: git diff --exit-code -- plugin/lib plugin/game
+      - run: npm run verify

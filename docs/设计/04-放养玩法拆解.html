@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>放养玩法拆解</title>
+<style>
+:root{--bg:#F6F3EE;--paper:#fff;--ink:#1E2430;--sub:#5E6675;--line:#D9D3C8;--sea:#1F6F8B;--sea-soft:#E3F1F5;--gold:#B8860B;--gold-soft:#FBF1D6;
+  --rose:#C2456B;--rose-soft:#FBE7EE;--ok:#2E7D5B;--ok-soft:#E2F3EA;--warn:#B4502A;--warn-soft:#FBE9E1;--vi:#6B4FBB;--vi-soft:#EEE8FB;--mono:"SF Mono",Menlo,monospace}
+@media (prefers-color-scheme:dark){:root{--bg:#12161D;--paper:#1A2029;--ink:#E7EAF0;--sub:#9AA3B2;--line:#2C3542;--sea:#6FC3DD;--sea-soft:#15303A;--gold:#E2B54A;--gold-soft:#332A14;
+  --rose:#F08AAB;--rose-soft:#3A1E29;--ok:#6CCB9C;--ok-soft:#173226;--warn:#F09A72;--warn-soft:#3A2219;--vi:#B9A3FF;--vi-soft:#251E3A}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.75 "PingFang SC","Hiragino Sans GB",system-ui,sans-serif}
+main{max-width:1080px;margin:0 auto;padding:40px 16px 80px}
+h1{font-size:30px;margin:0 0 6px} .lede{color:var(--sub);margin:0 0 30px}
+h2{font-size:21px;margin:52px 0 6px;display:flex;gap:10px;align-items:baseline} h2 .no{font:600 13px var(--mono);color:var(--sea)}
+h2+p{color:var(--sub);margin:0 0 18px} h3{font-size:16px;margin:26px 0 8px}
+code{font:13px var(--mono);background:var(--sea-soft);padding:1px 5px;border-radius:4px} a{color:var(--sea)}
+table{width:100%;border-collapse:collapse;font-size:14px;background:var(--paper);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12.5px;color:var(--sub);font-weight:600;background:var(--bg)} tr:last-child td{border-bottom:0}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+.card ul{margin:6px 0 0;padding-left:18px;color:var(--sub);font-size:14px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px} .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.loop{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:14px}
+.loop span{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:6px 11px}
+.loop span.ai{background:var(--vi-soft);border-color:var(--vi);color:var(--vi)}
+.loop i{font-style:normal;color:var(--sub)}
+.note{border-left:4px solid var(--warn);background:var(--warn-soft);padding:12px 16px;border-radius:0 10px 10px 0;margin:16px 0} .note b{color:var(--warn)}
+.good{border-left:4px solid var(--ok);background:var(--ok-soft);padding:12px 16px;border-radius:0 10px 10px 0;margin:16px 0} .good b{color:var(--ok)}
+.ai{color:var(--vi);font-weight:600}
+.tree{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.node{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:13.5px}
+.node b{display:block;font-size:14.5px;margin-bottom:4px}
+.node ul{margin:0;padding-left:16px;color:var(--sub)}
+.u{font:600 11px var(--mono);color:var(--sub)}
+@media (max-width:760px){.grid2,.grid3,.tree{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main>
+<h1>放养玩法拆解 · 从旅行青蛙到会说话的鱼</h1>
+<p class="lede">先把旅行青蛙的产品结构拆干净（只拆机制，不碰它的美术、名字和角色），再看哪些照搬、哪些用 AI 改、哪些不要。数字来自 2018 年社区逆向分析，官方从没公开过，标「约」的只作参考。</p>
+
+<h2><span class="no">01</span>旅行青蛙的核心循环</h2>
+<p>一次打开只要 1–2 分钟。玩家能控制的只有「准备」，旅行本身完全不由玩家决定。</p>
+<div class="loop"><span>院子收三叶草</span><i>→</i><span>商店买便当和道具</span><i>→</i><span>装进行囊（或摆桌上）</span><i>→</i><span>青蛙<b>自己决定</b>什么时候出门</span><i>→</i><span>寄回照片明信片</span><i>→</i><span>回家，带名产、收藏品</span><i>→</i><span>名产招待访客，换三叶草、抽奖券</span><i>→</i><span>抽奖：护身符、车票</span></div>
+
+<h3>每个系统怎么运作</h3>
+<table>
+<tr><th style="width:15%">系统</th><th>规则</th><th style="width:28%">设计用意</th></tr>
+<tr><td>货币</td><td>三叶草在院子里各自定时重生（约 3 小时长满），约 1% 概率长出四叶草；抽奖券 5 张抽 1 次</td><td>定时重生 = 让你隔一阵回来看看</td></tr>
+<tr><td>商店</td><td>便当决定体力和旅行时长上限、走多远、寄几张照片；道具（头巾、帐篷、碗、灯笼）决定照片场景类型，物品本身会出现在照片里；护身符和车票（抽奖得）能锁定地区</td><td>准备的东西「间接」影响结果，而且看得见（照片里有你给的道具）</td></tr>
+<tr><td>行囊</td><td>便当 1 格、护身符 1 格、道具 2 格；桌上可以预放下一次的补给；出门后只能改桌上的</td><td>格子少 = 每次都要做选择</td></tr>
+<tr><td>在家</td><td>吃饭、看书（打瞌睡）、写信、做木工；出门时间随机（约 2–72 小时）；没吃的也会走</td><td>它有自己的生活，不是等你</td></tr>
+<tr><td>旅行</td><td>时长上限 约 6–72 小时；按地形耗体力，累了原地歇 3 小时；到达目的地才带名产</td><td>后台模拟，你只能等</td></tr>
+<tr><td>目的地</td><td>每地初始权重 30，物品的地区属性叠加权重，按相对权重随机；护身符、车票直接锁定</td><td><b>弱影响、强随机</b>：你能影响，但决定不了</td></tr>
+<tr><td>照片</td><td>道路地形 × 道具 × 同伴拼出约 120 种普通照片；另有特定地点触发的剧情照片；同一地点每个人拿到的略有不同</td><td>惊喜感 + 适合晒图</td></tr>
+<tr><td>同伴</td><td>特定路上按概率遇到，之后会同行，出现在照片里</td><td>它在外面交了朋友</td></tr>
+<tr><td>访客</td><td>青蛙在家时才来（蜗牛 / 蜜蜂 / 乌龟），收藏品达标才解锁；用名产招待，记得最近吃过的 3 种，回礼三叶草、抽奖券</td><td>家里也有事发生</td></tr>
+<tr><td>收集</td><td>名产图鉴、收藏品、相册、称号（不影响数值）</td><td>长线目标</td></tr>
+<tr><td>信箱</td><td>收照片，也收「朋友的传单」（广告，自己选要不要看）</td><td>广告不打扰</td></tr>
+</table>
+
+<h3>它为什么火，又为什么凉</h3>
+<div class="grid2">
+  <div class="card"><b>火：情感钩子</b>
+    <ul><li><b>牵挂</b>：不回家、没消息，玩家开始担心，「老母亲」心态。</li><li><b>不受控制</b>：它是一个独立的「他者」，不是你的工具。</li><li><b>没有惩罚</b>：不会死、不会饿、一定会回来。</li><li><b>惊喜</b>：每张照片都不知道会是什么，天然适合发朋友圈。</li></ul></div>
+  <div class="card"><b>凉：互动太少</b>
+    <ul><li>2018 年 1 月底日活见顶（约 763 万），之后一路下滑。</li><li>批评集中在：只有收集、买东西、抽奖；被动等待让人厌倦；内容迭代少。</li><li>它<b>刻意没有剧情文本</b>，角色设定很模糊，所以玩久了没话可说。</li></ul></div>
+</div>
+<div class="good"><b>这正是 AI 能补的：</b>旅行青蛙最大的短板是「它不会跟你说话」，而我们的鱼会。保留它「不受控制、没有惩罚、牵挂和惊喜」的骨架，把「没话说」换成「每次都有新话说」。</div>
+
+<h2><span class="no">02</span>映射：每个系统在鱼社里是什么</h2>
+<p>名字、美术、角色全部换成我们自己的，只借机制。<span class="ai">紫色</span>是 AI 参与的地方。</p>
+<table>
+<tr><th style="width:16%">旅行青蛙</th><th style="width:20%">鱼社</th><th>怎么改</th></tr>
+<tr><td>三叶草（主货币）</td><td><b>谷子</b></td><td>鱼塘边的稻穗定时结谷子，点一下收。另外，你在 DSH 里正常干活也会攒谷子（比如完成一次任务掉几粒）：<b>工作和养鱼连在一起</b>。</td></tr>
+<tr><td>四叶草</td><td><b>金谷子</b></td><td>约 1% 掉落，用来给远行加一点运气。</td></tr>
+<tr><td>抽奖券 / 扭蛋</td><td><b>漂流瓶</b></td><td>海边捡漂流瓶，开出车票、护身符一类的东西。也就是现在的抽卡入口（再领养一条也在这里）。</td></tr>
+<tr><td>便当</td><td><b>零食盒</b></td><td>决定能出门多久、走多远。<span class="ai">鱼会挑食</span>：按她身世里的「最爱吃」和「最讨厌」，带了爱吃的她会多寄一张明信片。</td></tr>
+<tr><td>道具（场景类型）</td><td><b>小装备</b></td><td>相机、潜水镜、雨伞、笔记本……决定明信片场景，也会出现在画面里。</td></tr>
+<tr><td>护身符 / 车票</td><td><b>心愿签</b></td><td>写一个想让她去的地方（比如「去看看成都」），<span class="ai">她会自己决定去不去</span>，并在明信片里回应你的心愿。</td></tr>
+<tr><td>行囊 + 桌子</td><td><b>小背包 + 床头柜</b></td><td>照搬：格子少，每次都要做选择；出门后只能往床头柜放东西。</td></tr>
+<tr><td>在家行为</td><td><b>家里的作息</b></td><td>吃饭、看书、写日记、刷视频、睡觉（按真实时间）。<span class="ai">日记是 AI 写的</span>，内容跟她今天的经历和你们的对话有关。</td></tr>
+<tr><td>随机出门</td><td><b>她自己决定出门</b></td><td>保留随机。<span class="ai">出门前会留一张字条</span>：「爸爸，我去海边看日出啦，别担心～」</td></tr>
+<tr><td>旅行模拟（后台算路程）</td><td><b>畅游（真的去逛）</b></td><td><span class="ai">核心差异。</span>青蛙的旅行是假的，后台掷骰子；鱼的畅游是<b>真的</b>：起一轮 headless，她自己刷 B站、上网看新闻、在评论区冒泡。去哪由她的兴趣 × 你的心愿签 × 随机决定，看到什么由互联网决定。</td></tr>
+<tr><td>目的地权重</td><td><b>兴趣权重</b></td><td>她的爱好、梦想、爱刷的视频决定今天想逛什么（萌宠区？科技新闻？）。<b>越常看的越喜欢</b>：权重随经历慢慢变，兴趣是长出来的。没有 headless 可用时，退回离线地点池。</td></tr>
+<tr><td>照片明信片</td><td><b>明信片</b></td><td>每张对应她这一趟<b>真实看到</b>的一个瞬间（一条视频、一则新闻、一条评论），附原链接，你点得开。正面：按主题选的场景底图 × 装备 × 同伴；<span class="ai">背面：她写给你的话</span>。</td></tr>
+<tr><td>（没有）</td><td><b>在网上留下痕迹</b></td><td><span class="ai">新增，核心差异。</span>她会在视频下评论、回复别人、和网友私信、发动态（配图就是明信片）。刚出生时每一条都先寄到信箱问你「我可以发吗？」，你批准得越多她越懂分寸，慢慢就能自己发。</td></tr>
+<tr><td>同伴（路上遇到的朋友）</td><td><b>网友</b></td><td>不再是虚构的小动物，而是<b>真实的人</b>：回过她评论的、私信过她的。熟悉的网友可以加进白名单，她会记得他们、主动问候（每天最多一次）。</td></tr>
+<tr><td>（没有）</td><td><b>爸妈专线</b></td><td>你在手机上 B站私信她，她直接回你。不开电脑也能问「今天去哪玩了」。</td></tr>
+<tr><td>同伴</td><td><b>旅途中的朋友</b></td><td>路上认识的小动物，之后会一起出现。<span class="ai">回家后她会跟你讲这个朋友的事</span>。</td></tr>
+<tr><td>访客</td><td><b>来串门的邻居</b></td><td>鱼在家时来（寄居蟹、海马、老乌龟……），用她带回的特产招待。<span class="ai">她们之间的对话由 AI 现编</span>，你可以旁听。</td></tr>
+<tr><td>名产 / 收藏品</td><td><b>特产 / 纪念品</b></td><td>照搬图鉴结构。</td></tr>
+<tr><td>信箱</td><td><b>信箱 + 鱼小条</b></td><td>明信片进信箱；DSH 输入框上方的鱼头像亮红点。<b>不放广告。</b></td></tr>
+<tr><td>（没有）</td><td><b>跟爸妈聊天</b></td><td><span class="ai">新增，核心差异。</span>随时进家里跟她说话；她带着性格、身世、旅途记忆回答。你在 DSH 里干活时，她也会顺口提起自己的近况。</td></tr>
+<tr><td>（没有）</td><td><b>上工</b></td><td>新增。鱼的人设注入 DSH，替你干活。干完活掉谷子，谷子再变成她的零食。</td></tr>
+</table>
+
+<h2><span class="no">03</span>鱼社的核心循环（新）</h2>
+<div class="loop"><span>你在 DSH 干活 / 收稻穗</span><i>→</i><span>攒谷子</span><i>→</i><span>买零食盒、小装备</span><i>→</i><span>装进小背包</span><i>→</i><span class="ai">她留字条，自己出门</span><i>→</i><span class="ai">真的去刷 B站、看新闻（headless）</span><i>→</i><span class="ai">评论 / 私信 / 发动态（先问你）</span><i>→</i><span class="ai">寄明信片（真实链接 + 她写的话）</span><i>→</i><span class="ai">回家讲见闻、写日记</span><i>→</i><span>特产招待邻居，换谷子、漂流瓶</span><i>→</i><span class="ai">你随时跟她聊天</span></div>
+<p style="color:var(--sub);font-size:14px;margin-top:10px">和旅行青蛙相比多了两个环：<b>「上工 → 谷子」</b>把养鱼和你本来就在用的 DSH 连起来；<b>「聊天」</b>补上了它最大的短板。</p>
+
+<h2><span class="no">03½</span>网络足迹：她活过的证据</h2>
+<p>旅行青蛙的「证据」是相册里的照片；鱼的证据是她在互联网上真实留下的东西。鱼社里专门有一页<b>「足迹」</b>，按时间串起来：</p>
+<div class="grid3">
+  <div class="card"><b>📍 时间线</b><ul><li>每条评论、动态都带原链接，点得开、看得到</li><li>私信只显示「和谁聊了几句」，内容不公开</li><li>别人怎么回应她：点赞数、回复、新粉丝</li></ul></div>
+  <div class="card"><b>🏅 第一次</b><ul><li>第一次有人回她的评论</li><li>第一个粉丝</li><li>第一条被点赞过 10 的动态</li><li>第一个主动私信她的网友</li></ul><p style="font-size:13px;color:var(--sub);margin:6px 0 0">这些里程碑会变成特别明信片，挂进相册。</p></div>
+  <div class="card"><b>👥 她认识的人</b><ul><li>来往过的网友，按熟悉程度排</li><li>你可以把谁加进「熟人」白名单</li><li>她会跟你讲「那个总回我的 XX 今天又来了」</li></ul></div>
+</div>
+<div class="good"><b>这一页回答了「她是不是真的活着」：</b>不是我们说的，是互联网上真的有人在跟她说话。也是最适合晒的东西，比如「我家鱼今天收到了第一条回复」。</div>
+
+<h2><span class="no">04</span>功能树（实现清单）</h2>
+<div class="tree">
+  <div class="node"><b>资源</b><ul><li>谷子（稻穗定时结、干活掉落）</li><li>金谷子（约 1%）</li><li>漂流瓶 → 抽奖</li></ul><span class="u">P2</span></div>
+  <div class="node"><b>商店</b><ul><li>零食盒（时长、距离、挑食）</li><li>小装备（场景、入画）</li><li>心愿签（指定想去的地方）</li></ul><span class="u">P2</span></div>
+  <div class="node"><b>出行准备</b><ul><li>小背包（固定格子）</li><li>床头柜（预放补给）</li><li>没零食也会出走</li></ul><span class="u">P2</span></div>
+  <div class="node"><b>家里的作息</b><ul><li>吃 / 读 / 写日记 / 刷视频 / 睡</li><li>按真实时间，DSH 关了回来补算</li><li class="ai">AI 日记</li></ul><span class="u">P2</span></div>
+  <div class="node"><b>畅游</b><ul><li>随机出门 + 出门字条</li><li class="ai">headless 一轮：刷 B站 / 看新闻</li><li>出游日志（真实链接）</li><li>回帖申请 → 信箱审批</li><li>兴趣权重随经历成长</li></ul><span class="u">P3</span></div>
+  <div class="node"><b>明信片</b><ul><li>场景 × 装备 × 同伴（规则拼）</li><li class="ai">背面 AI 写</li><li>特别明信片（AI 画，P4）</li></ul><span class="u">P3</span></div>
+  <div class="node"><b>网上的社交</b><ul><li class="ai">评论 / 回复 / 私信 / 发动态</li><li>按动作分档的闸门 + 成长解锁</li><li>网友关系 + 熟人白名单</li><li>爸妈专线（B站私信）</li><li>足迹页 + 里程碑</li></ul><span class="u">P3</span></div>
+  <div class="node"><b>来串门的邻居</b><ul><li>鱼在家时来（解锁门槛 + 偏好记忆）</li><li class="ai">AI 对话，你可以旁听</li></ul><span class="u">P3</span></div>
+  <div class="node"><b>收集</b><ul><li>特产 / 纪念品图鉴</li><li>明信片相册</li><li>渔娘图鉴、称号</li></ul><span class="u">P2</span></div>
+  <div class="node"><b>沟通</b><ul><li>信箱 + 鱼小条红点</li><li class="ai">跟爸妈聊天</li><li>近况进主 Session（可选递信）</li></ul><span class="u">P2</span></div>
+</div>
+
+<h2><span class="no">05</span>要守住的和要避开的</h2>
+<div class="grid2">
+  <div class="card"><b>守住（从旅行青蛙学的）</b>
+    <ul><li><b>不受控制</b>：出门时间、去哪儿最终由她决定，你只能准备和许愿。</li><li><b>没有惩罚</b>：不会死、不会饿瘦、不会离家出走不回来。</li><li><b>弱影响</b>：准备的东西看得见效果（照片里有你给的相机），但决定不了结果。</li><li><b>一次一两分钟</b>：不需要长时间挂着。</li></ul></div>
+  <div class="card"><b>避开</b>
+    <ul><li><b>别照抄</b>：名字、美术、角色、具体物品全部换成我们自己的。</li><li><b>别让 AI 话太多</b>：牵挂来自「等」，她不能每分钟都来找你。递信每天最多一次，默认关。</li><li><b>别变成上班</b>：干活掉谷子只是加速，不干活也能慢慢攒。</li><li><b>别靠付费加速</b>：不卖谷子。</li></ul></div>
+</div>
+<div class="note"><b>还没决定的：</b>① 一轮畅游真正跑几分钟，但「出门」在游戏里可以持续几小时，跑完的结果先藏着，按时间一张张寄回来，保留等待感（旅行青蛙是 6–72 小时，我倾向 1–8 小时）。② 每天畅游几轮由 token 预算决定，实测后再定。③ DSH 关着时不能跑 headless，鱼就在家睡觉，打开后再出门。</div>
+
+<p style="color:var(--sub);font-size:12.5px;margin-top:40px">来源：Wikipedia「Travel Frog」；CSDN 逆向分析（blog.csdn.net/lb_383691051/article/details/79226600）；wengweng.tw 攻略；人人都是产品经理 woshipm.com/operate/926340；机核 gcores.com/articles/95883；gamebiz.jp/news/210475；ITmedia 2018-03；Gamezebo 攻略；Alizila；中央社；界面新闻；36氪；北京日报（日活数据）；爱范儿。</p>
+</main>
+</body>
+</html>
