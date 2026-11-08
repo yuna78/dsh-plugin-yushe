@@ -91,7 +91,7 @@ export function registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, ga
       ok: true,
       fish: { id: f.id, name: f.name, proto: f.proto, rarity: f.rarity, parentCall: f.parentCall, working: pond.current()?.id === f.id, workspace: f.workspace || null },
       ...snapshot(s), workToday: life.workToday(s, f), ...life.activity(f, s, wallet.busy), wallet: wallet.view(),
-      growth: s.growth ? growthView(s.growth, f) : null,
+      growth: s.growth ? growthView(s.growth, f, { ageDays: Math.max(0, Math.floor((nowMs() - (s.bornAt || nowMs())) / 86400e3)) }) : null,
       bagCount: Object.keys(s.bag?.items || {}).length,
       pendingDrafts: (() => { try { const v = gate ? gate.view() : null; return v ? v.pending.length + v.queued.length : 0; } catch { return 0; } })(),
       inboxUnseen: (() => { try { return (inbox ? inbox.unseen() : 0) + (dms ? dms.unseen() : 0); } catch { return 0; } })(),

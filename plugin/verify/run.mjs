@@ -379,10 +379,13 @@ ok(G0.type === LIFEJS_g.personality(gfish_g.pts).tag && Object.keys(G0.interests
 const G1_g = GRW.gainXp(G0, 'news', { ageDays: 0 });
 ok(G1_g.xp.brain === 3 && G1_g.pts.brain === 30, '念新闻给智力攒经验（满 10 才涨）');
 let G2_g = G0; for (let i = 0; i < 4; i++) G2_g = GRW.gainXp(G2_g, 'news', { ageDays: 0 });
-ok(G2_g.pts.brain === 30 && G2_g.xp.brain <= 9, '刚出生总点数 200 封顶：经验攒着，不会超');
+ok(G2_g.pts.brain === 31 && G2_g.xp.brain === 2, '出生当天就有 5 点空间：念 4 次新闻第一格就能涨（不再出生即封顶）');
 let G3_g = G0; for (let i = 0; i < 4; i++) G3_g = GRW.gainXp(G3_g, 'news', { ageDays: 7 });
-ok(G3_g.pts.brain === 31 && G3_g.log.some((l) => l.text.includes('智力 +1')), '活满 7 天上限 +10：智力 +1 并写进成长日志');
-ok(GRW.capsAt(0).single === 80 && GRW.capsAt(14).single === 95 && GRW.capsAt(70).total === 300, '上限随年龄放开（单维 80 → 95，总量每周 +10）');
+ok(G3_g.pts.brain === 31 && G3_g.log.some((l) => l.text.includes('智力 +1')), '长到第 7 天：上限继续放开，智力 +1 并写进成长日志');
+ok(GRW.capsAt(0).single === 80 && GRW.capsAt(0).total === 205 && GRW.capsAt(7).single === 88 && GRW.capsAt(7).total === 215 && GRW.capsAt(14).single === 95 && GRW.capsAt(70).total === 305, '上限随年龄连续放开：出生就有 5 点空间，单维 14 天从 80 爬到 95，总量每天 +1.43');
+const gvCap = GRW.growthView(G0, gfish_g, { ageDays: 14 });
+const gvBrain = gvCap.stats.find((x) => x.key === 'brain');
+ok(gvCap.caps.single === 95 && gvCap.caps.total === 225 && gvBrain.nowPct === Math.round((gvBrain.now / 95) * 100) && gvCap.stats.every((x) => x.nowPct >= 0 && x.nowPct <= 100), '面板：视图带上限，血条按单维上限换算（不再按 100 画）');
 // 模拟 30 天：天天让她念新闻 + 帮忙干活（智力 / 心），从不聊天（嘴）——会偏科、性格会转
 let S_g = GRW.freshGrowth(gfish_g, '2026-11-01');
 const D_g = (n) => new Date(Date.parse('2026-11-01T12:00:00') + n * 86400e3).toISOString().slice(0, 10);

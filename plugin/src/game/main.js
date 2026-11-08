@@ -928,14 +928,15 @@ document.querySelector('.quick').addEventListener('click', async (e) => {
 function herPanel(g, fish) {
   if (!g) return '<div class="empty">她还小，成长记录还没开始。</div>';
   const mood = g.moodDays.length ? `<div class="mood7wrap"><div class="mood7">${g.moodDays.map((m) => `<i style="height:${Math.max(6, m.mood)}%" title="${esc(m.day)} 心情 ${m.mood}"><span>${esc(m.day.slice(5))}</span></i>`).join('')}</div></div>` : '<div class="empty">还没攒够心情记录</div>';
-  const stats = g.stats.map((s) => `<div class="st2"><span>${esc(s.label)}</span><div class="bar3"><b style="width:${s.now}%"></b><em style="left:${s.born}%" title="出生时 ${s.born}"></em></div><span>${s.now}${s.now !== s.born ? (s.now > s.born ? UP_SVG : DN_SVG) : ''}</span></div>`).join('');
+  const capSingle = g.caps?.single ?? 100, capTotal = g.caps?.total ?? 200;
+  const stats = g.stats.map((s) => `<div class="st2"><span>${esc(s.label)}</span><div class="bar3"><b style="width:${s.nowPct ?? s.now}%"></b><em style="left:${s.bornPct ?? s.born}%" title="出生时 ${s.born}"></em></div><span title="现在 ${s.now}，单维上限 ${capSingle}">${s.now}${s.now !== s.born ? (s.now > s.born ? UP_SVG : DN_SVG) : ''}</span></div>`).join('');
   const ints = g.interests.length ? g.interests.map((x) => `<div class="int"><span>${esc(x.tag)}</span><div class="bar3"><b style="width:${x.heat}%"></b></div><span>${x.trend > 0 ? UP_SVG : x.trend < 0 ? DN_SVG : ''}</span><small>${esc(x.src || '')}</small></div>`).join('') : '<div class="empty">还没发现她特别爱什么</div>';
   const lean = [g.lean.clingText, g.lean.livelyText].filter(Boolean).join('、');
   return `<div class="her">
     <h4>性格</h4><div class="ptype">${esc(g.type)}${g.prevType ? `<small>从「${esc(g.prevType)}」变过来的</small>` : ''}${lean ? `<small>最近更${esc(lean)}一些</small>` : ''}</div>
     ${g.outgoing ? `<h4>${ICON('door')} 爱不爱出门</h4><div class="ptype" style="font-size:17px">${esc(g.outgoing.label)}<small>${g.outgoing.why.length ? esc(g.outgoing.why.join('、')) + '；' : ''}性格变了，出门习惯也会跟着变</small></div>` : ''}
     <h4>${ICON('heart')} 近 7 天心情</h4>${mood}
-    <h4>${ICON('brain')} 五维 <small style="font:11px var(--body);color:var(--mute)">（虚线是出生时，合计 ${g.total}）</small></h4>${stats}
+    <h4>${ICON('brain')} 五维 <small style="font:11px var(--body);color:var(--mute)">（虚线是出生时，合计 ${g.total}/${capTotal}）</small></h4>${stats}
     <h4>${ICON('sparkle')} 爱好</h4>${ints}
     ${g.ups.length ? `<h4>${ICON('tv')} 记住的 UP 主</h4>${g.ups.map((u) => `<span class="up">${esc(u.name)}</span>`).join('')}` : ''}
     <h4>${ICON('sprout')} 成长日志</h4>${g.log.length ? `<div class="glog">${g.log.map((l) => `<div><i>${esc((l.at || '').slice(5, 10))}</i>${esc(l.text)}</div>`).join('')}</div>` : '<div class="empty">还没有变化，慢慢来～</div>'}
