@@ -15,7 +15,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { nowMs } from './clock.js';
-import { emptyMemory, migrateMemory, makeEpisode, meet, settleMemory, recall, knownPeople, aboutPerson, memoryText, memoryStats, stageOf, STAGE_TEXT, reflectCandidates, reflectPrompt, applyReflection, beliefsFor, tell, untell, localDay, defang, logOp } from '../shared/memory.js';
+import { emptyMemory, migrateMemory, makeEpisode, meet, settleMemory, recall, knownPeople, aboutPerson, memoryText, memoryStats, stageOf, STAGE_TEXT, reflectCandidates, reflectPrompt, applyReflection, settleBeliefs, beliefsFor, activeBeliefs, tell, untell, localDay, defang, logOp } from '../shared/memory.js';
 import { personaFor } from '../shared/growth.js';
 
 export const MEMORY_PATH = '/api/dsh-yushe/memory';
@@ -24,6 +24,8 @@ const EVENT_KINDS = { born: 'born', mood: 'mood', nap: 'nap', 'late-work': 'late
 const FOOT_KINDS = { comment: 'comment', reply: 'reply', post: 'post', dyncomment: 'dyncomment', dm: 'dm', like: 'like', comment_like: 'comment_like', collect: 'collect', follow: 'follow', unfollow: 'unfollow' };
 const FOOT_WHAT = { comment: '评论了视频', reply: '回复了评论', post: '发了动态', dyncomment: '评论了动态', dm: '回了私信', like: '点赞了视频', comment_like: '给评论点了赞', collect: '收藏了视频', follow: '关注了', unfollow: '取关了' };
 const short = (s, n) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+/** 给人看的认识（规格 4）：规则词不出门，state 一律白话。 */
+const shownBelief = (b) => ({ text: b.text, why: b.why || '', effect: b.effect || '', about: b.about, state: b.status === '暂定' ? '还在想' : '想明白了', times: b.n || 1, since: b.at });
 
 /** 档案 → 一串「候选经历」（带去重 key）。纯函数，verify 直接测。 */
 export function archiveItems({ fish, life = {}, footprints = [], inbox = [], dms = [], parentMid = '', chatFrom = '' }) {
@@ -186,14 +188,23 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
         const items = memory.recall(fish, { query, scope, limit, quotes });
         const ppl = people ? memory.people(fish, { limit: people, parents: false }) : [];
         const m = load(fish);
-        const bl = beliefs ? beliefsFor(m, { scope, limit: beliefs }) : [];
+        const bl = beliefs ? beliefsFor(m, { scope, limit: beliefs }) : []; // 只给想明白了的（二期：暂定的先不注入）
         const told = scope === 'public' ? [] : (m.told || []).slice(-8); // 爸妈让记的只在家里说
         return memoryText(items, ppl, { title, tail, beliefs: bl, told });
       } catch { return ''; }
     },
-    beliefs(fish, { scope = 'all', limit = 30 } = {}) { return beliefsFor(memory.sync(fish), { scope, limit }).map((b) => ({ text: b.text, about: b.about, times: b.n || 1, since: b.at })); },
+    /** 她的认识（生效 + 暂定）：每条带白话 state，规则词不出门（yushe_recall 的 beliefs 用）。 */
+    beliefs(fish, { scope = 'all', limit = 30 } = {}) {
+      const active = activeBeliefs(memory.sync(fish), { scope, limit });
+      return active.map(shownBelief);
+    },
+    /** 想法怎么变的（最近的变化记录，新的在前）：yushe_recall 的 changes 和页面用。 */
+    changes(fish, { limit = 10, scope = 'all' } = {}) {
+      const c = (memory.sync(fish).changes || []).filter((x) => scope !== 'public' || x.scope === 'public'); // 出门只给 B站范围的变化；老记录没写范围的按家里算
+      return c.slice(-limit).reverse().map((x) => ({ kind: x.kind, before: x.before, after: x.after, why: x.why, at: x.at }));
+    },
     /**
-     * 睡前反思（写完日记后调，一天一次）：模型从还记得的事里提炼认识，规则验引用、去重、限 30 条。
+     * 睡前反思（写完日记后调，一天一次）：先收尾 beliefs（暂定 → 生效 / 放下，规则 3.4），再让模型从还记得的事里提炼认识，规则验依据、去重、上限。
      * 花零花钱（wallet.say 'reflect'）；花光了就不想。返回 { ok, added, merged, dropped, rejected } 或 { ok: false, why }。
      */
     async reflect(fish, wallet, { day, force = false } = {}) {
@@ -201,12 +212,16 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
       let m = memory.sync(fish, { minGapMs: 0 });
       if (!force && day && m.cursors.reflectDay === day) return { ok: false, why: '今天想过了' };
       const now = tnow();
+      const settled = settleBeliefs(m, { now, baseDays: days(), day }); // 调模型之前先收尾：暂定的去留不交给模型（规则 3.4）
+      save(fish, m); // 站住了 / 放下的这步先落盘
+      const settledN = settled.confirmed.length + settled.retired.length + settled.superseded.length + settled.dropped.length;
+      if (settledN) log?.info?.(`[dsh-yushe] 认识收尾：站住了 ${settled.confirmed.length} 条、换成新说法 ${settled.superseded.length} 条、放下 ${settled.dropped.length + settled.retired.length} 条`);
       const eps = reflectCandidates(m, { now, baseDays: days() });
       if (eps.length < 3) return { ok: false, why: '还记得的事太少，先不想' };
       const s = life?.state?.(fish) || {};
       const persona = (() => { try { return personaFor(fish, s.growth) || fish.personaText || ''; } catch { return fish.personaText || ''; } })();
       let raw = '';
-      try { raw = (await wallet.say('reflect', reflectPrompt({ persona, call: fish.parentCall, episodes: eps, beliefs: beliefsFor(m, { limit: 30 }) }), null, 60_000)).text; }
+      try { raw = (await wallet.say('reflect', reflectPrompt({ persona, call: fish.parentCall, episodes: eps, beliefs: activeBeliefs(m, { limit: 30 }) }), null, 60_000)).text; }
       catch (e) { return { ok: false, why: e?.broke ? '零花钱花光了，先不想' : `没想出来：${String(e?.message || e).slice(0, 60)}` }; }
       m = load(fish); // 等模型的时候可能又同步过
       const r = applyReflection(m, raw, { now: tnow(), baseDays: days(), at: new Date(tnow()).toISOString() });
@@ -240,7 +255,8 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
         people: knownPeople(m, { now, baseDays: days(), limit: 20 }),
         told: (m.told || []).slice().reverse().map((x) => ({ text: x.text, at: x.at })),
         log: (m.log || []).slice(-20).reverse(), // 改动日志：最近的 20 条，新的在前
-        beliefs: beliefsFor(m, { limit: 30 }).map((b) => ({ text: b.text, about: b.about, times: b.n || 1, since: b.at, home: b.scope === 'home' })),
+        beliefs: activeBeliefs(m, { limit: 30 }).map((b) => ({ ...shownBelief(b), home: b.scope === 'home' })),
+        changes: (m.changes || []).slice(-30).reverse().map((x) => ({ kind: x.kind, before: x.before, after: x.after, why: x.why, at: x.at })).slice(0, 20), // 想法怎么变的：最近 20 条，新的在前
         reflectDay: m.cursors.reflectDay || null,
       };
     },

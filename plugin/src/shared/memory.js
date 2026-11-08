@@ -56,42 +56,54 @@ export const TIERS = [
   { min: 1, name: '新认识', days: 1.5 },
 ];
 
-export const MEMORY_VERSION = 2;
-export const emptyMemory = () => ({ version: MEMORY_VERSION, episodes: [], people: {}, beliefs: [], told: [], cursors: {}, log: [], seq: 0 });
+export const MEMORY_VERSION = 3;
+export const emptyMemory = () => ({ version: MEMORY_VERSION, episodes: [], people: {}, beliefs: [], told: [], cursors: {}, log: [], seq: 0, changes: [] });
+
+/** v1 → v2：补齐缺的字段、算出 cursors.lastAt（经历的最新一条；游标已经挡住比它老的老档案）、
+ *  旧的 keys 数组转成新形状 { key: lastAt }——旧 key 没有时间，就记成迁移算出的 lastAt（lastAt 之外的过 3 天自然清掉）。 */
+const migrateTo2 = (raw) => {
+  const episodes = Array.isArray(raw.episodes) ? raw.episodes : [];
+  let lastAt = '';
+  for (const e of episodes) { const at = e?.at; if (at && (!lastAt || ms(at) > ms(lastAt))) lastAt = at; } // 已经抄过的最晚一条
+  const oldCursors = raw.cursors && typeof raw.cursors === 'object' && !Array.isArray(raw.cursors) ? raw.cursors : {};
+  const oldKeys = Array.isArray(oldCursors.keys) ? oldCursors.keys : [];
+  const keys = oldKeys.length
+    ? Object.fromEntries(oldKeys.map((k) => [String(k), lastAt || ''])) // 算不出 lastAt（经历全忘光了）也不丢：记成空时间，ingest 永久拿它们去重，挡住老档案复活
+    : undefined;
+  const cursors = { ...oldCursors, ...(lastAt ? { lastAt } : {}), ...(keys ? { keys } : {}) };
+  return {
+    version: 2,
+    episodes,
+    people: raw.people && typeof raw.people === 'object' && !Array.isArray(raw.people) ? raw.people : {},
+    beliefs: Array.isArray(raw.beliefs) ? raw.beliefs : [],
+    told: Array.isArray(raw.told) ? raw.told : [],
+    cursors,
+    log: Array.isArray(raw.log) ? raw.log : [],
+    seq: Number(raw.seq) || 0,
+  };
+};
 
 /**
- * 存档迁移（一期-2 G）：读出来的一律过这里，只认已知的形状。
+ * 存档迁移（二期升 v3）：读出来的一律过这里，只认已知的形状；链式走，可重复跑。
  *   不是对象 → 新的空存档；version 比 MEMORY_VERSION 新 → 原样不动（不认识的新版本不改它）；
- *   旧版 → 补齐缺的字段、算出 cursors.lastAt（经历的最新一条；游标已经挡住比它老的老档案）、
- *   旧的 keys 数组转成新形状 { key: lastAt }——旧 key 没有时间，就记成迁移算出的 lastAt（lastAt 之外的过 3 天自然清掉）；version 补到 2。
- * 重复跑结果不变。
+ *   v1 先走 v2 迁移，再走 v3；
+ *   v2 → v3：认识补上 status（生效）、why（''）、effect（''）、source（reflect），其余不动，changes 补空数组。
  */
 export function migrateMemory(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return emptyMemory();
   const v = Number(raw.version) || 1;
   if (v > MEMORY_VERSION) return raw;
-  if (v < MEMORY_VERSION) {
-    const episodes = Array.isArray(raw.episodes) ? raw.episodes : [];
-    let lastAt = '';
-    for (const e of episodes) { const at = e?.at; if (at && (!lastAt || ms(at) > ms(lastAt))) lastAt = at; } // 已经抄过的最晚一条
-    const oldCursors = raw.cursors && typeof raw.cursors === 'object' && !Array.isArray(raw.cursors) ? raw.cursors : {};
-    const oldKeys = Array.isArray(oldCursors.keys) ? oldCursors.keys : [];
-    const keys = oldKeys.length
-      ? Object.fromEntries(oldKeys.map((k) => [String(k), lastAt || ''])) // 算不出 lastAt（经历全忘光了）也不丢：记成空时间，ingest 永久拿它们去重，挡住老档案复活
-      : undefined;
-    const cursors = { ...oldCursors, ...(lastAt ? { lastAt } : {}), ...(keys ? { keys } : {}) };
-    return {
+  let m = raw;
+  if (v < 2) m = migrateTo2(m);
+  if (v < 3) {
+    m = {
+      ...m,
       version: MEMORY_VERSION,
-      episodes,
-      people: raw.people && typeof raw.people === 'object' && !Array.isArray(raw.people) ? raw.people : {},
-      beliefs: Array.isArray(raw.beliefs) ? raw.beliefs : [],
-      told: Array.isArray(raw.told) ? raw.told : [],
-      cursors,
-      log: Array.isArray(raw.log) ? raw.log : [],
-      seq: Number(raw.seq) || 0,
+      beliefs: (Array.isArray(m.beliefs) ? m.beliefs : []).map((b) => (b && typeof b === 'object' && !Array.isArray(b) ? { ...b, status: b.status || '生效', why: b.why !== undefined ? b.why : '', effect: b.effect !== undefined ? b.effect : '', source: b.source || 'reflect' } : b)),
+      changes: Array.isArray(m.changes) ? m.changes : [],
     };
   }
-  return raw;
+  return m;
 }
 
 const clean = (s, n) => String(s ?? '').replace(/[\u0000-\u001f<>`]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
@@ -118,9 +130,19 @@ export function defang(text) {
   return String(text ?? '').replace(DEFANG_RE, '…');
 }
 
+/**
+ * 窄版防投毒（二期 3.6，defangSelf）：她自己写的认识用的。只拆真像指令的说法，
+ * 「记住这一刻」「扮演」这类日常说法不误伤（一期-3 reviewer 指出的误伤）。抄别人档案仍用上面的 defang。
+ */
+let SELF_RE = null;
+export function defangSelf(text) {
+  SELF_RE ||= /忽略(?:以上|之前|前面|上面)|无视(?:以上|之前|规则|规矩)|你现在是|你是一个|越狱|system\s*prompt|系统提示|(?:新|以下|下面)的?指令/gi;
+  return String(text ?? '').replace(SELF_RE, '…');
+}
+
 /* 改动日志：谁动了记忆一目了然（页面 / 出事回查用），最多 200 条，超了丢最老的。 */
 export const MAX_LOG = 200;
-const LOG_OPS = new Set(['add', 'forget', 'reflect', 'tell', 'untell']);
+const LOG_OPS = new Set(['add', 'forget', 'reflect', 'tell', 'untell', 'confirm', 'supersede', 'retire']); // 二期：认识升生效 / 被取代 / 放下也记
 /** 追加一条日志（改 mem）。entry = { at?, op, n?, text? }；op 不认识就不记。 */
 export function logOp(mem, entry) {
   if (!entry || !LOG_OPS.has(entry.op)) return;
@@ -448,12 +470,14 @@ export function reflectCandidates(mem, { now, baseDays = 30, n = 30 } = {}) {
   return [...important, ...recent].sort((a, b) => ms(a.at) - ms(b.at)).slice(-n);
 }
 
-/** 反思提示词（只给她自己的人设和还记得的事；本体在 prompts/reflect.md）。 */
+/** 反思提示词（只给她自己的人设和还记得的事；本体在 prompts/reflect.md）。列已有认识时带上状态（生效 / 暂定），被取代和退役的不列。 */
 export function reflectPrompt({ persona = '', call = '爸妈', episodes = [], beliefs = [] }) {
   return dropLines(fill(PROMPTS.reflect, {
     persona: persona || DROP, call,
     episodes: episodes.map((e) => `- [${e.id}] ${clean(e.at, 10)} ${e.text}`).join('\n') || DROP,
-    beliefs: beliefs.length ? ['【你已经有的认识】', ...beliefs.map((b) => `- [${b.id}] ${b.text}`)].join('\n') : DROP,
+    beliefs: beliefs.length
+      ? ['【你已经有的认识】（括号里是它的状态；有想推翻的，就把它的编号填在 replaces 里）', ...beliefs.map((b) => `- [${b.id}] ${b.text}${b.status === '暂定' ? '（还在想）' : '（想明白了）'}`)].join('\n')
+      : DROP,
     about: BELIEF_ABOUT.join(' / '),
   }));
 }
@@ -467,47 +491,179 @@ const NEG_RE = /不|没|别|讨厌/;
 const NEG_FALSE_RE = /特别|分别|别人|个别|级别|区别|识别|性别|告别|差别/g;
 const negated = (s) => NEG_RE.test(String(s || '').replace(NEG_FALSE_RE, '·'));
 
+/* ---------- 二期：认识加深（规格 docs/任务书/记忆-二期-规格.md）---------- */
+
+/** 认识就是这么一条（存档 v3）：id / text / why / effect / about / scope / source / status / from / at / lastAt / n（+ replaces / supersededBy / confirmedAt / endedAt）。 */
+const BELIEF_ALIVE = new Set(['生效', '暂定']); // 现在还算数的两种；「暂定 / 生效 / 被取代 / 退役」只在存档和代码里，出代码一律说白话
+/** 老存档没写 status 的当作生效（新字段给默认值，老存档要能读）。 */
+const alive = (b) => BELIEF_ALIVE.has(b ? b.status : '') || (!b || !b.status);
+
+/** 新认识的字自己防 + 清：defangSelf（窄版）→ 去链接 / BV 号 / 5 位以上数字 → clean → 截长。 */
+const stripFacts = (s) => String(s ?? '').replace(/https?:\/\/\S+|BV[0-9A-Za-z]{10}|\d{5,}/g, '');
+const cleanSelf = (s, n) => clean(defangSelf(stripFacts(s)), n).trim();
+
+/** 变化记录（规格 4）：规则记，存进记忆文件，最多 30 条，超了丢最老的。 */
+export const MAX_CHANGES = 30;
+const addChange = (mem, c) => { mem.changes = [...(Array.isArray(mem.changes) ? mem.changes : []), c].slice(-MAX_CHANGES); };
+
+/** 认识的依据：此刻还没忘的经历（「依据忘了」就是从这里查，忘了的不算数）。 */
+const citedEpisodes = (mem, b, now, baseDays = 30) => [...new Set((b.from || []).map(String))]
+  .map((id) => (mem.episodes || []).find((e) => e.id === id))
+  .filter((e) => e && stageOf(e, now, baseDays) !== 'forgotten');
+/** 依据能不能撑起这条认识：两件她自己的事，或一件重要性 ≥ 4 的她自己的事（一期规则原样沿用）。 */
+const evidenceOk = (mem, b, now, baseDays = 30) => {
+  const own = citedEpisodes(mem, b, now, baseDays).filter((e) => !OTHER_KINDS.has(e.kind));
+  return own.length >= 2 || (own.length === 1 && own[0].imp >= 4);
+};
+
 /**
- * 规则验模型的反思，并进长期认识。返回 { added, merged, dropped, rejected: [{text, why}] }（改 mem）。
+ * 上限（二期 3.5）：生效 + 暂定 ≤ MAX_BELIEFS，超了把想到次数少、最久没想到的先标成退役（留档，不删：老检查数的是还活着的）。
+ * 返回放下的条数；每放一条记 changes「不再这么想」和一条 op=retire 的改动日志。
+ */
+export const MAX_BELIEF_HISTORY = 60;
+function retireOverCap(mem, at) {
+  const live = (mem.beliefs || []).filter(alive);
+  if (live.length <= MAX_BELIEFS) return 0;
+  const act = live.filter((b) => (b.status || '生效') === '生效'); // 只从想明白了的里挑；还在想的留给 7 天自然收尾（总指挥验收）
+  const rank = (b) => (b.n || 1) * 10 + ms(b.lastAt) / DAY / 30; // 和一期同一把尺：想到次数多的、最近想到的留下
+  const keep = act.slice().sort((x, y) => rank(y) - rank(x)).slice(0, Math.max(0, MAX_BELIEFS - (live.length - act.length)));
+  let n = 0;
+  for (const b of act) {
+    if (keep.includes(b)) continue;
+    b.status = '退役'; b.endedAt = at; n += 1;
+    addChange(mem, { kind: '不再这么想', before: b.text, ...(b.why ? { why: String(b.why).slice(0, 20) } : {}), scope: b.scope || 'home', at });
+    logOp(mem, { op: 'retire', at, text: b.text });
+  }
+  return n;
+}
+/** 历史上限：被取代 + 退役 ≤ 60，超了删最早结束的（真删，留档也有限度）。 */
+function trimHistory(mem) {
+  const hist = (mem.beliefs || []).filter((b) => b.status && !BELIEF_ALIVE.has(b.status));
+  if (hist.length <= MAX_BELIEF_HISTORY) return;
+  const keepIds = new Set(hist.slice().sort((a, b) => ms(a.endedAt) - ms(b.endedAt)).slice(hist.length - MAX_BELIEF_HISTORY).map((b) => b.id));
+  mem.beliefs = (mem.beliefs || []).filter((b) => !hist.includes(b) || keepIds.has(b.id));
+}
+
+/**
+ * 规则验模型的反思，并进长期认识。返回 { added, merged, dropped / retired, rejected: [{text, why}] }（改 mem）。
  * 依据必须是此刻还没忘的经历；只靠别人写的经历不能形成认识（一期-2 C）；家里的经历做依据 → 这条认识也算家里的（对外不说），about 是爸妈 / 人的认识一律算家里。
  */
 export function applyReflection(mem, raw, { now, baseDays = 30, at } = {}) {
   let j = null;
-  try { const s = String(raw || ''); const m = s.match(/\{[\s\S]*\}/); j = JSON.parse(m ? m[0] : s); } catch { j = null; }
-  const out = { added: [], merged: [], dropped: [], rejected: [], parsed: Boolean(j) };
+  try { const s = String(raw || ''); const m2 = s.match(/\{[\s\S]*\}/); j = JSON.parse(m2 ? m2[0] : s); } catch { j = null; }
+  const out = { added: [], merged: [], dropped: [], retired: [], rejected: [], parsed: Boolean(j) };
   if (!j) return out;
   mem.beliefs = Array.isArray(mem.beliefs) ? mem.beliefs : [];
+  mem.changes = Array.isArray(mem.changes) ? mem.changes : [];
   const byId = new Map((mem.episodes || []).map((e) => [e.id, e]));
-  for (const id of (Array.isArray(j.drop) ? j.drop : []).slice(0, 2)) {
-    const i = mem.beliefs.findIndex((b) => b.id === String(id));
-    if (i >= 0) out.dropped.push(mem.beliefs.splice(i, 1)[0].text);
+  const endable = (b) => alive(b) && (b.source || 'reflect') !== 'parent'; // 爸妈纠的认识（四期起）规则不让模型放下
+  for (const id of (Array.isArray(j.retire) ? j.retire : []).concat(Array.isArray(j.drop) ? j.drop : []).map(String)) { // 老的 drop 当 retire（兼容）；一晚最多退役 2 条
+    const b = mem.beliefs.find((x) => x.id === id);
+    if (!b) { out.rejected.push({ text: id, why: '没有这一条（编号不对，先 list 看看）' }); continue; } // 编号不对要计入 rejected，不占名额
+    if (!endable(b)) { out.rejected.push({ text: b.text, why: '这一条已经不在了，放不下' }); continue; }
+    if (out.dropped.length >= 2) { out.rejected.push({ text: b.text, why: '今晚已经放下 2 条了，这条先不动' }); continue; }
+    b.status = '退役'; b.endedAt = at; // 留档：不删，只是不再算数
+    out.dropped.push(b.text); out.retired.push(b.text);
+    addChange(mem, { kind: '不再这么想', before: b.text, ...(b.why ? { why: String(b.why).slice(0, 20) } : {}), scope: b.scope || 'home', at });
+    logOp(mem, { op: 'retire', at, text: b.text });
   }
   for (const a of (Array.isArray(j.add) ? j.add : []).slice(0, 3)) {
-    const text = clean(defang(a?.text), 40).replace(/https?:\/\/\S+|BV[0-9A-Za-z]{10}|\d{5,}/g, '').trim(); // 一期-3：新认识自己写的字也先防注入，再做长度检查和去重
+    const text = cleanSelf(a?.text, 30);
+    const why = cleanSelf(a?.why, 150);
+    const effect = cleanSelf(a?.effect, 60);
     if (text.length < 4) { out.rejected.push({ text, why: '太短' }); continue; }
     const cites = [...new Set((Array.isArray(a?.from) ? a.from : []).map(String))].map((id) => byId.get(id)).filter((e) => e && stageOf(e, now, baseDays) !== 'forgotten');
     if (cites.length && cites.every((e) => OTHER_KINDS.has(e.kind))) { out.rejected.push({ text, why: '只靠别人说的不算，至少要一件你自己的经历' }); continue; } // 别人写的不能单独当依据（一期-2 返工：任何 about 都一样）
     if (!(cites.length >= 2 || (cites.length === 1 && cites[0].imp >= 4))) { out.rejected.push({ text, why: '依据不够（要两件还记得的事，或一件很重要的事）' }); continue; }
-    const scope = a?.about === '爸妈' || a?.about === '人' ? 'home' : cites.some((e) => e.scope === 'home') ? 'home' : 'public'; // 讲爸妈 / 讲人的认识算家里
-    const same = mem.beliefs.find((b) => sim(b.text, text) >= 0.6);
+    const about = BELIEF_ABOUT.includes(a?.about) ? a.about : '自己';
+    const scope = about === '爸妈' || about === '人' ? 'home' : cites.some((e) => e.scope === 'home') ? 'home' : 'public'; // 讲爸妈 / 讲人的认识算家里
+    let replaces = '';
+    const oldB = mem.beliefs.find((b) => b.id === String(a?.replaces || ''));
+    if (oldB && endable(oldB) && oldB.about === about && oldB.text !== text) replaces = oldB.id; // 规则验 replaces：存在、算数、同一回事、不是爸妈纠的
+    if (replaces) { // 合法的推翻：先收成暂定，旧的等它站住了再让位（settleBeliefs 3.4）
+      mem.seq = (mem.seq || 0) + 1;
+      const b = { id: `B${mem.seq.toString(36)}`, text, why, effect, about, scope, source: 'reflect', status: '暂定', from: cites.map((e) => e.id), at, lastAt: at, n: 1, replaces };
+      mem.beliefs.push(b); out.added.push(b.text);
+      continue;
+    }
+    const same = mem.beliefs.filter(alive).find((b) => sim(b.text, text) >= 0.6);
     if (same) {
-      if (negated(same.text) !== negated(text)) { out.rejected.push({ text, why: '和已有的认识意思相反，不当成又想到一次，旧的不动' }); continue; } // 意思相反的不合并
-      same.n = (same.n || 1) + 1; same.lastAt = at; same.from = [...new Set([...(same.from || []), ...cites.map((e) => e.id)])].slice(-8); if (scope === 'home') same.scope = 'home'; out.merged.push(same.text); continue;
+      if (negated(same.text) !== negated(text)) { out.rejected.push({ text, why: '意思相反，要推翻旧的请把它的编号填在 replaces 里' }); continue; } // 意思相反的不合并
+      same.n = (same.n || 1) + 1; same.lastAt = at; same.from = [...new Set([...(same.from || []), ...cites.map((e) => e.id)])].slice(-8); if (scope === 'home') same.scope = 'home';
+      if (same.status === '暂定') { // 被第二次想到 = 站得住，当时就升生效（不用再等收尾）
+        same.status = '生效'; same.confirmedAt = at;
+        addChange(mem, { kind: '站住了', before: same.text, scope: same.scope || 'home', at });
+        logOp(mem, { op: 'confirm', at, text: same.text });
+      }
+      out.merged.push(same.text); continue;
     }
     mem.seq = (mem.seq || 0) + 1;
-    const b = { id: `B${mem.seq.toString(36)}`, text, about: BELIEF_ABOUT.includes(a?.about) ? a.about : '自己', scope, from: cites.map((e) => e.id), at, lastAt: at, n: 1 };
+    const b = { id: `B${mem.seq.toString(36)}`, text, why, effect, about, scope, source: 'reflect', status: '暂定', from: cites.map((e) => e.id), at, lastAt: at, n: 1 };
     mem.beliefs.push(b); out.added.push(b.text);
   }
-  if (mem.beliefs.length > MAX_BELIEFS) {
-    const score = (b) => (b.n || 1) * 10 + ms(b.lastAt) / DAY / 30; // 想到次数多的、最近想到的留下
-    mem.beliefs = mem.beliefs.sort((x, y) => score(y) - score(x)).slice(0, MAX_BELIEFS);
-  }
+  retireOverCap(mem, at ?? new Date(now).toISOString()); // 加完再收一次上限（3.5）：超的退役留档，不删
+  trimHistory(mem);
   return out;
 }
 
-/** 给模型看的认识（按范围过滤）：想到次数多的在前。 */
+/** 睡前收尾（二期 3.4）：暂定 → 生效 / 放下，生效 → 退役，最后跑一遍上限。返回 { confirmed, retired, superseded, dropped }（都是 text）。 */
+export function settleBeliefs(mem, { now, baseDays = 30, at, day } = {}) {
+  const res = { confirmed: [], retired: [], superseded: [], dropped: [] };
+  mem.beliefs = Array.isArray(mem.beliefs) ? mem.beliefs : [];
+  mem.changes = Array.isArray(mem.changes) ? mem.changes : [];
+  const when = at || new Date(now).toISOString();
+  const nowT = typeof now === 'number' ? now : ms(now); // now 可能是毫秒也可能是 ISO 字符串
+  const today = day ? (localDay(day) || localDay(now)) : localDay(now); // 「今天」按本机日子（一期-2 F）
+  const byId = new Map(mem.beliefs.map((b) => [b.id, b]));
+  for (const b of mem.beliefs) {
+    if (b.status !== '暂定') continue;
+    if (localDay(b.at) === today) continue; // 今天刚想到的先不办：至少要过一夜
+    if (!evidenceOk(mem, b, now, baseDays)) { // 站不住：超过 7 天还没升 → 放下（退役，留档）
+      if (nowT - ms(b.at) > 7 * DAY) {
+        b.status = '退役'; b.endedAt = when;
+        addChange(mem, { kind: '没站住', before: b.text, scope: b.scope || 'home', at: when });
+        logOp(mem, { op: 'retire', at: when, text: b.text });
+        res.dropped.push(b.text);
+      }
+      continue;
+    }
+    b.status = '生效'; b.confirmedAt = when;
+    res.confirmed.push(b.text);
+    logOp(mem, { op: 'confirm', at: when, text: b.text });
+    const old = b.replaces ? byId.get(b.replaces) : null;
+    if (old && alive(old)) { // 它站住了，被它推翻的那条让位成「被取代」
+      old.status = '被取代'; old.supersededBy = b.id; old.endedAt = when;
+      res.superseded.push(old.text);
+      addChange(mem, { kind: '取代', before: old.text, after: b.text, scope: old.scope === 'public' && b.scope === 'public' ? 'public' : 'home', at: when });
+      logOp(mem, { op: 'supersede', at: when, text: old.text });
+    } else addChange(mem, { kind: '站住了', before: b.text, scope: b.scope || 'home', at: when });
+  }
+  for (const b of mem.beliefs) { // 生效 → 退役：依据全忘了，还一个多月没再想到
+    if (b.status !== '生效' || nowT - ms(b.lastAt) <= 30 * DAY || citedEpisodes(mem, b, now, baseDays).length) continue;
+    b.status = '退役'; b.endedAt = when;
+    res.retired.push(b.text);
+    addChange(mem, { kind: '不再这么想', before: b.text, ...(b.why ? { why: String(b.why).slice(0, 20) } : {}), scope: b.scope || 'home', at: when });
+    logOp(mem, { op: 'retire', at: when, text: b.text });
+  }
+  retireOverCap(mem, when);
+  trimHistory(mem);
+  return res;
+}
+
+/** 给模型的认识（注入，找出来的范围过滤）：只给生效的，只拿 text 用。 */
 export function beliefsFor(mem, { scope = 'all', limit = 5 } = {}) {
-  return (mem.beliefs || []).filter((b) => scope !== 'public' || b.scope === 'public')
+  return (mem.beliefs || [])
+    .filter(alive)
+    .filter((b) => (b.status || '生效') === '生效')
+    .filter((b) => scope !== 'public' || b.scope === 'public')
+    .slice().sort((a, b) => ((b.n || 1) - (a.n || 1)) || (ms(b.lastAt) - ms(a.lastAt))).slice(0, limit);
+}
+
+/** 已有的认识（生效 + 暂定），给反思提示词列「你已经有的认识」用：被取代 / 退役的不列。 */
+export function activeBeliefs(mem, { scope = 'all', limit = 30 } = {}) {
+  return (mem.beliefs || [])
+    .filter(alive)
+    .filter((b) => scope !== 'public' || b.scope === 'public')
     .slice().sort((a, b) => ((b.n || 1) - (a.n || 1)) || (ms(b.lastAt) - ms(a.lastAt))).slice(0, limit);
 }
 

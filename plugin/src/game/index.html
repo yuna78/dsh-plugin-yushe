@@ -491,6 +491,10 @@ body[data-screen="home"] #homeActs{display:flex}
 .her .mstat{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;text-align:center;font:12px var(--body);color:var(--mute)}.her .mstat b{display:block;font:20px var(--game);color:var(--ink)}
 .her .mstat .s-fuzzy b{opacity:.6}.her .mstat .s-trace b{color:var(--mute)}
 .her .belief{font:13px/1.6 var(--body);margin:4px 0;padding:6px 10px;background:#fff;border:2px solid var(--ol);border-radius:10px}.her .belief small{display:block;color:var(--mute);font-size:11px}
+/* 对自己的认识：点开看来龙去脉（二期）；还在想的一行小字 */
+.her .belief.fold summary{cursor:pointer;list-style:none}.her .belief.fold summary::-webkit-details-marker{display:none}.her .belief.fold summary::after{content:'▾';float:right;color:var(--mute);font-size:11px}.her .belief.fold[open] summary::after{content:'▴'}.her .belief.fold summary i{display:block;color:var(--mute);font-size:11px;font-style:normal}
+.her .belief dl{margin:6px 0 2px;display:grid;grid-template-columns:auto 1fr;gap:2px 8px;font-size:12px;color:var(--ink)}.her .belief dt{color:var(--mute)}.her .belief dd{margin:0;color:var(--mute)}
+.her .germ{font:12px var(--body);margin:4px 0;color:var(--mute)}.her .germ em{font-style:normal;background:#fff;border:2px solid var(--ol);border-radius:999px;padding:1px 10px;margin:2px 4px 2px 0;display:inline-block}
 .her .mrow{display:grid;grid-template-columns:34px 1fr;gap:6px;font:12px/1.6 var(--body);margin:3px 0}.her .mrow i{font-style:normal;font-size:11px;color:var(--mute)}
 .her .mrow.st-清晰 span{color:var(--ink)}.her .mrow.st-模糊 span{color:var(--ink);opacity:.6}.her .mrow.st-印象 span{color:var(--mute);font-style:italic}
 .tabs .tab{min-width:0;white-space:nowrap}
