@@ -453,6 +453,13 @@ body[data-screen="home"] #homeActs{display:flex}
 .her .int{display:grid;grid-template-columns:1fr 64px 18px;align-items:center;gap:6px;font:13px var(--body);margin:4px 0}.her .int small{grid-column:1/-1;margin-top:-4px;color:var(--mute);font-size:11px}.her .int .bar3{height:8px;background:#eee;border:2px solid var(--ol);border-radius:6px;overflow:hidden}.her .int .bar3 b{display:block;height:100%;background:#ffcf4a}
 .her .up{display:inline-block;margin:2px 4px 2px 0;padding:2px 10px;font:12px var(--body);background:#fff;border:2px solid var(--ol);border-radius:999px}
 .her .glog{font:12px/1.6 var(--body);color:var(--ink)}.her .glog i{color:var(--mute);font-style:normal;margin-right:6px}
+/* 记忆页（F-76 第二步） */
+.her .mstat{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;text-align:center;font:12px var(--body);color:var(--mute)}.her .mstat b{display:block;font:20px var(--game);color:var(--ink)}
+.her .mstat .s-fuzzy b{opacity:.6}.her .mstat .s-trace b{color:var(--mute)}
+.her .belief{font:13px/1.6 var(--body);margin:4px 0;padding:6px 10px;background:#fff;border:2px solid var(--ol);border-radius:10px}.her .belief small{display:block;color:var(--mute);font-size:11px}
+.her .mrow{display:grid;grid-template-columns:34px 1fr;gap:6px;font:12px/1.6 var(--body);margin:3px 0}.her .mrow i{font-style:normal;font-size:11px;color:var(--mute)}
+.her .mrow.st-清晰 span{color:var(--ink)}.her .mrow.st-模糊 span{color:var(--ink);opacity:.6}.her .mrow.st-印象 span{color:var(--mute);font-style:italic}
+.tabs .tab{min-width:0;white-space:nowrap}
 #mailDot[hidden]{display:none}
 .letter{margin-bottom:10px;padding:12px 14px;background:#fffbe6;border:3px solid var(--ol);border-radius:8px;box-shadow:0 3px 0 var(--ol)}.letter b{font:13px var(--game);color:var(--mute)}.letter p{margin:6px 0 0;font:15px/1.7 var(--game);white-space:pre-wrap}.letter.new{background:#fff0f5}
 .moodfx{position:absolute;z-index:3;left:50%;top:30%;font:26px var(--game);pointer-events:none;animation:moodfx 1.8s ease-out forwards;text-shadow:0 2px 0 #fff}
@@ -654,7 +661,7 @@ body[data-screen="home"] #homeActs{display:flex}
         <div class="floor-shadow"></div>
       </div>
       <aside class="side panel">
-        <div class="tabs"><button class="tab on" data-tab="today">今天</button><button class="tab" data-tab="sched">日程</button><button class="tab" data-tab="diary">日记</button><button class="tab" data-tab="her">她</button></div>
+        <div class="tabs"><button class="tab on" data-tab="today">今天</button><button class="tab" data-tab="sched">日程</button><button class="tab" data-tab="diary">日记</button><button class="tab" data-tab="her">她</button><button class="tab" data-tab="mem">记忆</button></div>
         <div class="tabbody" id="tabBody"></div>
         <button class="gb sm" id="diaryWrite2" style="display:none;margin-top:8px">让她写今天的日记</button>
       </aside>

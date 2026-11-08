@@ -1529,7 +1529,7 @@ section('记忆：会慢慢忘的经历、认人、家里 / B站分级、召回'
     parentMid: '999',
   });
   const kinds = items.map((x) => x.kind);
-  ok(!kinds.includes('work') && !kinds.includes('back') && kinds.includes('chat') && kinds.includes('diary') && kinds.includes('postcard') && kinds.includes('seen'), '档案抄成经历：干活（DSH 工作内容）不进记忆，回家事件和见闻不重复');
+  ok(!kinds.includes('work') && !kinds.includes('back') && !kinds.includes('chat') && kinds.includes('diary') && kinds.includes('postcard') && kinds.includes('seen'), '档案抄成经历：干活（DSH 工作内容）不进记忆，回家事件和见闻不重复；聊天不从事件抄（从聊天记录抄）');
   ok(items.find((x) => x.kind === 'dm-parent') && items.find((x) => x.kind === 'dm-in') && !items.some((x) => x.text.includes('你好呀')), '爸妈专线算家里的事，陌生人私信算 B站的事；只记对方说的');
   const im = MM.emptyMemory();
   ok(MH.ingest(im, items) === items.length && MH.ingest(im, items) === 0, '同步去重：同一份档案抄第二遍不会多记');
@@ -1558,6 +1558,55 @@ section('记忆：会慢慢忘的经历、认人、家里 / B站分级、召回'
   ok(read('src/host/trip-loop.js').includes('memoryText') && read('src/host/trips.js').includes("scope: 'public'"), '出门的系统提示带 B站上的记忆和最近评论过的视频');
   ok(read('src/host/life-routes.js').includes("memory?.section?.(f, { scope: 'all' })") && read('src/host/life-routes.js').includes('query: text'), 'DSH 主会话带「你记得的事」；鱼社聊天按爸妈这句话召回');
   ok(read('src/host/tools/speak-common.js').includes('aboutPerson'), '写评论 / 回复 / 私信前想起认不认识对方');
+  // 第二步：睡前反思 → 长期认识
+  const rm = MM.emptyMemory();
+  const e1 = MM.makeEpisode(rm, { at: iso(T0), kind: 'seen', text: '在 B站看了《深夜拉面》', keys: { tag: '美食' } });
+  const e2 = MM.makeEpisode(rm, { at: iso(T0 + D), kind: 'comment', text: '在 B站评论了《炒饭教程》：「好香」', keys: { tag: '美食' } });
+  const e3 = MM.makeEpisode(rm, { at: iso(T0 + D), kind: 'mood', text: '妈妈夸本鱼画画好看' });
+  const e4 = MM.makeEpisode(rm, { at: iso(T0 + D), kind: 'got-reply', text: '小橘回了本鱼', keys: { who: '小橘' } });
+  const old = MM.makeEpisode(rm, { at: iso(T0 - 400 * D), kind: 'chat', text: '很久以前聊的' });
+  rm.episodes.push(e1, e2, e3, e4, old);
+  const cands = MM.reflectCandidates(rm, { now: T0 + 2 * D });
+  ok(cands.length === 4 && !cands.includes(old), '反思素材只用还没忘的经历（忘掉的不会被想起来）');
+  const pr = MM.reflectPrompt({ persona: '我是小鱼', call: '妈妈', episodes: cands, beliefs: [] });
+  ok(pr.includes(`[${e1.id}]`) && pr.includes('只输出 JSON') && !pr.includes('很久以前'), '反思提示词带经历编号，要求写依据、只输出 JSON');
+  const ref = MM.applyReflection(rm, JSON.stringify({ add: [
+    { text: '我好像特别爱看吃的', about: '喜好', from: [e1.id, e2.id] },
+    { text: '妈妈喜欢我画画', about: '爸妈', from: [e3.id] },
+    { text: '小橘是会回我话的人', about: '人', from: [e4.id] },
+    { text: '我是宇航员', about: '自己', from: ['M999', old.id] },
+  ] }), { now: T0 + 2 * D, at: iso(T0 + 2 * D) });
+  ok(ref.added.length === 2 && ref.rejected.length === 1 && !rm.beliefs.some((b) => b.text.includes('宇航员')), '规则验依据：两件还记得的事 / 一件很重要的事才算；一晚最多 3 条新认识');
+  const fake = MM.applyReflection(MM.emptyMemory(), JSON.stringify({ add: [{ text: '我是宇航员', from: ['M999', old.id] }] }), { now: T0 + 2 * D, at: iso(T0) });
+  ok(fake.added.length === 0 && fake.rejected.length === 1, '编号不存在或那件事已经忘了：这条认识丢掉');
+  ok(rm.beliefs.find((b) => b.text.includes('吃的')).scope === 'public' && !rm.beliefs.some((b) => b.text.includes('画画')), '依据全是 B站的事 → 这条认识对外也能说；只有一件普通的家里事不够');
+  const ref2 = MM.applyReflection(rm, '{"add":[{"text":"我特别爱看吃的","about":"喜好","from":["' + e1.id + '","' + e2.id + '"]}]}', { now: T0 + 3 * D, at: iso(T0 + 3 * D) });
+  ok(ref2.merged.length === 1 && rm.beliefs.length === 2 && rm.beliefs.find((b) => b.text.includes('吃的')).n === 2, '意思一样的认识不重复记，只加深（想到过 2 次）');
+  ok(MM.applyReflection(rm, '随便说说', { now: T0, at: iso(T0) }).parsed === false && rm.beliefs.length === 2, '模型没按格式回：什么都不改');
+  rm.beliefs.push({ id: 'Bh', text: '我最喜欢和妈妈聊天', about: '爸妈', scope: 'home', from: [], at: iso(T0), lastAt: iso(T0), n: 5 });
+  ok(MM.beliefsFor(rm, { scope: 'public' }).every((b) => b.scope === 'public') && MM.beliefsFor(rm, { scope: 'all' })[0].id === 'Bh', '对外只给 B站的认识；想到次数多的排前面');
+  for (let i = 0; i < 40; i++) rm.beliefs.push({ id: `Bx${i}`, text: `认识${i}`, scope: 'public', at: iso(T0), lastAt: iso(T0), n: 1 });
+  MM.applyReflection(rm, '{"add":[]}', { now: T0, at: iso(T0) });
+  ok(rm.beliefs.length === MM.MAX_BELIEFS && rm.beliefs.some((b) => b.id === 'Bh'), '长期认识最多 30 条，想到次数少的先放下');
+  ok(MM.memoryText([], [], { beliefs: [{ text: '我爱吃' }] }).includes('【你对自己的认识】'), '给模型的那段带上「你对自己的认识」');
+  // 宿主反思：一天一次、花零花钱、规则验
+  const rDir = mkdtempSync(join(tmpdir(), 'yushe-reflect-'));
+  const evs = [0, 1, 2, 3].map((i) => ({ at: iso(now - D + i * 1000), kind: 'mood', text: `妈妈第${i}次夸本鱼` }));
+  const refMem = MH.createMemory({ storage: rDir, life: { state: () => ({ events: evs, chat: [{ role: 'user', text: '今天去爬山啦', at: iso(now - 3000) }, { role: 'fish', text: '好棒！', at: iso(now - 2000) }] }) }, gate: { footprints: () => [] }, inbox: { all: () => [] }, dms: { view: () => ({ convs: [] }) }, habits: { get: () => ({}) } });
+  const synced = refMem.sync(fish, { minGapMs: 0 });
+  ok(!synced.episodes.some((e) => e.kind === 'chat'), '升级那一刻之前的聊天不重抄（0.29.0 已经从事件抄过）');
+  const ids = synced.episodes.map((e) => e.id);
+  let asked = '';
+  const fakeWallet = { say: async (kind, prompt) => { asked = kind; return { text: JSON.stringify({ add: [{ text: '妈妈总是夸我', about: '爸妈', from: ids.slice(0, 2) }] }) }; } };
+  const rr = await refMem.reflect(fish, fakeWallet, { day: '2026-11-08' });
+  ok(rr.ok && rr.added.length === 1 && asked === 'reflect' && refMem.view(fish).beliefs[0].home === true, '宿主反思：花零花钱（reflect）、新认识写进存档；依据是家里的事 → 标成家里的');
+  ok((await refMem.reflect(fish, fakeWallet, { day: '2026-11-08' })).why === '今天想过了', '一天只反思一次');
+  ok((await refMem.reflect(fish, { say: async () => { const e = new Error('broke'); e.broke = true; throw e; } }, { day: '2026-11-09' })).why.includes('零花钱'), '零花钱花光了就不想（不用规则硬凑）');
+  ok(!refMem.section(fish, { scope: 'public' }).includes('夸我') && refMem.section(fish, { scope: 'all' }).includes('妈妈总是夸我'), '家里的认识只在跟爸妈说话时出现');
+  const chatItems = MH.archiveItems({ fish, life: { chat: [{ role: 'user', text: '明天我要出差', at: iso(T0) }, { role: 'fish', text: '一路平安！', at: iso(T0 + 1000) }] } });
+  ok(chatItems.length === 1 && chatItems[0].text.includes('明天我要出差') && chatItems[0].text.includes('一路平安'), '聊天记成「妈妈说 + 本鱼回」一条，不再只记前 30 字');
+  ok(read('src/host/life-routes.js').includes("memory.reflect(fish, wallet, { day })") && read('src/host/planner.js').includes('writeDiary({ wallet, life, memory }'), '写完日记（23:30 定时 / 补写 / 点按钮）后台反思一次');
+  ok(read('src/game/main.js').includes('function memPanel') && read('src/game/index.html').includes('data-tab="mem"'), '鱼社房间多一个「记忆」页');
 }
 
 /* ---------- 发版：版本号两处一致（docs/发版.md） ---------- */

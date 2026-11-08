@@ -5,3 +5,4 @@ plugin/game/
 .DS_Store
 AGENTS.local.md
 .agents/
+.claude/worktrees/

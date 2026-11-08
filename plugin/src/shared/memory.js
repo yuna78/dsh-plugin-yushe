@@ -49,7 +49,7 @@ export const TIERS = [
   { min: 1, name: '新认识', days: 1.5 },
 ];
 
-export const emptyMemory = () => ({ version: 1, episodes: [], people: {}, cursors: {}, seq: 0 });
+export const emptyMemory = () => ({ version: 1, episodes: [], people: {}, beliefs: [], cursors: {}, seq: 0 });
 
 const clean = (s, n) => String(s ?? '').replace(/[\u0000-\u001f<>`]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
 const ms = (iso) => { const t = Date.parse(iso); return Number.isFinite(t) ? t : 0; };
@@ -252,9 +252,11 @@ export function aboutPerson(mem, { mid, who }, { now, baseDays = 30 } = {}) {
 }
 
 /** 给模型的一段「你记得的事」。 */
-export function memoryText(items, people = [], { title = '【你记得的事】', tail = '' } = {}) {
-  if (!items.length && !people.length) return '';
-  const lines = [title];
+export function memoryText(items, people = [], { title = '【你记得的事】', tail = '', beliefs = [] } = {}) {
+  if (!items.length && !people.length && !beliefs.length) return '';
+  const lines = [];
+  if (beliefs.length) lines.push('【你对自己的认识】（睡前反思攒下的）', ...beliefs.map((b) => `- ${b.text}`));
+  if (items.length || people.length) lines.push(title);
   for (const it of items) lines.push(`- ${it.text}`);
   if (people.length) lines.push(`B站上你认识的人：${people.map((p) => `${p.who}（${p.tier}${p.fuzzy ? '，有点记不清' : ''}）`).join('、')}`);
   lines.push(tail || '这些是你自己的记忆，模糊的就说得含糊些，别编细节；没想起来的事就是忘了。');
@@ -265,5 +267,77 @@ export function memoryText(items, people = [], { title = '【你记得的事】'
 export function memoryStats(mem, { now, baseDays = 30 } = {}) {
   const by = { clear: 0, fuzzy: 0, trace: 0 };
   for (const ep of mem.episodes || []) { const st = stageOf(ep, now, baseDays); if (by[st] !== undefined) by[st] += 1; }
-  return { ...by, people: Object.keys(mem.people || {}).length };
+  return { ...by, people: Object.keys(mem.people || {}).length, beliefs: (mem.beliefs || []).length };
+}
+
+/* ---------- 长期认识（F-76 第二步）：睡前反思，AI 摘、规则验引用 ---------- */
+export const MAX_BELIEFS = 30;
+export const BELIEF_ABOUT = ['自己', '喜好', '人', '爸妈'];
+const REFLECT_SKIP = new Set(['feed', 'news', 'like', 'comment_like', 'collect', 'got-like']);
+
+/** 反思的素材：还没忘的经历（最近 + 重要的），最多 n 条。用的是已经擦过细节的样子，忘掉的不会回来。 */
+export function reflectCandidates(mem, { now, baseDays = 30, n = 30 } = {}) {
+  const live = (mem.episodes || []).filter((e) => !REFLECT_SKIP.has(e.kind) && stageOf(e, now, baseDays) !== 'forgotten');
+  const recent = live.filter((e) => now - ms(e.at) < 7 * DAY).slice(-20);
+  const important = live.filter((e) => !recent.includes(e)).sort((a, b) => (b.imp - a.imp) || (ms(b.at) - ms(a.at))).slice(0, n - recent.length);
+  return [...important, ...recent].sort((a, b) => ms(a.at) - ms(b.at)).slice(-n);
+}
+
+/** 反思提示词（只给她自己的人设和还记得的事）。 */
+export function reflectPrompt({ persona = '', call = '爸妈', episodes = [], beliefs = [] }) {
+  return [persona, '',
+    `【睡前想一想】日记写完了。回头看看最近还记得的事，想想有没有让你对自己、对喜欢的东西、对 B站上认识的人、对${call}多了一点认识。`,
+    '【还记得的事】（编号在方括号里；模糊的事就只记得这么多）',
+    ...episodes.map((e) => `- [${e.id}] ${clean(e.at, 10)} ${e.text}`), '',
+    beliefs.length ? '【你已经有的认识】' : '', ...beliefs.map((b) => `- [${b.id}] ${b.text}`), '',
+    '规矩：',
+    '- 只能从上面的事里想，不编没发生的事；普通寒暄、一次性的小事不用总结。',
+    '- 每条认识写出依据：from 填事情编号，至少两件（很重要的一件事也可以只填一件）。',
+    `- 每条不超过 30 字，用「我」来说；about 只能是 ${BELIEF_ABOUT.join(' / ')}。`,
+    '- 和已有的认识意思一样就别再写；某条旧认识明显不对了，可以把它的编号放进 drop（最多 2 条）。',
+    '- 最多 3 条新认识；没有新认识就给空数组。',
+    '只输出 JSON，不要别的字：{"add":[{"text":"…","about":"喜好","from":["M1a","M3"]}],"drop":[]}',
+  ].filter((x) => x !== '').join('\n');
+}
+
+const sim = (a, b) => { const x = tokens(a), y = tokens(b); if (!x.size || !y.size) return 0; let n = 0; for (const w of x) if (y.has(w)) n += 1; return n / Math.min(x.size, y.size); };
+
+/**
+ * 规则验模型的反思，并进长期认识。返回 { added, merged, dropped, rejected: [{text, why}] }（改 mem）。
+ * 依据必须是此刻还没忘的经历；家里的经历做依据 → 这条认识也算家里的（对外不说）。
+ */
+export function applyReflection(mem, raw, { now, baseDays = 30, at } = {}) {
+  let j = null;
+  try { const s = String(raw || ''); const m = s.match(/\{[\s\S]*\}/); j = JSON.parse(m ? m[0] : s); } catch { j = null; }
+  const out = { added: [], merged: [], dropped: [], rejected: [], parsed: Boolean(j) };
+  if (!j) return out;
+  mem.beliefs = Array.isArray(mem.beliefs) ? mem.beliefs : [];
+  const byId = new Map((mem.episodes || []).map((e) => [e.id, e]));
+  for (const id of (Array.isArray(j.drop) ? j.drop : []).slice(0, 2)) {
+    const i = mem.beliefs.findIndex((b) => b.id === String(id));
+    if (i >= 0) out.dropped.push(mem.beliefs.splice(i, 1)[0].text);
+  }
+  for (const a of (Array.isArray(j.add) ? j.add : []).slice(0, 3)) {
+    const text = clean(a?.text, 40).replace(/https?:\/\/\S+|BV[0-9A-Za-z]{10}|\d{5,}/g, '').trim();
+    if (text.length < 4) { out.rejected.push({ text, why: '太短' }); continue; }
+    const cites = [...new Set((Array.isArray(a?.from) ? a.from : []).map(String))].map((id) => byId.get(id)).filter((e) => e && stageOf(e, now, baseDays) !== 'forgotten');
+    if (!(cites.length >= 2 || (cites.length === 1 && cites[0].imp >= 4))) { out.rejected.push({ text, why: '依据不够（要两件还记得的事，或一件很重要的事）' }); continue; }
+    const scope = cites.some((e) => e.scope === 'home') ? 'home' : 'public';
+    const same = mem.beliefs.find((b) => sim(b.text, text) >= 0.6);
+    if (same) { same.n = (same.n || 1) + 1; same.lastAt = at; same.from = [...new Set([...(same.from || []), ...cites.map((e) => e.id)])].slice(-8); if (scope === 'home') same.scope = 'home'; out.merged.push(same.text); continue; }
+    mem.seq = (mem.seq || 0) + 1;
+    const b = { id: `B${mem.seq.toString(36)}`, text, about: BELIEF_ABOUT.includes(a?.about) ? a.about : '自己', scope, from: cites.map((e) => e.id), at, lastAt: at, n: 1 };
+    mem.beliefs.push(b); out.added.push(b.text);
+  }
+  if (mem.beliefs.length > MAX_BELIEFS) {
+    const score = (b) => (b.n || 1) * 10 + ms(b.lastAt) / DAY / 30; // 想到次数多的、最近想到的留下
+    mem.beliefs = mem.beliefs.sort((x, y) => score(y) - score(x)).slice(0, MAX_BELIEFS);
+  }
+  return out;
+}
+
+/** 给模型看的认识（按范围过滤）：想到次数多的在前。 */
+export function beliefsFor(mem, { scope = 'all', limit = 5 } = {}) {
+  return (mem.beliefs || []).filter((b) => scope !== 'public' || b.scope === 'public')
+    .slice().sort((a, b) => ((b.n || 1) - (a.n || 1)) || (ms(b.lastAt) - ms(a.lastAt))).slice(0, limit);
 }

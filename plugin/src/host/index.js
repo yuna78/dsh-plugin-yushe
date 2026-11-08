@@ -42,7 +42,7 @@ import { createWorkspaces, registerWorkspaceRoutes } from './workspaces.js';
 export const name = 'dsh-plugin-yushe'; // 包名；存档目录、路由前缀仍叫 dsh-yushe（老存档不丢）
 // 人设注入要用 systemPrompt（所有带 dsh-base 的 profile 都有）
 export const inject = ['systemPrompt'];
-export const VERSION = '0.29.0';
+export const VERSION = '0.30.0';
 export const STATUS_PATH = '/api/dsh-yushe/status';
 export const SAY_PATH = '/api/dsh-yushe/probe/say';
 export const ROAM_PATH = '/api/dsh-yushe/probe/roam';
@@ -116,7 +116,7 @@ export function apply(ctx) {
   const biliRead = createBiliRead(storageDir(), fetch, { extraPaths: pathsOf('GET'), budget: () => habits.get().readBudget }); // 每天读多少次 = 细配置 readBudget
   const biliWrite = createBiliWrite(storageDir(), fetch, { sign: (p) => biliRead.signQuery(p), blocked: () => biliRead.blocked(), extraPaths: pathsOf('POST') }); // 发私信要 WBI 签名；风控期间不发（G3）
   const letters = createLetters({ life, wallet, pond, log, habits });
-  const planner = createPlanner({ life, wallet, pond, log });
+  const planner = createPlanner({ life, wallet, pond, log, memory: { reflect: (...a) => memory.reflect(...a) } }); // memory 在下面建（要用 gate / inbox / dms）
   const gate = createGate({ storage: storageDir(), life, habits, biliRead, biliWrite, log, kinds: draftKindsOf(), senders: sendersOf(), capKeys: capKeysOf() }); // 说话工具声明的类型 / 发法 / 上限（任务 50）
   const acts = createActs({ storage: storageDir(), habits, life, gate, pond, log }); // 互动账本（任务 49）：上限、对同一个人上限、她自己关注的名单、回执 → 足迹
   gate.usePerson(acts); // G4：说话也算进「对同一个人每天上限」

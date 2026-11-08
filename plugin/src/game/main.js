@@ -942,6 +942,24 @@ function herPanel(g, fish) {
   </div>`;
 }
 
+// 记忆页（F-76 第二步）：她还记得什么、对自己的认识、认识的人
+function memPanel(m) {
+  if (!m || !m.ok) return '<div class="empty">记忆还没准备好，过一会儿再看～</div>';
+  const call = esc(LIFE?.fish?.parentCall || '爸妈');
+  const stat = `<div class="mstat"><div><b>${m.clear || 0}</b>清晰</div><div class="s-fuzzy"><b>${m.fuzzy || 0}</b>模糊</div><div class="s-trace"><b>${m.trace || 0}</b>只剩印象</div><div><b>${m.people?.filter((p) => p.tier !== '爸妈').length || 0}</b>认识的人</div></div>`;
+  const bl = (m.beliefs || []).length ? m.beliefs.map((b) => `<div class="belief">${esc(b.text)}<small>${esc(b.about)}${b.times > 1 ? ` · 想到过 ${b.times} 次` : ''}${b.home ? ' · 家里的事，不对外说' : ''}</small></div>`).join('') : `<div class="empty" style="margin-top:6px">还没有。她每天写完日记会想一想，慢慢攒下对自己的认识。</div>`;
+  const ppl = (m.people || []).filter((p) => p.tier !== '爸妈');
+  const pp = ppl.length ? ppl.map((p) => `<span class="up">${esc(p.who)} · ${esc(p.tier)}${p.fuzzy ? '（记不清了）' : ''}</span>`).join('') : '<div class="empty" style="margin-top:6px">B站上还没认识谁</div>';
+  const rec = (m.recent || []).length ? m.recent.map((e) => `<div class="mrow st-${esc(e.stage)}"><i>${esc(e.stage)}</i><span>${esc(e.text)}</span></div>`).join('') : '<div class="empty" style="margin-top:6px">还没记下什么</div>';
+  return `<div class="her">
+    <h4>${ICON('brain')} 她还记得多少 <small style="font:11px var(--body);color:var(--mute)">（记性：普通的事 ${m.days} 天忘一半）</small></h4>${stat}
+    <h4>${ICON('sparkle')} 对自己的认识</h4>${bl}
+    <h4>${ICON('heart')} B站上认识的人</h4>${pp}
+    <h4>${ICON('book')} 最近记得的事 <small style="font:11px var(--body);color:var(--mute)">（会慢慢变模糊；档案在「见闻」「日记」里，一直都在）</small></h4>${rec}
+    <div class="empty" style="font-size:12px">${call}可以在设置里调「记性」：健忘 / 适中 / 好记性</div>
+  </div>`;
+}
+
 // 右侧面板
 let TAB = 'today';
 const hhmm = (iso) => { const d = new Date(iso); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
@@ -960,6 +978,10 @@ async function renderTab() {
     if (!r.ready) setTimeout(() => { if (TAB === 'sched') renderTab(); }, 8000); // 她写好了就换上
   } else if (TAB === 'her') {
     body.innerHTML = herPanel(LIFE?.growth, LIFE?.fish);
+  } else if (TAB === 'mem') {
+    body.innerHTML = '<div class="empty">她在回想……</div>';
+    const m = await api('/memory').catch(() => null);
+    if (TAB === 'mem') body.innerHTML = memPanel(m);
   } else {
     const d = LIFE?.diary || [];
     body.innerHTML = d.length ? d.map((x) => `<div class="dentry" style="margin-bottom:8px"><b>${esc(x.day)}</b><p>${esc(x.text)}</p></div>`).join('') : '<div class="empty">还没有日记，她睡前会写；也可以现在让她写。</div>';

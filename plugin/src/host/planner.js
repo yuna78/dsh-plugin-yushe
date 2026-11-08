@@ -9,7 +9,7 @@ import { planPrompt, validatePlan, templatePlan, diaryDue } from '../shared/plan
 import { outgoingness } from '../shared/trip.js';
 import { writeDiary } from './life-routes.js';
 
-export function createPlanner({ life, wallet, pond, log }) {
+export function createPlanner({ life, wallet, pond, log, memory = null }) {
   const busy = new Set();
   const parseArr = (text) => { const m = String(text || '').match(/\[[\s\S]*\]/); if (!m) return null; try { return JSON.parse(m[0]); } catch { return null; } };
   const planner = {
@@ -43,7 +43,7 @@ export function createPlanner({ life, wallet, pond, log }) {
       const s = life.state(fish), day = dayOf();
       if (diaryDue({ d: nowDate(), hasEventsToday: (s.events || []).some((e) => e.day === day), hasDiaryToday: (s.diary || []).some((x) => x.day === day) }) && !busy.has(`diary:${fish.id}`)) {
         busy.add(`diary:${fish.id}`);
-        try { await writeDiary({ wallet, life }, fish, day); } finally { busy.delete(`diary:${fish.id}`); }
+        try { await writeDiary({ wallet, life, memory }, fish, day); } finally { busy.delete(`diary:${fish.id}`); }
       }
     },
   };

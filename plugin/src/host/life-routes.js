@@ -47,11 +47,14 @@ export function ruleDiary(fish, s, day, life) {
 }
 
 /** 写一篇日记（23:30 定时、打开房间补写、点按钮都走这里）：模型写；零花钱花光写流水账。返回 { text, ai, diary }。 */
-export async function writeDiary({ wallet, life }, fish, day) {
+export async function writeDiary({ wallet, life, memory = null }, fish, day) {
   const s = life.state(fish);
   try {
     const r = await wallet.say('diary', diaryPrompt(fish, s, day, life), null, 60_000);
-    return { text: r.text, ai: true, diary: life.putDiary(fish, day, r.text, true) };
+    const diary = life.putDiary(fish, day, r.text, true);
+    // F-76 第二步：写完日记顺便睡前反思（后台，一天一次，不挡日记）
+    if (memory?.reflect) memory.reflect(fish, wallet, { day }).catch(() => {});
+    return { text: r.text, ai: true, diary };
   } catch (e) {
     if (e?.broke) { const text = ruleDiary(fish, s, day, life); return { text, ai: false, broke: true, diary: life.putDiary(fish, day, text, false) }; }
     throw e;
@@ -78,7 +81,7 @@ export function registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, ga
     if (!days.length) return;
     writing = true;
     const day = days.at(-1);
-    try { await writeDiary({ wallet, life }, fish, day); } catch { /* 下次再补 */ } finally { writing = false; }
+    try { await writeDiary({ wallet, life, memory }, fish, day); } catch { /* 下次再补 */ } finally { writing = false; }
   }
 
   reg(LIFE_PATH, async (req, res) => {
@@ -191,6 +194,7 @@ export function registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, ga
     try {
       const r = await wallet.say('diary', diaryPrompt(f, s, day, life), null, 60_000);
       const diary = life.putDiary(f, day, r.text, true);
+      if (memory?.reflect) memory.reflect(f, wallet, { day }).catch(() => {}); // 睡前反思（后台）
       writeJson(res, 200, { ok: true, day, text: r.text, diary: diary.slice().reverse() });
     } catch (e) {
       if (e?.broke) { const text = ruleDiary(f, s, day, life); const diary = life.putDiary(f, day, text, false); return writeJson(res, 200, { ok: true, day, text, broke: true, diary: diary.slice().reverse() }); }

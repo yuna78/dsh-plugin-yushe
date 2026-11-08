@@ -15,19 +15,28 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { nowMs } from './clock.js';
-import { emptyMemory, makeEpisode, meet, settleMemory, recall, knownPeople, aboutPerson, memoryText, memoryStats, stageOf, STAGE_TEXT } from '../shared/memory.js';
+import { emptyMemory, makeEpisode, meet, settleMemory, recall, knownPeople, aboutPerson, memoryText, memoryStats, stageOf, STAGE_TEXT, reflectCandidates, reflectPrompt, applyReflection, beliefsFor } from '../shared/memory.js';
+import { personaFor } from '../shared/growth.js';
 
 export const MEMORY_PATH = '/api/dsh-yushe/memory';
 const MAX_KEYS = 1500;
-const EVENT_KINDS = { born: 'born', mood: 'mood', nap: 'nap', 'late-work': 'late-work', chat: 'chat', feed: 'feed', news: 'news' };
+const EVENT_KINDS = { born: 'born', mood: 'mood', nap: 'nap', 'late-work': 'late-work', feed: 'feed', news: 'news' }; // 聊天从 chat 记录抄（带她怎么回的），不从事件抄
 const FOOT_KINDS = { comment: 'comment', reply: 'reply', post: 'post', dyncomment: 'dyncomment', dm: 'dm', like: 'like', comment_like: 'comment_like', collect: 'collect', follow: 'follow', unfollow: 'unfollow' };
 const FOOT_WHAT = { comment: '评论了视频', reply: '回复了评论', post: '发了动态', dyncomment: '评论了动态', dm: '回了私信', like: '点赞了视频', comment_like: '给评论点了赞', collect: '收藏了视频', follow: '关注了', unfollow: '取关了' };
 const short = (s, n) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 
 /** 档案 → 一串「候选经历」（带去重 key）。纯函数，verify 直接测。 */
-export function archiveItems({ fish, life = {}, footprints = [], inbox = [], dms = [], parentMid = '' }) {
+export function archiveItems({ fish, life = {}, footprints = [], inbox = [], dms = [], parentMid = '', chatFrom = '' }) {
   const call = fish?.parentCall || '爸妈';
   const out = [];
+  // 和爸妈聊天：爸妈一句 + 她回的一句，记成一条（第二步：不再只记前 30 字）
+  const chat = life.chat || [];
+  for (let i = 0; i < chat.length; i++) {
+    const c = chat[i];
+    if (c.role !== 'user' || !c.at || (chatFrom && String(c.at) < chatFrom)) continue;
+    const reply = chat[i + 1]?.role !== 'user' ? chat[i + 1] : null;
+    out.push({ key: `c:${c.at}`, at: c.at, kind: 'chat', text: `${call}说：「${short(c.text, 60)}」${reply ? `，本鱼回：「${short(reply.text, 40)}」` : ''}` });
+  }
   for (const e of life.events || []) {
     const kind = EVENT_KINDS[e.kind];
     if (kind && e.at) out.push({ key: `e:${e.at}:${e.kind}`, at: e.at, kind, text: e.text });
@@ -102,7 +111,8 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log }) {
       const m = load(fish);
       try {
         const s = life?.state?.(fish) || {};
-        const items = archiveItems({ fish, life: s, footprints: gate?.footprints?.() || [], inbox: inbox?.all?.() || [], dms: dms?.view?.().convs || [], parentMid: habits?.get?.().parentMid || '' });
+        if (!m.cursors.chatFrom) m.cursors.chatFrom = new Date(now).toISOString(); // 0.29.0 已经从事件抄过的聊天不再抄一遍
+        const items = archiveItems({ fish, life: s, footprints: gate?.footprints?.() || [], inbox: inbox?.all?.() || [], dms: dms?.view?.().convs || [], parentMid: habits?.get?.().parentMid || '', chatFrom: m.cursors.chatFrom });
         const added = ingest(m, items);
         const { forgot, faded } = settleMemory(m, now, days());
         save(fish, m);
@@ -129,12 +139,37 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log }) {
       return m.episodes.filter((e) => ['comment', 'reply'].includes(e.kind) && e.keys?.bvid && stageOf(e, now, days()) === 'clear').slice(-n).map((e) => e.keys.bvid);
     },
     /** 给模型的一段。scope 'public' 用在对外说话的地方。 */
-    section(fish, { query = '', scope = 'all', limit = recallN(), people = 3, title, tail } = {}) {
+    section(fish, { query = '', scope = 'all', limit = recallN(), people = 3, beliefs = 5, title, tail } = {}) {
       try {
         const items = memory.recall(fish, { query, scope, limit });
         const ppl = people ? memory.people(fish, { limit: people, parents: false }) : [];
-        return memoryText(items, ppl, { title, tail });
+        const bl = beliefs ? beliefsFor(load(fish), { scope, limit: beliefs }) : [];
+        return memoryText(items, ppl, { title, tail, beliefs: bl });
       } catch { return ''; }
+    },
+    beliefs(fish, { scope = 'all', limit = 30 } = {}) { return beliefsFor(memory.sync(fish), { scope, limit }).map((b) => ({ text: b.text, about: b.about, times: b.n || 1, since: b.at })); },
+    /**
+     * 睡前反思（写完日记后调，一天一次）：模型从还记得的事里提炼认识，规则验引用、去重、限 30 条。
+     * 花零花钱（wallet.say 'reflect'）；花光了就不想。返回 { ok, added, merged, dropped, rejected } 或 { ok: false, why }。
+     */
+    async reflect(fish, wallet, { day, force = false } = {}) {
+      if (!fish || !wallet?.say) return { ok: false, why: '没有模型' };
+      let m = memory.sync(fish, { minGapMs: 0 });
+      if (!force && day && m.cursors.reflectDay === day) return { ok: false, why: '今天想过了' };
+      const now = nowMs();
+      const eps = reflectCandidates(m, { now, baseDays: days() });
+      if (eps.length < 3) return { ok: false, why: '还记得的事太少，先不想' };
+      const s = life?.state?.(fish) || {};
+      const persona = (() => { try { return personaFor(fish, s.growth) || fish.personaText || ''; } catch { return fish.personaText || ''; } })();
+      let raw = '';
+      try { raw = (await wallet.say('reflect', reflectPrompt({ persona, call: fish.parentCall, episodes: eps, beliefs: beliefsFor(m, { limit: 30 }) }), null, 60_000)).text; }
+      catch (e) { return { ok: false, why: e?.broke ? '零花钱花光了，先不想' : `没想出来：${String(e?.message || e).slice(0, 60)}` }; }
+      m = load(fish); // 等模型的时候可能又同步过
+      const r = applyReflection(m, raw, { now: nowMs(), baseDays: days(), at: new Date(nowMs()).toISOString() });
+      m.cursors.reflectDay = day || m.cursors.reflectDay;
+      save(fish, m);
+      log?.info?.(`[dsh-yushe] 睡前反思：新认识 ${r.added.length} 条，加深 ${r.merged.length} 条，放下 ${r.dropped.length} 条${r.rejected.length ? `，没依据丢掉 ${r.rejected.length} 条` : ''}`);
+      return { ok: r.parsed, ...r };
     },
     view(fish) {
       const m = memory.sync(fish, { minGapMs: 0 }), now = nowMs();
@@ -142,6 +177,8 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log }) {
         days: days(), recallN: recallN(), ...memoryStats(m, { now, baseDays: days() }),
         recent: m.episodes.slice(-20).reverse().map((e) => ({ id: e.id, at: e.at, kind: e.kind, scope: e.scope, stage: STAGE_TEXT[stageOf(e, now, days())], text: e.text })),
         people: knownPeople(m, { now, baseDays: days(), limit: 20 }),
+        beliefs: beliefsFor(m, { limit: 30 }).map((b) => ({ text: b.text, about: b.about, times: b.n || 1, since: b.at, home: b.scope === 'home' })),
+        reflectDay: m.cursors.reflectDay || null,
       };
     },
   };
