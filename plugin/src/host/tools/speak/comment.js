@@ -4,7 +4,7 @@ import { viewOf, clean, replyOf, cidOf, sentReceipt } from '../bili-common.js';
 import { createLedger } from '../../../shared/evidence.js';
 import { speak, speakReady } from '../speak-common.js';
 
-const CAP = { key: 'commentsPerDay', label: '每天最多评论几条', levels: { 少: 2, 适中: 6, 多: 12 }, max: 20 };
+const CAP = { key: 'commentsPerDay', label: '每天最多评论几条', levels: { 少: 4, 适中: 12, 多: 20 }, max: 30 };
 
 /** 写评论用的公开资料：标题、简介、标签、热评、（有就）字幕开头。顺便记读账。 */
 export async function videoMaterial(biliRead, bvid, ledger) {

@@ -40,8 +40,8 @@ export const HABIT_FIELDS = {
   commentsPerVideo: { label: '每个视频看几条评论', type: 'int', min: 0, max: 20, def: 5, chat: true, group: 'read' },
 
   // —— 细配置：互动上限（max = 硬顶）——
-  commentsPerDay: { label: '每天最多评论几条', type: 'int', min: 0, max: 20, def: 6, chat: true, group: 'cap' },
-  repliesPerDay: { label: '每天最多回复几条评论', type: 'int', min: 0, max: 20, def: 6, chat: true, group: 'cap' },
+  commentsPerDay: { label: '每天最多评论几条', type: 'int', min: 0, max: 30, def: 12, chat: true, group: 'cap' },
+  repliesPerDay: { label: '每天最多回复几条评论', type: 'int', min: 0, max: 30, def: 12, chat: true, group: 'cap' },
   dynCommentsPerDay: { label: '每天最多评论几条动态', type: 'int', min: 0, max: 10, def: 3, chat: true, group: 'cap' },
   postsPerDay: { label: '每天最多发几条动态', type: 'int', min: 0, max: 5, def: 2, chat: true, group: 'cap' },
   dmsPerDay: { label: '每天最多回几条陌生人私信', type: 'int', min: 0, max: 10, def: 3, zero: '不回', chat: true, group: 'cap' },
@@ -64,7 +64,7 @@ export const HABIT_FIELDS = {
 export const KNOBS = {
   out: { label: '爱不爱出门', levels: ['宅', '看性格', '爱逛'], fields: { outBias: [0.5, 1, 1.8], tripsPerDay: [2, 0, 0], restBias: [1.5, 1, 0.6] } },
   depth: { label: '读多深', levels: ['浅', '中', '深'], fields: { readBudget: [150, 300, 600], tripToolCalls: [6, 12, 20], subtitle: [false, true, true], subtitleChars: [0, 1500, 4000], danmaku: [false, false, true], threads: [false, true, true], commentsPerVideo: [3, 5, 10] } },
-  interact: { label: '互动多少', levels: L3, fields: { commentsPerDay: [2, 6, 12], repliesPerDay: [2, 6, 12], dynCommentsPerDay: [1, 3, 6], postsPerDay: [1, 2, 3], dmsPerDay: [1, 3, 6], likesPerDay: [5, 15, 30], commentLikesPerDay: [5, 15, 30], collectsPerDay: [2, 5, 10], followsPerDay: [1, 2, 4], unfollowsPerDay: [0, 1, 2], perPersonPerDay: [2, 4, 6], replyToReplies: [false, true, true] } },
+  interact: { label: '互动多少', levels: L3, fields: { commentsPerDay: [4, 12, 20], repliesPerDay: [4, 12, 20], dynCommentsPerDay: [1, 3, 6], postsPerDay: [1, 2, 3], dmsPerDay: [1, 3, 6], likesPerDay: [5, 15, 30], commentLikesPerDay: [5, 15, 30], collectsPerDay: [2, 5, 10], followsPerDay: [1, 2, 4], unfollowsPerDay: [0, 1, 2], perPersonPerDay: [2, 4, 6], replyToReplies: [false, true, true] } },
 };
 export const CUSTOM = '自定义';
 

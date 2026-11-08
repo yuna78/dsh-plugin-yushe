@@ -4,7 +4,7 @@ import { viewOf, clean, replyOf, okBv, sentReceipt } from '../bili-common.js';
 import { createLedger } from '../../../shared/evidence.js';
 import { speak, speakReady } from '../speak-common.js';
 
-const CAP = { key: 'repliesPerDay', label: '每天最多回复几条评论', levels: { 少: 2, 适中: 6, 多: 12 }, max: 20 };
+const CAP = { key: 'repliesPerDay', label: '每天最多回复几条评论', levels: { 少: 4, 适中: 12, 多: 20 }, max: 30 };
 
 export default defineTool({
   name: 'bili_reply',
