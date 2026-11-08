@@ -34,6 +34,7 @@ import { createPlanner } from './planner.js';
 import { createGate, registerGateRoutes } from './gate.js';
 import { createInbox, registerInboxRoutes } from './inbox.js';
 import { createDms, registerDmsRoutes } from './dms.js';
+import { createMemory, registerMemoryRoutes } from './memory.js';
 import { createOfficial, registerOfficialRoutes } from './official.js';
 import { createWorkSessions } from './work-sessions.js';
 import { createWorkspaces, registerWorkspaceRoutes } from './workspaces.js';
@@ -41,7 +42,7 @@ import { createWorkspaces, registerWorkspaceRoutes } from './workspaces.js';
 export const name = 'dsh-plugin-yushe'; // 包名；存档目录、路由前缀仍叫 dsh-yushe（老存档不丢）
 // 人设注入要用 systemPrompt（所有带 dsh-base 的 profile 都有）
 export const inject = ['systemPrompt'];
-export const VERSION = '0.28.4';
+export const VERSION = '0.29.0';
 export const STATUS_PATH = '/api/dsh-yushe/status';
 export const SAY_PATH = '/api/dsh-yushe/probe/say';
 export const ROAM_PATH = '/api/dsh-yushe/probe/roam';
@@ -122,8 +123,9 @@ export function apply(ctx) {
   const inbox = createInbox({ storage: storageDir(), life, biliRead, gate, log });
   const official = createOfficial({ storage: storageDir(), biliRead, biliWrite, life, pond, version: VERSION });
   const dms = createDms({ storage: storageDir(), life, wallet, habits, biliRead, gate, log });
-  const trips = createTrips({ life, wallet, pond, storage: storageDir(), log, habits, biliRead, gate });
-  const toolDeps = { pond, life, wallet, habits, trips, log, biliRead, biliWrite, inbox, dms, gate, acts };
+  const memory = createMemory({ storage: storageDir(), life, gate, inbox, dms, habits, log }); // F-76：从档案抄成会慢慢忘的记忆
+  const trips = createTrips({ life, wallet, pond, storage: storageDir(), log, habits, biliRead, gate, memory });
+  const toolDeps = { pond, life, wallet, habits, trips, log, biliRead, biliWrite, inbox, dms, gate, acts, memory };
   registerYusheTools(ctx, toolDeps);
   // 任务 51：出门 = 她自己调工具（同一张工具表的「出门」出口，带读账给 G2 证据检查）；宿主模型拿不到就走 headless 老路
   trips.useLoop({ tools: (ledger) => yusheToolDefs({ ...toolDeps, ledger }, { from: 'trip' }), model: () => hostModel(ctx) });
@@ -133,14 +135,14 @@ export function apply(ctx) {
     try { if (back.trip.wantComment) gate.propose(f, { kind: 'comment', text: back.trip.wantComment.text, target: back.trip.wantComment.target }); if (back.trip.wantPost) gate.propose(f, { kind: 'post', text: back.trip.wantPost }); } catch { /* 不影响回家 */ }
     if (!back.trip.failed) letters.maybe(f, 'trip', `【这趟看到的】\n${(back.trip.seen || []).slice(0, 6).map((x) => `- ${x.title}`).join('\n')}\n【明信片上写的】${String(back.trip.postcard || '').slice(0, 200)}`); };
   // 她自己决定要不要出门：DSH 开着时每 10 分钟问一次（也顺手推进寄明信片 / 回家）
-  ctx.effect(() => { const t = setInterval(() => { try { trips.autoTick(); } catch (e) { log?.warn?.(`[dsh-yushe] autoTick: ${e?.message || e}`); } gate.flush(pond.current() || pond.list().fish.at(-1)).catch(() => {}); planner.tick(pond.current() || pond.list().fish.at(-1)).catch(() => {}); inbox.poll(pond.current() || pond.list().fish.at(-1)).catch(() => {}); dms.poll(pond.current() || pond.list().fish.at(-1)).catch(() => {}); }, 10 * 60_000); return () => clearInterval(t); }, 'dsh-yushe: wander timer');
+  ctx.effect(() => { const t = setInterval(() => { try { trips.autoTick(); } catch (e) { log?.warn?.(`[dsh-yushe] autoTick: ${e?.message || e}`); } gate.flush(pond.current() || pond.list().fish.at(-1)).catch(() => {}); planner.tick(pond.current() || pond.list().fish.at(-1)).catch(() => {}); inbox.poll(pond.current() || pond.list().fish.at(-1)).catch(() => {}); dms.poll(pond.current() || pond.list().fish.at(-1)).catch(() => {}); try { memory.sync(pond.current() || pond.list().fish.at(-1), { minGapMs: 0 }); } catch { /* 记忆同步失败不影响 */ } }, 10 * 60_000); return () => clearInterval(t); }, 'dsh-yushe: wander timer');
   // DSH 的工作区表（她在哪个工作区上工，F-64）：有就拿，没有（老宿主）就当「所有工作区」
   let wsRegistry = null;
   if (typeof ctx.inject === 'function') { try { ctx.inject(['workspaceRegistry'], (scope) => { wsRegistry = scope.workspaceRegistry; scope.effect(() => () => { wsRegistry = null; }, 'dsh-yushe: workspace registry'); }); } catch { /* 没有工作区服务 */ } }
   const workspaces = createWorkspaces({ getRegistry: () => wsRegistry });
   const work = createWorkSessions({ ctx, pond, life, log }); // 哪些对话是爸妈开的 + 干了几次活（F-63）
   const personaOrder = registerPersona(ctx, pond, life, work);
-  if (personaOrder !== null) registerLifeSection(ctx, pond, life, personaOrder, work);
+  if (personaOrder !== null) registerLifeSection(ctx, pond, life, personaOrder, work, memory);
   log?.info?.(`人设段落 yushe:persona + 近况 yushe:life ${personaOrder !== null ? '已注册' : '未注册（没有 systemPrompt）'}；当前鱼：${pond.current()?.name ?? '无'}`);
 
   if (typeof ctx.inject !== 'function') {
@@ -163,7 +165,8 @@ export function apply(ctx) {
 
     registerGameRoutes({ ctx, scope, pond, storage: storageDir(), isLoopbackRequest, writeJson, life, wallet, workspaces });
     registerWorkspaceRoutes({ scope, pond, workspaces, isLoopbackRequest, writeJson });
-    registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, gate, inbox, dms, storage: storageDir(), isLoopbackRequest, writeJson });
+    registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, gate, inbox, dms, memory, storage: storageDir(), isLoopbackRequest, writeJson });
+    registerMemoryRoutes({ scope, pond, memory, isLoopbackRequest, writeJson });
     registerRoomRoutes({ ctx, scope, pond, life, wallet, letters, trips, planner, storage: storageDir(), isLoopbackRequest, writeJson });
     registerBagRoutes({ scope, pond, life, isLoopbackRequest, writeJson });
     registerPhotoRoute({ scope, storage: storageDir(), isLoopbackRequest, writeJson });

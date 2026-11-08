@@ -589,9 +589,9 @@ const defs = TL2.yusheToolDefs({ pond: { current: () => fakeFish }, life: fakeLi
 const byName = Object.fromEntries(defs.map((d) => [d.name, d]));
 ok(['yushe_status', 'yushe_config_get', 'yushe_config_propose', 'yushe_config_apply', 'yushe_go_out', 'yushe_recall'].every((n) => byName[n]) && !byName.yushe_settings && defs.every((d) => d.parameters.type === 'object' && d.parameters.additionalProperties === false && d.description.length > 20), '自己类工具：状态 / 配置三件套（取代 yushe_settings）/ 出门 / 回忆，参数是严格的 JSON Schema');
 // 两层配置（F-59 / 47b）
-ok(fakeHabits.knobList().map((k) => k.level).join('/') === '看性格/中/适中', '默认三个档位：爱不爱出门「看性格」、读多深「中」、互动多少「适中」（默认值正好是中间档）');
+ok(fakeHabits.knobList().map((k) => k.level).join('/') === '看性格/中/适中/适中', '默认四个档位：爱不爱出门「看性格」、读多深「中」、记性「适中」、互动多少「适中」（默认值正好是中间档）');
 const cfgGet = await byName.yushe_config_get.execute({});
-ok(cfgGet.ok && cfgGet.knobs.length === 3 && cfgGet.fine.some((g) => g.group === 'cap' && g.items.some((i) => i.key === 'likesPerDay' && i.range === '0–50')), '读配置：档位 + 细项带范围（点赞每天 0–50，50 是硬顶）');
+ok(cfgGet.ok && cfgGet.knobs.length === 4 && cfgGet.fine.some((g) => g.group === 'cap' && g.items.some((i) => i.key === 'likesPerDay' && i.range === '0–50')), '读配置：档位 + 细项带范围（点赞每天 0–50，50 是硬顶）');
 const cfgPr = await byName.yushe_config_propose.execute({ changes: { depth: '深', likesPerDay: 999, tripsPerDay: 1, speakMode: 'auto', parentMid: '1', favZones: '美食，动物圈', nope: 1 }, reason: '想让她看深一点' });
 const cfgPrKeys = Object.fromEntries(cfgPr.diff.map((d) => [d.key, d]));
 ok(cfgPr.ok && cfgPrKeys.readBudget?.to === 600 && cfgPrKeys.danmaku?.to === true && cfgPrKeys.likesPerDay?.to === 50 && cfgPrKeys.likesPerDay.clamped && JSON.stringify(cfgPrKeys.favZones?.to) === '["美食","动物圈"]', '起草：档位展开成细项；超过硬顶的夹回 50 并标出来；列表能用中文逗号');
@@ -1474,6 +1474,90 @@ section('出门循环：她自己决定调哪些工具，额度、游记链接�
   tripsP.useLoop({ tools: () => fakeTools, model: () => ({ llm: llm4, provider: 'p', model: 'm' }) });
   ok(TRP.LOOP_MIN_TOKENS === 60000 && read('src/host/trips.js').includes('const jobId = canLoop ? trackJob(') && read('src/host/trips.js').includes('if (!calls) { const old = roamOld();'), '零花钱剩不到 6 万 / 拿不到宿主模型：走 headless 老路；循环一开始就出错也退回老路');
   ok(read('src/host/index.js').includes("trips.useLoop({ tools: (ledger) => yusheToolDefs({ ...toolDeps, ledger }, { from: 'trip' })"), '出门用的是同一张工具表的「出门」出口');
+}
+
+/* ---------- 记忆（F-76，docs/设计/09-记忆.md） ---------- */
+section('记忆：会慢慢忘的经历、认人、家里 / B站分级、召回');
+{
+  const MM = await import(pathToFileURL(join(plugin, 'src/shared/memory.js')).href);
+  const MH = await import(pathToFileURL(join(plugin, 'src/host/memory.js')).href);
+  const D = 86400e3, T0 = Date.parse('2026-11-01T12:00:00Z'), iso = (t) => new Date(t).toISOString();
+  const m = MM.emptyMemory();
+  const seen = MM.makeEpisode(m, { at: iso(T0), kind: 'seen', text: '在 B站看了《深夜食堂做拉面》', url: 'https://www.bilibili.com/video/BV1xx411c7aa', keys: { bvid: 'BV1xx411c7aa', tag: '美食' } });
+  ok(seen.imp === 2 && seen.scope === 'public' && seen.gist.includes('美食'), '重要性和范围由规则按种类定（看到的视频 imp 2、B站范围），印象句由规则写');
+  ok(MM.halfLife(seen, 30) === 18 && MM.halfLife({ imp: 1, reinforced: 0 }, 30) === 9 && MM.halfLife({ imp: 5, reinforced: 0 }, 30) === 120, '半衰期：适中 30 天 → 聊一句 9 天、看到的视频 18 天、出生 120 天');
+  ok(MM.stageOf(seen, T0 + 10 * D) === 'clear' && MM.stageOf(seen, T0 + 25 * D) === 'fuzzy' && MM.stageOf(seen, T0 + 50 * D) === 'trace' && MM.stageOf(seen, T0 + 70 * D) === 'forgotten', '清晰 → 模糊 → 印象 → 忘了（按留存 0.5 / 0.25 / 0.1）');
+  ok(MM.stageOf(seen, T0 + 25 * D, 60) === 'clear', '记性更好（基准 60 天）同样过了 25 天还清晰');
+  const fz = MM.degrade(seen, 'fuzzy');
+  ok(!fz.url && !fz.keys.bvid && fz.floor === 1, '变模糊时擦掉链接和 BV 号');
+  const tr = MM.degrade(fz, 'trace');
+  ok(tr.text === seen.gist && tr.floor === 2, '变印象时正文只剩规则写的一句');
+  ok(MM.stageOf({ ...tr, reinforced: 5 }, T0 + 1 * D) === 'trace', '擦掉的回不来：之后再被想起、半衰期变长，也不会变回清晰');
+  m.episodes.push(seen);
+  m.episodes.push(MM.makeEpisode(m, { at: iso(T0), kind: 'chat', text: '和妈妈聊天：「明天要去考试」' }));
+  m.episodes.push(MM.makeEpisode(m, { at: iso(T0), kind: 'got-reply', text: '小橘在 B站回了本鱼：「拉面看饿了」', keys: { who: '小橘', mid: '12345' } }));
+  const st = MM.settleMemory(JSON.parse(JSON.stringify(m)), T0 + 12 * D);
+  ok(st.forgot === 0 && st.faded === 1 && st.mem.episodes.find((e) => e.kind === 'chat').floor === 1, '推进遗忘：12 天后聊一句已经模糊（半衰期 9 天），看到的视频还清晰');
+  const st2 = MM.settleMemory(JSON.parse(JSON.stringify(m)), T0 + 40 * D);
+  ok(!st2.mem.episodes.some((e) => e.kind === 'chat') && st2.mem.episodes.some((e) => e.kind === 'got-reply'), '40 天后聊一句忘掉删了，有人回她（imp 4）还记得');
+  const pub = MM.recall(m, { query: '拉面', scope: 'public', now: T0 + D });
+  ok(pub.length === 2 && pub.every((x) => x.kind !== 'chat'), '召回：对外说话只拿 B站范围（家里聊的「考试」不出来）');
+  ok(MM.recall(m, { query: '考试', scope: 'all', now: T0 + D }).some((x) => x.kind === 'chat') && !MM.recall(m, { query: '考试', scope: 'public', now: T0 + D }).length, '跟爸妈说话时家里的事也想得起来');
+  ok(MM.recall(m, { query: 'BV1xx411c7aa', now: T0 + D })[0]?.kind === 'seen', 'BV 号直接命中');
+  ok(MM.recall(m, { query: '量子力学', now: T0 + D }).length === 0, '不相关的不硬凑');
+  const fuzzyLine = MM.recall({ episodes: [fz] }, { now: T0 + 25 * D })[0];
+  ok(fuzzyLine?.text.startsWith('好像') && !fuzzyLine.url, '模糊的说成「好像…」，不给链接');
+  // 认人
+  const pm = MM.emptyMemory();
+  MM.meet(pm, { mid: '12345', who: '小橘', at: iso(T0), what: '回了本鱼' });
+  ok(MM.tierOf(pm.people.u12345).name === '新认识' && MM.personRetention(pm.people.u12345, T0 + 6 * D) < 0.1, '新认识的人 1.5 天忘一半，6 天就忘了');
+  for (let i = 0; i < 4; i++) MM.meet(pm, { mid: '12345', who: '小橘', at: iso(T0), what: `第${i}次` });
+  ok(MM.tierOf(pm.people.u12345).name === '熟人' && MM.personRetention(pm.people.u12345, T0 + 6 * D) > 0.5, '打过 5 次交道是熟人，6 天后还清楚');
+  MM.meet(pm, { mid: '999', who: '妈妈', at: iso(T0 - 400 * D), parent: true });
+  const ps = MM.settleMemory(pm, T0 + 70 * D);
+  ok(ps.mem.people.u999 && !ps.mem.people.u12345, '爸妈不忘；两个多月没来往的熟人忘了（熟人半衰期 20 天）');
+  ok(MM.aboutPerson({ people: { u1: { who: '阿青', mid: '1', n: 3, lastAt: iso(T0), last: ['回了本鱼'] } } }, { mid: '1' }, { now: T0 }).includes('阿青'), '写评论 / 回复前能想起认不认识对方');
+  // 档案 → 经历
+  const fish = { id: 'f1', parentCall: '妈妈' };
+  const items = MH.archiveItems({
+    fish,
+    life: { events: [{ at: iso(T0), kind: 'chat', text: '和妈妈聊天：「好」' }, { at: iso(T0), kind: 'work', text: '干活' }, { at: iso(T0), kind: 'back', text: '回家' }],
+      journal: [{ at: iso(T0), text: '今天看了拉面', final: true, trip: 't1', seen: [{ title: '拉面', url: 'https://www.bilibili.com/video/BV1xx411c7aa', tag: '美食' }] }], diary: [{ day: '2026-11-01', text: '日记', ai: true, at: iso(T0) }] },
+    footprints: [{ id: 'F1', kind: 'reply', text: '同感', at: iso(T0), target: { mid: '12345', who: '小橘', title: '拉面' } }],
+    inbox: [{ id: 'r1', kind: 'reply', who: '小橘', mid: '12345', text: '谢谢', at: iso(T0) }],
+    dms: [{ mid: '999', who: '妈妈号', history: [{ from: 'them', text: '早点睡', at: iso(T0) }] }, { mid: '777', who: '路人', history: [{ from: 'them', text: '你好', at: iso(T0) }, { from: 'me', text: '你好呀', at: iso(T0) }] }],
+    parentMid: '999',
+  });
+  const kinds = items.map((x) => x.kind);
+  ok(!kinds.includes('work') && !kinds.includes('back') && kinds.includes('chat') && kinds.includes('diary') && kinds.includes('postcard') && kinds.includes('seen'), '档案抄成经历：干活（DSH 工作内容）不进记忆，回家事件和见闻不重复');
+  ok(items.find((x) => x.kind === 'dm-parent') && items.find((x) => x.kind === 'dm-in') && !items.some((x) => x.text.includes('你好呀')), '爸妈专线算家里的事，陌生人私信算 B站的事；只记对方说的');
+  const im = MM.emptyMemory();
+  ok(MH.ingest(im, items) === items.length && MH.ingest(im, items) === 0, '同步去重：同一份档案抄第二遍不会多记');
+  ok(im.people.u12345?.n === 2 && im.people.u999?.parent, '回她的人、她回的人记成同一个人（按 UID）；爸妈的号认成爸妈');
+  ok(im.episodes.find((e) => e.kind === 'dm-parent').scope === 'home', '爸妈专线私信在家里范围（出门和写评论拿不到）');
+  // 宿主：存储 + 召回 + 加深
+  const memDir = mkdtempSync(join(tmpdir(), 'yushe-mem-'));
+  const now = Date.now();
+  const fakeLife = { state: () => ({ events: [{ at: iso(now - D), kind: 'mood', text: '妈妈夸本鱼画画好看' }], journal: [{ at: iso(now - D), text: '看了猫猫', final: true, seen: [{ title: '猫猫打架', url: 'https://www.bilibili.com/video/BV1yy411c7bb', tag: '动物' }] }] }) };
+  const mem = MH.createMemory({ storage: memDir, life: fakeLife, gate: { footprints: () => [] }, inbox: { all: () => [] }, dms: { view: () => ({ convs: [] }) }, habits: { get: () => ({ memoryDays: 30, memoryRecall: 5 }) } });
+  ok(mem.recall(fish, { query: '猫猫' }).length >= 1 && existsSync(join(memDir, 'memory', 'f1.json')), '宿主：同步后能召回，存在 memory/<鱼>.json');
+  ok(!mem.section(fish, { scope: 'public' }).includes('画画') && mem.section(fish, { scope: 'all' }).includes('画画'), '给出门 / 对外的那段不带家里的事');
+  const hit = mem.recall(fish, { query: '猫猫' })[0];
+  ok(mem.reinforce(fish, [hit.id]) === 1 && JSON.parse(readFileSync(join(memDir, 'memory', 'f1.json'), 'utf8')).episodes.find((e) => e.id === hit.id).reinforced === 1, '主动想起来会加深');
+  ok(mem.view(fish).clear >= 2, '页面接口：各阶段几条');
+  // 回忆工具：出门时家里的东西想不起来
+  const RC = (await import(pathToFileURL(join(plugin, 'src/host/tools/self/recall.js')).href)).default;
+  const rdeps = { pond: { current: () => fish }, life: { state: () => ({ diary: [{ day: 'x', text: '秘密' }] }) }, memory: mem, dms: { recent: () => [{ who: '爸妈（专线）', lines: [] }, { who: '路人', lines: [] }] } };
+  const rd = await RC.run({ what: 'diary' }, rdeps, { from: 'trip' });
+  ok(rd.ok === false && !RC.tripParameters.properties.what.enum.includes('diary') && RC.parameters.properties.what.enum.includes('memory'), '出门时回忆工具不给日记 / 信 / 成长日志（只给 B站上的）');
+  const rdm = await RC.run({ what: 'dms' }, rdeps, { from: 'trip' });
+  ok(rdm.items.length === 1 && rdm.items[0].who === '路人', '出门时回忆私信不带爸妈专线');
+  const rmem = await RC.run({ what: 'memory', query: '画画' }, rdeps, { from: 'trip' });
+  ok(rmem.ok && rmem.items.length === 0 && (await RC.run({ what: 'memory', query: '画画' }, rdeps, { from: 'main' })).items.length === 1, '回忆 memory：出门只想得起 B站上的，主会话都想得起');
+  // 接线
+  ok(read('src/host/trip-loop.js').includes('memoryText') && read('src/host/trips.js').includes("scope: 'public'"), '出门的系统提示带 B站上的记忆和最近评论过的视频');
+  ok(read('src/host/life-routes.js').includes("memory?.section?.(f, { scope: 'all' })") && read('src/host/life-routes.js').includes('query: text'), 'DSH 主会话带「你记得的事」；鱼社聊天按爸妈这句话召回');
+  ok(read('src/host/tools/speak-common.js').includes('aboutPerson'), '写评论 / 回复 / 私信前想起认不认识对方');
 }
 
 /* ---------- 发版：版本号两处一致（docs/发版.md） ---------- */

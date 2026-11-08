@@ -27,7 +27,7 @@ export const BAG_PATH = '/api/dsh-yushe/bag';
 
 export const LOOP_MIN_TOKENS = 60_000; // 零花钱剩得比这少就走老路（老路一趟约 1.5 万）
 
-export function createTrips({ life, wallet, pond, storage, log, habits, biliRead, gate }) {
+export function createTrips({ life, wallet, pond, storage, log, habits, biliRead, gate, memory = null }) {
   let loop = null; // { tools(ledger) → 出门用的工具成品, model() → { llm, provider, model } }
   const noteLine = (f, gear) => `${f.parentCall}，我出去逛逛${gear ? `，带上了${souvenirById(gear)?.name}` : ''}，回来给你寄明信片～别担心！`;
 
@@ -111,6 +111,9 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
         interests: Object.entries(g.interests || {}).sort((x, y) => y[1].heat - x[1].heat).slice(0, 5).map(([t]) => t),
         ups: Object.entries(g.ups || {}).filter(([, u]) => u.mid).sort((x, y) => y[1].n - x[1].n).slice(0, 3).map(([n, u]) => `${n}（mid ${u.mid}）`),
         favZones: hb.favZones || [], avoidWords: hb.avoidWords || [], maxCalls: hb.tripToolCalls || 12, caps: hb,
+        // F-76：出门是对外的场合，只带 B站上的记忆（家里的事不带）；最近评论过的视频提醒别重复
+        memoryText: (() => { try { return memory?.section?.(f, { scope: 'public', query: Object.keys(g.interests || {}).join(' '), limit: 4, title: '【你在 B站上的记忆】', tail: '模糊的就别说得很肯定；记不清的人当新认识。' }) || ''; } catch { return ''; } })(),
+        commented: (() => { try { return memory?.recentlyCommented?.(f) || []; } catch { return []; } })(),
       });
       const prompt = `${gear ? `你带着${souvenirById(gear)?.name}。` : ''}出发吧。先随便逛逛（比如刷首页推荐、看热门、看看关注的人发了什么），遇到喜欢的再看深一点。`;
       let calls = 0;

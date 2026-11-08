@@ -28,7 +28,9 @@ export async function speak(deps, from, { kind, what, max, target, args, materia
   } else {
     const ci = cleanIntent(args.intent);
     if (!ci.ok) return { ok: false, error: ci.why };
-    const w = await writeDraft(deps, { what, material, intent: ci.text, max, rules, evidence: { ledger: led, bvid } });
+    // F-76：认不认识对方（只有 B站上的记忆，不带家里的事）
+    let knows = ''; try { if (target?.mid || target?.who) knows = deps.memory?.aboutPerson?.(deps.pond.current(), { mid: target.mid, who: target.who }) || ''; } catch { knows = ''; }
+    const w = await writeDraft(deps, { what, material, intent: ci.text, max, rules: knows ? [...rules, knows] : rules, evidence: { ledger: led, bvid } });
     if (!w.ok) return { ok: false, skipped: w.skipped || undefined, error: w.why };
     text = w.text;
   }

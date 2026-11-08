@@ -10,7 +10,7 @@
  */
 const L3 = ['少', '适中', '多'];
 
-export const GROUPS = { out: '出门', read: '读多深', cap: '互动上限', taste: '偏好', speak: '在 B站说话', home: '家里' };
+export const GROUPS = { out: '出门', read: '读多深', cap: '互动上限', taste: '偏好', speak: '在 B站说话', home: '家里', memory: '记性' };
 
 export const HABIT_FIELDS = {
   // —— 设置页上的（ui）——
@@ -53,6 +53,10 @@ export const HABIT_FIELDS = {
   perPersonPerDay: { label: '对同一个人每天最多互动几次', type: 'int', min: 0, max: 8, def: 4, chat: true, group: 'cap' },
   replyToReplies: { label: '别人回她要不要回', type: 'bool', def: true, chat: true, group: 'cap' },
 
+  // —— 细配置：记性（F-76，docs/设计/09-记忆.md）——
+  memoryDays: { label: '记性基准（天，普通经历多久忘一半）', type: 'int', min: 5, max: 120, def: 30, chat: true, group: 'memory' },
+  memoryRecall: { label: '每次想起几件事', type: 'int', min: 0, max: 12, def: 5, chat: true, group: 'memory' },
+
   // —— 细配置：偏好（只能聊天改，没有档位）——
   favZones: { label: '多看的分区', type: 'list', maxItems: 8, maxLen: 12, def: [], chat: true, group: 'taste' },
   avoidZones: { label: '少看的分区', type: 'list', maxItems: 8, maxLen: 12, def: [], chat: true, group: 'taste' },
@@ -64,6 +68,7 @@ export const HABIT_FIELDS = {
 export const KNOBS = {
   out: { label: '爱不爱出门', levels: ['宅', '看性格', '爱逛'], fields: { outBias: [0.5, 1, 1.8], tripsPerDay: [2, 0, 0], restBias: [1.5, 1, 0.6] } },
   depth: { label: '读多深', levels: ['浅', '中', '深'], fields: { readBudget: [150, 300, 600], tripToolCalls: [6, 12, 20], subtitle: [false, true, true], subtitleChars: [0, 1500, 4000], danmaku: [false, false, true], threads: [false, true, true], commentsPerVideo: [3, 5, 10] } },
+  memory: { label: '记性', levels: ['健忘', '适中', '好记性'], fields: { memoryDays: [10, 30, 60], memoryRecall: [3, 5, 8] } },
   interact: { label: '互动多少', levels: L3, fields: { commentsPerDay: [4, 12, 20], repliesPerDay: [4, 12, 20], dynCommentsPerDay: [1, 3, 6], postsPerDay: [1, 2, 3], dmsPerDay: [1, 3, 6], likesPerDay: [5, 15, 30], commentLikesPerDay: [5, 15, 30], collectsPerDay: [2, 5, 10], followsPerDay: [1, 2, 4], unfollowsPerDay: [0, 1, 2], perPersonPerDay: [2, 4, 6], replyToReplies: [false, true, true] } },
 };
 export const CUSTOM = '自定义';

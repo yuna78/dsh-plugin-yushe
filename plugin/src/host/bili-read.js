@@ -176,7 +176,7 @@ export function createBiliRead(storage, fetchImpl = fetch, { extraPaths = null, 
     /** 别人回她的（最近一页）。 */
     async repliesToMe(n = 20) {
       const d = await get('/x/msgfeed/reply', MSG);
-      return (d?.items || []).slice(0, n).map((x) => ({ id: `r${x.id}`, who: clean(x.user?.nickname, 20) || '有人', text: clean(x.item?.source_content, 120), mine: clean(x.item?.target_reply_content || x.item?.root_reply_content || x.item?.title, 80), title: clean(x.item?.title, 60), url: safeBiliUrl(x.item?.uri), at: isoOf(x.reply_time) })).filter((x) => x.text);
+      return (d?.items || []).slice(0, n).map((x) => ({ id: `r${x.id}`, who: clean(x.user?.nickname, 20) || '有人', mid: x.user?.mid ? String(x.user.mid) : undefined, text: clean(x.item?.source_content, 120), mine: clean(x.item?.target_reply_content || x.item?.root_reply_content || x.item?.title, 80), title: clean(x.item?.title, 60), url: safeBiliUrl(x.item?.uri), at: isoOf(x.reply_time) })).filter((x) => x.text);
     },
     /** 别人给她点的赞（累计那一页；同一条被多人赞是一条，count = 人数）。 */
     async likesToMe(n = 20) {

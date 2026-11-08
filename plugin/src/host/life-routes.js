@@ -58,7 +58,7 @@ export async function writeDiary({ wallet, life }, fish, day) {
   }
 }
 
-export function registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, gate, inbox, dms, storage, isLoopbackRequest, writeJson }) {
+export function registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, gate, inbox, dms, memory = null, storage, isLoopbackRequest, writeJson }) {
   const guard = (req, res, method) => {
     if (!isLoopbackRequest(req)) { writeJson(res, 403, { ok: false, error: 'loopback requests only' }); return false; }
     if (method && req.method !== method) { writeJson(res, 405, { ok: false, error: 'method not allowed' }); return false; }
@@ -123,6 +123,8 @@ export function registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, ga
       lifeSection(f, s),
       snap.where === 'sleep' ? `【此刻】你正在睡觉，被${f.parentCall}叫醒了，迷迷糊糊地回话，可以撒娇说困。` : `【此刻】你在鱼社的家里，${f.parentCall}来找你聊天。`,
       moodTone(snap.mood, f.parentCall).text,
+      // F-76：爸妈这句话让她想起的事（本地召回，不花 token）
+      ...(() => { try { const m = memory?.section?.(f, { query: text, scope: 'all', people: 0, title: '【这句话让你想起的事】' }); return m ? ['', m] : []; } catch { return []; } })(),
       ...(history.length ? ['', '刚才的对话：', ...history] : []),
       // 问到鱼社怎么玩：带上系统知识库，只按它答（F-42）；平常聊天不带，省 token
       ...(asksAboutGame(text) ? ['', `【鱼社说明书】（${f.parentCall}在问鱼社怎么玩时，用你自己的口吻、按这份说明回答；说明里没有的就说不知道，别编；「还在做的」要老实说还在做）`, kbText()] : []),
@@ -198,7 +200,7 @@ export function registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, ga
 }
 
 /** 近况段落：跟在人设段落后面（order + 1）。 */
-export function registerLifeSection(ctx, pond, life, personaOrder, work = null) {
+export function registerLifeSection(ctx, pond, life, personaOrder, work = null, memory = null) {
   if (!ctx.systemPrompt?.section) return false;
   ctx.effect(() => ctx.systemPrompt.section({
     name: 'yushe:life',
@@ -207,7 +209,11 @@ export function registerLifeSection(ctx, pond, life, personaOrder, work = null) 
       const f = pond.current();
       if (!f) return '';
       if (work && !work.inUserSession(context)) return '';
-      try { return lifeSection(f, life.state(f)); } catch { return ''; }
+      let text = '';
+      try { text = lifeSection(f, life.state(f)); } catch { text = ''; }
+      // F-76：她记得的事（主会话是跟爸妈说话，家里和 B站的都能想起来；工作内容本来就不进记忆）
+      try { const m = memory?.section?.(f, { scope: 'all' }); if (m) text = text ? `${text}\n${m}` : m; } catch { /* 记忆坏了不影响近况 */ }
+      return text;
     },
     interpolate: false,
   }), 'dsh-yushe: life section');

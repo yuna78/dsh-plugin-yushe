@@ -50,6 +50,7 @@ export function createInbox({ storage, life, biliRead, gate, log }) {
       } finally { busy = false; }
     },
     unseen: () => load().items.filter((x) => !x.seen).length,
+    all: () => load().items.slice(), // 记忆从这里抄（F-76）
     markSeen() { const st = load(); let n = 0; for (const x of st.items) if (!x.seen) { x.seen = true; n += 1; } if (n) save(st); return n; },
     view() {
       const st = load();
