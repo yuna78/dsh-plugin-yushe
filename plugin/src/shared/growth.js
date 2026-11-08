@@ -127,6 +127,39 @@ export function feedInterests(g, items, { day = '', at = '' } = {}) {
 }
 
 /**
+ * 不喜欢（F-82）：她说不喜欢 / 贴了「踩雷」的东西记一笔。同一个分区 / UP 主被说不喜欢满 2 次才动爱好：
+ * 爱好热度 −10（低于 5 掉出列表），常看的 UP 主次数 −1；21 天没再踩到就忘掉这笔账（每日结算里清）。
+ * items = [{ tag, up }]
+ */
+export const DISLIKE_AT = 2;
+export function feedDislikes(g, items, { day = '', at = '' } = {}) {
+  if (!items?.length) return g;
+  let n = { ...g, interests: { ...g.interests }, ups: { ...g.ups }, dislikes: { ...(g.dislikes || {}) } };
+  const bump = (key) => { const d = n.dislikes[key] || { n: 0, last: '' }; n.dislikes[key] = { n: d.n + 1, last: day }; return d.n + 1; };
+  for (const it of items) {
+    if (it.tag) {
+      const c = bump(`t:${it.tag}`);
+      if (c >= DISLIKE_AT) {
+        const cur = n.interests[it.tag];
+        if (cur) { const heat = cur.heat - 10; if (heat < 5) delete n.interests[it.tag]; else n.interests[it.tag] = { ...cur, heat, trend: -1 }; }
+        if (c === DISLIKE_AT) n = log(n, at, `不太喜欢「${it.tag}」`);
+      }
+    }
+    if (it.up) {
+      const c = bump(`u:${it.up}`);
+      if (c >= DISLIKE_AT && n.ups[it.up]) n.ups[it.up] = { ...n.ups[it.up], n: Math.max(0, n.ups[it.up].n - 1) };
+      if (c === DISLIKE_AT) n = log(n, at, `不太喜欢 UP 主「${it.up}」`);
+    }
+  }
+  return n;
+}
+
+/** 她现在不太喜欢的（满 2 次的）：['分区', 'UP 主 xx']，给出门提示词用。 */
+export function dislikeList(g) {
+  return Object.entries(g?.dislikes || {}).filter(([, d]) => d.n >= DISLIKE_AT).sort((a, b) => b[1].n - a[1].n).slice(0, 6).map(([k]) => (k.startsWith('u:') ? `UP 主「${k.slice(2)}」` : `「${k.slice(2)}」`));
+}
+
+/**
  * 每日结算（每天第一次读状态时做一次，补算中间漏掉的天）：
  *   爱好每天自然降 3%（热度 < 5 掉出列表）；五维多少天没练过 +1，满 14 天那一维 −1（不低于 10）；
  *   性格：现在的五维算出的性格和当前不同，连续 3 天就转；记下昨天的心情。
@@ -145,6 +178,7 @@ export function dailyTick(g, { day, mood = null, at = '' } = {}) {
       if (n.idle[k] >= 14 && n.pts[k] > MIN) { n.pts[k] -= 1; n.idle[k] = 0; n = log(n, at, `${ATTR_LABEL[k]} −1（很久没用了）`); }
     }
   }
+  if (n.dislikes) { n.dislikes = { ...n.dislikes }; for (const [k, d] of Object.entries(n.dislikes)) if (!d.last || daysBetween(d.last, day) > 21) delete n.dislikes[k]; } // F-82：不喜欢的账 21 天没再踩到就忘
   // 升降箭头：昨天 / 今天碰过的算 ↑，其余在慢慢凉 ↓
   for (const [tg, v] of Object.entries(n.interests)) n.interests[tg] = { ...v, trend: v.last >= g.lastDay ? 1 : -1 };
   const now = personality(n.pts).tag;

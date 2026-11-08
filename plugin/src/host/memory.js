@@ -53,7 +53,10 @@ export function archiveItems({ fish, life = {}, footprints = [], inbox = [], dms
     if (j.final) out.push({ key: `j:${j.trip || j.at}:card`, at: j.at, kind: 'postcard', text: `出门回来给${call}写明信片：${short(j.text, 100)}` });
     for (const x of j.seen || []) if (x?.url) {
       const bvid = String(x.url).match(/BV[0-9A-Za-z]{10}/)?.[0];
-      out.push({ key: `s:${bvid || x.url}`, at: j.at, kind: 'seen', text: `${bvid ? '在 B站看了' : `在${short(x.source, 10) || '网上'}看到`}《${defang(short(x.title, 50))}》${!j.final && j.text ? `，${short(j.text, 40)}` : ''}`, url: x.url, keys: { bvid, tag: x.tag, who: x.up, mid: x.mid } });
+      const where = `${bvid ? '在 B站看了' : `在${short(x.source, 10) || '网上'}看到`}《${defang(short(x.title, 50))}》`;
+      // F-82：便利贴记得更清楚——「学到的」「好点子」imp 3，带上标签、她的一句话和讲了啥（讲了啥是转述外部内容，防投毒）
+      if (j.note) out.push({ key: `s:${bvid || x.url}`, at: j.at, kind: ['学到的', '好点子'].includes(j.note.tag) ? 'note' : 'seen', text: `${where}，记了一张「${short(j.note.tag, 4)}」：${defang(short(j.text, 50))}${j.note.gist ? `（讲的是：${defang(short(j.note.gist, 40))}）` : ''}`, url: x.url, keys: { bvid, tag: x.tag, who: x.up, mid: x.mid } });
+      else out.push({ key: `s:${bvid || x.url}`, at: j.at, kind: 'seen', text: `${where}${!j.final && j.text ? `，${short(j.text, 40)}` : ''}`, url: x.url, keys: { bvid, tag: x.tag, who: x.up, mid: x.mid } });
     }
   }
   for (const p of life.album || []) if (p.photo && p.at && p.ref?.title) {

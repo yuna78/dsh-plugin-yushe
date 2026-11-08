@@ -14,7 +14,7 @@ import { accountFile } from './account.js';
 import { readJsonBody } from './game-routes.js';
 import { createGates } from './gates.js';
 import { nowDate, nowMs } from './clock.js';
-import { emptyInbox, mergeInbox, newsEvents, footStats, whatToFetch } from '../shared/inbox.js';
+import { emptyInbox, mergeInbox, newsEvents, footStats, whatToFetch, newestFirst } from '../shared/inbox.js';
 
 export const INBOX_PATH = '/api/dsh-yushe/inbox';
 const EVERY = 60 * 60_000;
@@ -55,9 +55,10 @@ export function createInbox({ storage, life, biliRead, gate, log, gates = null }
     markSeen() { const st = load(); let n = 0; for (const x of st.items) if (!x.seen) { x.seen = true; n += 1; } if (n) save(st); return n; },
     view() {
       const st = load();
-      return { loggedIn: Boolean(biliRead?.loggedIn?.()), items: st.items.slice(-40).reverse(), unseen: st.items.filter((x) => !x.seen).length, fanCount: st.fanCount, lastPoll: st.lastPoll, foot: footStats(gate?.footprints?.() || [], st.items) };
+      // 最新在前（按通知时间排，不再靠追加顺序反转）
+      return { loggedIn: Boolean(biliRead?.loggedIn?.()), items: newestFirst(st.items, 40), unseen: st.items.filter((x) => !x.seen).length, fanCount: st.fanCount, lastPoll: st.lastPoll, foot: footStats(gate?.footprints?.() || [], st.items) };
     },
-    recent: (n = 10) => load().items.slice(-n).reverse().map((x) => ({ kind: x.kind, who: x.who, said: x.text || null, toWhat: x.mine || null, count: x.count || null, at: x.at || x.got, url: x.url || null })),
+    recent: (n = 10) => newestFirst(load().items, n).map((x) => ({ kind: x.kind, who: x.who, said: x.text || null, toWhat: x.mine || null, count: x.count || null, at: x.at || x.got, url: x.url || null })),
   };
   return inbox;
 }

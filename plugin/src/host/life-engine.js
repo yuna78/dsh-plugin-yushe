@@ -14,9 +14,13 @@ import { roamStatus } from './probe.js';
 import { activityOf, ACTIVITY_TEXT } from '../shared/room.js';
 import { workDrain, lateNight, workToneNote } from '../shared/mood.js';
 import { planNow } from '../shared/plan.js';
-import { freshGrowth, dailyTick, gainXp, XP_RULES, feedInterests } from '../shared/growth.js';
+import { freshGrowth, dailyTick, gainXp, XP_RULES, feedInterests, feedDislikes } from '../shared/growth.js';
 import { cardsDue, addToBag, souvenirById } from '../shared/trip.js';
 import { DREAM_COST } from '../shared/dream.js';
+
+export const JOURNAL_MAX = 400; // F-82：一趟最多 10 张便利贴 + 明信片，200 太紧
+/** 便利贴 → journal 的一条（F-82：不另开数组，记忆 / 照片跳转都读 journal）。 */
+export const noteEntry = (n, trip, at) => ({ at: new Date(at).toISOString(), text: n.line || '', seen: [{ title: n.title, url: n.url, source: n.source, tag: n.tag || undefined, up: n.up || undefined, mid: n.mid || undefined, verified: true, ...(n.photo ? { photo: n.photo } : {}) }], trip, note: { tag: n.note?.tag || '心得', gist: n.note?.gist || '', depth: n.note?.depth ?? null } });
 
 export const SLEEP_FROM = 0;      // 00:00 睡
 export const WAKE_AT = 7.5;       // 07:30 醒
@@ -113,24 +117,34 @@ export function tickTrip(fish, s, now) {
   const due = cardsDue(tr.cards, now);
   for (const c of due) {
     c.sent = true;
-    s.journal = [...(s.journal || []), { at: new Date(c.deliverAt).toISOString(), text: c.why || `在${c.source || '外面'}看到的`, seen: [{ title: c.title, url: c.url, source: c.source, verified: true }], trip: tr.id }].slice(-200);
+    // F-82：有便利贴的趟，途中寄回的就是那张便利贴（贴进笔记本）；老路照旧
+    const n = (tr.notes || []).find((x) => x.url === c.url && !x.posted);
+    if (n) { n.posted = true; s.journal = [...(s.journal || []), noteEntry(n, tr.id, c.deliverAt)].slice(-JOURNAL_MAX); continue; }
+    s.journal = [...(s.journal || []), { at: new Date(c.deliverAt).toISOString(), text: c.why || `在${c.source || '外面'}看到的`, seen: [{ title: c.title, url: c.url, source: c.source, verified: true }], trip: tr.id }].slice(-JOURNAL_MAX);
   }
   if (now < (tr.returnAt || 0)) return null;
   // 回家
   // 照片（F-74）：每张挂着拍的是哪条见闻；见闻里那条带上照片 id（缩略图），没拍成的记一行「她想拍下」
   const photos = [...(tr.photos || []), ...(tr.photoId ? [{ photo: tr.photoId, caption: String(tr.postcard || tr.note || '').split(/[。！!？?\n]/)[0].slice(0, 60), trip: tr.id }] : [])];
   const seenOut = (tr.seen || []).slice(0, 6).map((x) => { const p = photos.find((ph) => ph.ref?.url === x.url); return p ? { ...x, photo: p.photo } : x; });
-  if (tr.postcard || tr.wantPhoto) s.journal = [...(s.journal || []), { at: new Date(tr.returnAt).toISOString(), text: tr.postcard || '', seen: seenOut, trip: tr.id, final: true, ...(tr.wantPhoto && !photos.length ? { wantPhoto: tr.wantPhoto } : {}) }].slice(-200);
+  // F-82：途中没寄回的便利贴回家时一起贴（排在明信片前面），被拍了的挂上缩略图
+  const photoOf = (url) => photos.find((ph) => ph.ref?.url === url)?.photo;
+  for (const n of tr.notes || []) if (!n.posted) { n.posted = true; s.journal = [...(s.journal || []), noteEntry({ ...n, photo: photoOf(n.url) }, tr.id, tr.returnAt - 1)].slice(-JOURNAL_MAX); }
+  if (photos.length) s.journal = s.journal.map((j) => (j.note && j.trip === tr.id && !j.seen?.[0]?.photo && photoOf(j.seen?.[0]?.url) ? { ...j, seen: [{ ...j.seen[0], photo: photoOf(j.seen[0].url) }] } : j));
+  const readOut = tr.read ? { read: tr.read.slice(0, 20), scanned: tr.scanned || 0 } : {}; // 读过清单挂在明信片背面
+  if (tr.postcard || tr.wantPhoto || tr.read?.length) s.journal = [...(s.journal || []), { at: new Date(tr.returnAt).toISOString(), text: tr.postcard || '', seen: seenOut, trip: tr.id, final: true, ...readOut, ...(tr.wantPhoto && !photos.length ? { wantPhoto: tr.wantPhoto } : {}) }].slice(-JOURNAL_MAX);
   for (const p of photos) s.album = [...(s.album || []), { at: new Date(tr.returnAt).toISOString(), ...p }].slice(-100);
   const got = tr.souvenirs || [];
   s.bag = addToBag(s.bag, got);
   const names = got.map((id) => souvenirById(id)?.name).filter(Boolean);
   const day = dayOf(new Date(now));
-  s.events = [...(s.events || []), { at: new Date(tr.returnAt).toISOString(), day, kind: 'back', text: tr.failed ? '出门转了一圈，没带回什么就回家了' : `逛完回家了，记下 ${(tr.cards || []).length + (tr.postcard ? 1 : 0)} 条见闻${photos.length ? `、拍了${photos[0].ref?.title ? `一张《${photos[0].ref.title}》的照片` : '一张照片'}${photos.length > 1 ? `等 ${photos.length} 张` : ''}` : ''}${names.length ? `，带回了${names.join('、')}` : ''}` }].slice(-MAX_EVENTS);
+  s.events = [...(s.events || []), { at: new Date(tr.returnAt).toISOString(), day, kind: 'back', text: tr.failed ? '出门转了一圈，没带回什么就回家了' : `逛完回家了，${tr.notes ? `往笔记本贴了 ${tr.notes.length} 张便利贴` : `记下 ${(tr.cards || []).length + (tr.postcard ? 1 : 0)} 条见闻`}${photos.length ? `、拍了${photos[0].ref?.title ? `一张《${photos[0].ref.title}》的照片` : '一张照片'}${photos.length > 1 ? `等 ${photos.length} 张` : ''}` : ''}${names.length ? `，带回了${names.join('、')}` : ''}` }].slice(-MAX_EVENTS);
   if (!tr.failed) { s.mood = clamp(s.mood + 5); s.energy = clampF(s.energy - 8); }
   if (s.growth && !tr.failed) {
     s.growth = gainXp(s.growth, 'back', { ageDays: Math.floor((now - (s.bornAt || now)) / 86400e3), at: new Date(now).toISOString() });
-    s.growth = feedInterests(s.growth, (tr.seen || []).map((x) => ({ tag: x.tag, up: x.up, mid: x.mid, title: x.title })), { day, at: new Date(now).toISOString() });
+    const bad = new Set([...(tr.notes || []).filter((x) => x.note?.tag === '踩雷').map((x) => x.url), ...(tr.read || []).filter((x) => x.like === '不喜欢').map((x) => x.url)]);
+    s.growth = feedInterests(s.growth, (tr.seen || []).filter((x) => !bad.has(x.url)).map((x) => ({ tag: x.tag, up: x.up, mid: x.mid, title: x.title })), { day, at: new Date(now).toISOString() });
+    if (tr.dislikes?.length) s.growth = feedDislikes(s.growth, tr.dislikes, { day, at: new Date(now).toISOString() }); // F-82：不喜欢满 2 次才扣
   }
   s.lastBackAt = tr.returnAt;
   s.trip = null;
@@ -195,7 +209,7 @@ export function createLife(dir) {
       const s = settle(load(fish), now);
       const day = dayOf(new Date(now));
       const t = String(text || '').slice(0, 200);
-      s.journal = [...(s.journal || []), { at: new Date(now).toISOString(), text: t, seen: (seen || []).slice(0, 5), dream: true }].slice(-200);
+      s.journal = [...(s.journal || []), { at: new Date(now).toISOString(), text: t, seen: (seen || []).slice(0, 5), dream: true }].slice(-JOURNAL_MAX);
       s.events = [...s.events, { at: new Date(now).toISOString(), day, kind: 'dream', text: t ? `做梦去了：${t.slice(0, 60)}` : '做梦去了，梦见一些东西' }].slice(-MAX_EVENTS);
       s.energy = clampF(s.energy + DREAM_COST.energy);
       s.dream = { at: new Date(now).toISOString(), day, text: t.slice(0, 120), until: now + 3 * 60_000 };
@@ -245,7 +259,7 @@ export function createLife(dir) {
       const s = load(fish);
       s.album = [...(s.album || []), entry].slice(-100);
       // 见闻里那趟的总结也挂上缩略图（F-74）
-      if (entry.ref?.url && entry.trip) s.journal = (s.journal || []).map((j) => (j.final && j.trip === entry.trip ? { ...j, seen: (j.seen || []).map((x) => (x.url === entry.ref.url && !x.photo ? { ...x, photo: entry.photo } : x)), wantPhoto: undefined } : j));
+      if (entry.ref?.url && entry.trip) s.journal = (s.journal || []).map((j) => ((j.final || j.note) && j.trip === entry.trip ? { ...j, seen: (j.seen || []).map((x) => (x.url === entry.ref.url && !x.photo ? { ...x, photo: entry.photo } : x)), wantPhoto: undefined } : j));
       save(s); return s.album;
     },
     addPostcard(fish, card) {

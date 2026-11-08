@@ -9,7 +9,7 @@ export default defineTool({
   name: 'news_today',
   kind: 'read',
   external: true,
-  description: '看今天的新闻：从鱼社固定的几个科技 / 数码 / AI 新闻站（Solidot、IT之家、少数派、爱范儿、量子位、极客公园）里挑几个，返回标题和链接。不占 B站读次数。想念新闻、找话题时用。',
+  description: '看今天的新闻：从鱼社固定的几个科技 / 数码 / AI 新闻站（Solidot、IT之家、少数派、爱范儿、量子位、极客公园）里挑几个，返回标题、链接和摘要（有的话）。不占 B站读次数。想念新闻、找话题时用。',
   params: { limit: { type: 'integer', description: '每个站最多几条（默认 5，最多 10）' } },
   async run(a, { pond, habits, fetchNewsImpl }) {
     const f = pond?.current?.();

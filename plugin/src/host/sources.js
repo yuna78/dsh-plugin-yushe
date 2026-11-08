@@ -38,14 +38,21 @@ export function clean(s, max = 80) {
 }
 const okUrl = (u) => /^https?:\/\/[^\s"'<>]+$/.test(u) ? u : '';
 
-/** 极简 RSS / Atom 解析：只取前 n 条的标题和链接。 */
+/** RSS 摘要（F-82）：description / summary / content 里的 HTML（常常是转义过的）→ 一行纯文字，截 120 字。 */
+export function summaryOf(raw, max = 120) {
+  const t = String(raw ?? '').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ').replace(/<[^>]*>/g, ' ');
+  return clean(t, max);
+}
+
+/** 极简 RSS / Atom 解析：只取前 n 条的标题、链接和摘要（有的话）。 */
 export function parseFeed(xml, n = 6) {
   const items = [];
   const blocks = xml.match(/<item[\s>][\s\S]*?<\/item>/g) || xml.match(/<entry[\s>][\s\S]*?<\/entry>/g) || [];
   for (const b of blocks) {
     const title = clean((b.match(/<title[^>]*>([\s\S]*?)<\/title>/) || [])[1]);
     const link = okUrl(clean((b.match(/<link[^>]*>([\s\S]*?)<\/link>/) || [])[1], 300) || ((b.match(/<link[^>]*href="([^"]+)"/) || [])[1] || ''));
-    if (title && link) items.push({ title, url: link });
+    const summary = summaryOf((b.match(/<(description|summary|content)[^>]*>([\s\S]*?)<\/\1>/) || [])[2]);
+    if (title && link) items.push({ title, url: link, ...(summary && summary !== title ? { summary } : {}) });
     if (items.length >= n) break;
   }
   return items;

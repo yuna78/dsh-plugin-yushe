@@ -11,9 +11,13 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { Compiler } from 'inkjs/full';
 import { writeToolsIndex } from './gen-tools.mjs';
+import { writePromptsIndex } from './gen-prompts.mjs';
 
 // 工具表：每次构建前按 tools/<类别>/*.js 重新生成 _all.js（F-59）
 if (writeToolsIndex()) console.log('✓ 已更新 tools/_all.js');
+
+// 提示词表：每次构建前按 src/prompts/*.md 重新生成 _all.js（F-80 搬家-1）
+if (writePromptsIndex()) console.log('✓ 已更新 prompts/_all.js');
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repo = resolve(root, '..');

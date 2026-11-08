@@ -10,7 +10,8 @@
 import { startRoam, trackJob, endJob } from './probe.js';
 import { runToolLoop, tripSystem, collectCatalog, parseReport } from './trip-loop.js';
 import { createLedger } from '../shared/evidence.js';
-import { personaFor } from '../shared/growth.js';
+import { personaFor, dislikeList } from '../shared/growth.js';
+import { acceptNotes, readList, dislikedFrom, recentNoteUrls } from '../shared/notes.js';
 import { moodTone } from '../shared/mood.js';
 import { nowMs, nowDate } from './clock.js';
 import { dayOf, snapshot, asleepAt, lifeSection } from './life-engine.js';
@@ -104,8 +105,10 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
           if (cur?.id !== id) return;
           if (!result) { life.setTrip(f, { state: 'planned', failed: true, cards: [], souvenirs: [], returnAt: nowMs() + 20 * 60_000 }); return; }
           const seen = result.seen || [];
-          const plan = tripPlan({ tripId: id, startedAt: cur.startedAt, seen, energy: energyAtStart, gear, items: hb.itemsPerTrip || 2 });
-          life.setTrip(f, { wantComment: result.wantComment || null, wantPost: result.wantPost || null, state: 'planned', seen: seen.slice(0, 8), cards: plan.cards, returnAt: plan.returnAt, postcard: String(result.postcard || '').slice(0, 300), souvenirs: souvenirsFor({ tripId: id, seen, gear }), tokens: result.tokens || 0 });
+          // F-82：有便利贴就让途中寄回的那几张正好是便利贴（到点贴进笔记本）；没有（老路 / 没交游记）照旧用见闻
+          const notes = Array.isArray(result.notes) ? result.notes : null;
+          const plan = tripPlan({ tripId: id, startedAt: cur.startedAt, seen: notes ? notes : seen, energy: energyAtStart, gear, items: hb.itemsPerTrip || 2 });
+          life.setTrip(f, { wantComment: result.wantComment || null, wantPost: result.wantPost || null, state: 'planned', seen: seen.slice(0, 12), cards: plan.cards, returnAt: plan.returnAt, postcard: String(result.postcard || '').slice(0, 300), souvenirs: souvenirsFor({ tripId: id, seen, gear }), tokens: result.tokens || 0, ...(notes ? { notes } : {}), ...(result.read ? { read: result.read.read, scanned: result.read.scanned } : {}), ...(result.dislikes?.length ? { dislikes: result.dislikes } : {}) });
           // 相册照片（F-74）：老路没有读账，不拍
           try { shootPhotos(result, seen); } catch (e) { log?.warn?.(`[dsh-yushe] 照片出错：${e?.message || e}`); }
       };
@@ -136,6 +139,7 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
         interests: Object.entries(g.interests || {}).sort((x, y) => y[1].heat - x[1].heat).slice(0, 5).map(([t]) => t),
         ups: Object.entries(g.ups || {}).filter(([, u]) => u.mid).sort((x, y) => y[1].n - x[1].n).slice(0, 3).map(([n, u]) => `${n}（mid ${u.mid}）`),
         favZones: hb.favZones || [], avoidWords: hb.avoidWords || [], maxCalls: hb.tripToolCalls || 12, caps: hb,
+        dislikes: dislikeList(g), maxNotes: hb.notesPerTrip || 6, // F-82
         // F-76：出门是对外的场合，只带 B站上的记忆（家里的事不带）；最近评论过的视频提醒别重复
         memoryText: (() => { try { return memory?.section?.(f, { scope: 'public', query: Object.keys(g.interests || {}).join(' '), limit: 4, title: '【你在 B站上的记忆】', tail: '模糊的就别说得很肯定；记不清的人当新认识。' }) || ''; } catch { return ''; } })(),
         commented: (() => { try { return memory?.recentlyCommented?.(f) || []; } catch { return []; } })(),
@@ -148,15 +152,20 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
           const rep = parseReport(r.text, catalog);
           // 她没交游记（额度 / 时间用完）：用这趟真看过的前几条，明信片让老路的规则补
           const seen = rep.seen.length ? rep.seen : [...catalog.values()].slice(0, 4).map((c) => ({ ...c, verified: true, why: '' }));
+          // F-82：便利贴验收（读账封顶、标签、张数、7 天重复）+ 读过清单 + 这趟不喜欢的
+          const dump = ledger.dump();
+          const notes = rep.parsed ? acceptNotes({ seen: rep.seen, ledger: dump, catalog, cap: hb.notesPerTrip || 6, recent: recentNoteUrls(life.state(f).journal, nowMs()) }) : [];
+          const read = readList({ catalog, ledger: dump, acts, verdict: rep.verdict });
+          const dislikes = dislikedFrom({ read: read.read, notes });
           log?.info?.(`[dsh-yushe] 工具出门：调了 ${r.calls.length} 次工具（${[...new Set(r.calls.map((c) => c.name))].join('、')}），看过 ${catalog.size} 条，游记 ${rep.seen.length} 条${rep.dropped.length ? `，丢掉编的 ${rep.dropped.length} 条` : ''}，${r.usage.totalTokens} tokens`);
           endJob(jobId, { result: { tools: r.calls, seen } });
           life.setTrip(f, { toolCalls: r.calls.map((c) => c.name).slice(0, 40) });
-          finish({ seen, postcard: rep.postcard, tokens: r.usage.totalTokens, photo: rep.seen.length ? rep.photo : null, ledger: ledger.dump(), acts });
+          finish({ seen, postcard: rep.postcard, tokens: r.usage.totalTokens, photo: rep.seen.length ? rep.photo : null, ledger: dump, acts, notes, read, dislikes });
         })
         .catch((e) => {
           log?.warn?.(`[dsh-yushe] 工具出门出错：${String(e?.message || e).slice(0, 120)}${calls ? '' : '，退回老路'}`);
           endJob(jobId, { state: 'error', error: String(e?.message || e).slice(0, 200) });
-          if (!calls) { const old = roamOld(); life.setOut(f, old); } else finish({ seen: [...catalog.values()].slice(0, 4).map((c) => ({ ...c, verified: true, why: '' })), postcard: '' });
+          if (!calls) { const old = roamOld(); life.setOut(f, old); } else finish({ seen: [...catalog.values()].slice(0, 4).map((c) => ({ ...c, verified: true, why: '' })), postcard: '', notes: [], read: readList({ catalog, ledger: ledger.dump(), acts }) });
         });
     }
       life.setOut(f, jobId);

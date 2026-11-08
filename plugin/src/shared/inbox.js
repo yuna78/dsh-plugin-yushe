@@ -8,6 +8,14 @@
  */
 export const INBOX_KINDS = { reply: { name: '回复', icon: 'speech' }, like: { name: '点赞', icon: 'heart' }, follow: { name: '新粉丝', icon: 'sparkle' } };
 const MAX_ITEMS = 200, MAX_FANS = 1000;
+/** 一条通知的时间（B站给的时间；拿不到就用拉回来的时间）。 */
+export const itemTime = (x) => { const t = Date.parse(x?.at || x?.got || ''); return Number.isFinite(t) ? t : 0; };
+/**
+ * 最新在前的前 n 条。界面一直用 `.slice(-n).reverse()`——那只是「追加顺序的反转」：
+ * 一批点赞是 B站 按新→旧给的，追加到末尾再反转就成了这一批里旧→新，看着像正序。
+ * 改成按时间排，老的存档也照样对。
+ */
+export const newestFirst = (items = [], n = 40) => [...items].sort((a, b) => itemTime(a) - itemTime(b)).slice(-n).reverse();
 const norm = (s) => String(s || '').replace(/\s+/g, '').slice(0, 20);
 
 export const emptyInbox = () => ({ seeded: false, items: [], fans: [], fanCount: null, lastPoll: null, lastFetch: {} });
@@ -58,7 +66,7 @@ export function mergeInbox(prev, got, nowIso) {
     s.lastFetch.fans = nowIso;
   }
   if (got.fanCount != null) s.fanCount = got.fanCount;
-  s.items = s.items.slice(-MAX_ITEMS);
+  s.items = s.items.slice().sort((a, b) => itemTime(a) - itemTime(b)).slice(-MAX_ITEMS); // 存成时间正序，切到最新 200 条
   s.seeded = true; s.lastPoll = nowIso;
   return { state: s, news };
 }

@@ -37,6 +37,7 @@ export const HABIT_FIELDS = {
   // —— 细配置：读多深 ——
   readBudget: { label: '每天读 B站次数', type: 'int', min: 50, max: 1000, def: 300, chat: true, group: 'read' },
   tripToolCalls: { label: '每趟出门最多调几次工具', type: 'int', min: 3, max: 30, def: 12, chat: true, group: 'read' },
+  notesPerTrip: { label: '每趟最多往笔记本贴几张', type: 'int', min: 1, max: 12, def: 6, chat: true, group: 'read' }, // F-82
   subtitle: { label: '看字幕', type: 'bool', def: true, chat: true, group: 'read' },
   subtitleChars: { label: '字幕最多读多少字', type: 'int', min: 0, max: 6000, def: 1500, chat: true, group: 'read' },
   danmaku: { label: '看弹幕', type: 'bool', def: false, chat: true, group: 'read' },
@@ -71,7 +72,7 @@ export const HABIT_FIELDS = {
 /** 三个粗档位：每档对应一组细项的值（顺序和 levels 一致）。默认档 = 各细项的默认值。 */
 export const KNOBS = {
   out: { label: '爱不爱出门', levels: ['宅', '看性格', '爱逛'], fields: { outBias: [0.5, 1, 1.8], tripsPerDay: [2, 0, 0], restBias: [1.5, 1, 0.6] } },
-  depth: { label: '读多深', levels: ['浅', '中', '深'], fields: { readBudget: [150, 300, 600], tripToolCalls: [6, 12, 20], subtitle: [false, true, true], subtitleChars: [0, 1500, 4000], danmaku: [false, false, true], threads: [false, true, true], commentsPerVideo: [3, 5, 10] } },
+  depth: { label: '读多深', levels: ['浅', '中', '深'], fields: { readBudget: [150, 300, 600], tripToolCalls: [6, 12, 20], notesPerTrip: [4, 6, 10], subtitle: [false, true, true], subtitleChars: [0, 1500, 4000], danmaku: [false, false, true], threads: [false, true, true], commentsPerVideo: [3, 5, 10] } },
   memory: { label: '记性', levels: ['健忘', '适中', '好记性'], fields: { memoryDays: [10, 30, 60], memoryRecall: [3, 5, 8] } },
   interact: { label: '互动多少', levels: L3, fields: { commentsPerDay: [4, 12, 20], repliesPerDay: [4, 12, 20], dynCommentsPerDay: [1, 3, 6], postsPerDay: [1, 2, 3], dmsPerDay: [1, 3, 6], likesPerDay: [5, 15, 30], commentLikesPerDay: [5, 15, 30], collectsPerDay: [2, 5, 10], followsPerDay: [1, 2, 4], unfollowsPerDay: [0, 1, 2], perPersonPerDay: [2, 4, 6], replyToReplies: [false, true, true] } },
 };

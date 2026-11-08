@@ -2,6 +2,10 @@
  * 她每天的打算（F-52）：早上醒来自己想今天干什么（模型写），规则校验；睡觉 00:00–07:30 固定。
  * 打算只是「她想做的」，不是命令：出不出门照样由性格掷骰子，真发生了什么在「今天」页。纯函数。
  */
+// 提示词本体在 src/prompts/plan.md（F-80 搬家-1）：构建时 gen-prompts.mjs 把 md 生成 _all.js，这里只填变量
+import PROMPTS from '../prompts/_all.js';
+import { fill } from './prompt.js';
+
 export const PLAN_ICONS = ['sunrise', 'work', 'book', 'rice', 'broom', 'surf', 'speech', 'diary', 'news', 'cookie', 'pillow', 'tv', 'pencil', 'heart', 'door', 'think', 'sparkle', 'gift', 'fish'];
 export const WAKE = '07:30', BED = '24:00';
 const SLEEP_ROW = { from: '00:00', to: '07:30', what: '睡觉', icon: 'moon', fixed: true };
@@ -10,13 +14,17 @@ const okTime = (s) => /^([01]\d|2[0-3]):[0-5]\d$|^24:00$/.test(String(s));
 
 /** 给模型的提示词。facts：性格、爱好、精力、上工没、昨天的日记、上网习惯。 */
 export function planPrompt({ fish, lifeText, facts }) {
-  return [
-    fish.personaText, '', lifeText, '',
-    '【关于你】', ...facts.map((f) => `- ${f}`), '',
-    `【现在】早上 ${WAKE} 你醒了。想想今天打算干什么（这只是你的打算，后面会不会变看心情）。`,
-    `只输出一个 JSON 数组，5–9 段，从 ${WAKE} 排到 ${BED}，时间连续不重叠，每段：{"from":"HH:MM","to":"HH:MM","what":"不超过 16 个字，用你自己的口吻","icon":"从这些里选一个：${PLAN_ICONS.join(' / ')}"}。`,
-    '要符合你的性格和爱好：爱出门的可以多安排出去逛，宅的多待在家；在上工的话白天要留出帮爸妈干活的时间；23 点以后要写日记。不要写具体的新闻、视频、数字或链接。只输出 JSON。',
-  ].join('\n');
+  const f = facts || [];
+  return fill(PROMPTS.plan, {
+    persona: fish.personaText || '',
+    lifeText: lifeText || '',
+    // 拼成「- x」列表；非空时行尾多带一个 \n（它就是 {{facts}} 行和【现在】之间那个空分隔行；
+    // facts 空时它是空串，标题和【现在】之间正好留一行空，和原来数组拼法的空行一字不差）
+    facts: f.map((x) => `- ${x}`).join('\n') + (f.length ? '\n' : ''),
+    wake: WAKE,
+    bed: BED,
+    icons: PLAN_ICONS.join(' / '),
+  });
 }
 
 /** 校验模型写的打算；不合格返回 null（用模板兜底）。合格的补上固定的睡觉时段。 */

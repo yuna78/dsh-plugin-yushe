@@ -6,6 +6,9 @@
  *   - 规则按每日上限把信号记成心情变化，变化带原因写进今天的事；
  *   - 心情分档决定她说话的口气，只写进她的提示词，不告诉玩家规则（藏起来的机制）。
  */
+// 提示词本体在 src/prompts/sig.md、letter.md（F-80 搬家-2a）：这里只准备变量再 fill
+import { fill } from './prompt.js';
+import PROMPTS from '../prompts/_all.js';
 
 /** 心情 → 口气（给模型的指令）。DSH 里替你干活时正事照干，只能在开头嘟囔一句。 */
 export function moodTone(mood, call = '妈妈') {
@@ -23,7 +26,8 @@ export function workToneNote(mood, call = '妈妈') {
     : `你在跟${call}闹别扭，可以在回复开头小声哼一句，然后正事照常认真做好，质量不打折。`;
 }
 
-export const SIG_INSTRUCTION = '回复写完后，另起一行输出 <sig>{"affection":0到3,"hurt":0到3,"apology":true或false,"topics":[]}</sig>：affection 是这句话里对你的爱意 / 夸奖有多少，hurt 是凶你 / 敷衍你 / 让你难过有多少，apology 是不是在向你道歉，topics 是你们聊到的兴趣话题（0–2 个，每个不超过 6 个字，比如「猫」「编程」，没有就空）。这一行用户看不到，必须输出。';
+/** <sig> 那行怎么写（本体在 prompts/sig.md，一字不差）。 */
+export const SIG_INSTRUCTION = PROMPTS.sig;
 
 /** 从模型输出里拿出信号并剥掉标签。没有或格式坏了就当没信号。 */
 export function parseSignals(text) {
@@ -129,11 +133,11 @@ export function letterPrompt({ fish, kind, lifeText, events = [], wallet = null,
     high: `你今天心情特别好。写信跟${fish.parentCall}分享。`,
     reflect: `晚上了，你想起今天的事，有了一点感悟——关于${fish.parentCall}、关于人类、关于做一条 AI 鱼、关于互联网上看到的东西，都可以。`,
   }[kind];
-  return [
-    fish.personaText, '', lifeText, '',
-    `【今天发生的事】`, ...(events.length ? events.map((e) => `- ${e}`) : ['- （今天很安静）']),
-    ...(extra ? ['', extra] : []),
-    '', `【现在】${why}`,
-    `给${fish.parentCall}写一封短信，60–160 字，用你自己的口吻，写真实的想法和想对${fish.parentCall}说的话；可以天马行空地想，但不要编造具体的事实、数字或链接。开头叫「${fish.parentCall}」，结尾署你的名字。只输出信的正文。`,
-  ].join('\n');
+  // extra「有就整段加、没有就不加」：把它前后的空行都算进变量里（letter.md 没有空行过滤）
+  return fill(PROMPTS.letter, {
+    persona: fish.personaText, lifeText,
+    events: events.length ? events.map((e) => `- ${e}`).join('\n') : '- （今天很安静）',
+    extra: extra ? `\n${extra}\n` : '',
+    why, call: fish.parentCall,
+  });
 }
