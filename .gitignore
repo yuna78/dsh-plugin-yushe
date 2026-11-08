@@ -4,3 +4,4 @@ plugin/game/
 *.tgz
 .DS_Store
 AGENTS.local.md
+.agents/
