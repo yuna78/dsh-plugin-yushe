@@ -1041,15 +1041,27 @@ function renderLetter() {
   if (!l) { $('phoneBody').innerHTML = dmsHtml() + inboxHtml() + draftsHtml(); return; }
   $('phoneBody').innerHTML = dmsHtml() + inboxHtml() + draftsHtml() + `<div class="lview"><div class="lpaper"><div class="lhead">${MAIL.unread.has(l.id) ? '<span class="newtag">新</span>' : ''}${esc(l.kindText || '信')} · ${esc(l.day)} ${esc(hhmm(l.at))}</div><p>${esc(l.text)}</p></div>${navBtns(i, list.length, '新一封', '旧一封')}</div>`;
 }
-// 明信片（F-84）：她出门途中从外面寄回家的。正面是她拍的照片，没拍成就是一张邮票风格的文字卡；背面是她写给你的话、链接、她那张便利贴
+// 明信片（F-84/F-85）：她出门途中从外面寄回家的。正面是她拍的照片，没拍成就是一张风景明信片（鱼社自己的画）；
+// 背面她自己选写哪种：见闻 / 想你 / 口信（F-85）——风景卡选了想你和口信就不放链接和便利贴，只放她的话；照片卡照旧
 const FRAME = { screen: '隔着屏幕', object: '变成东西', stepin: '走进去' };
-const pcFront = (ph, big) => (ph.url ? `<img src="${esc(ph.url)}" alt="${esc(ph.caption || '她拍的照片')}"${big ? '' : ' loading="lazy"'}>` : `<div class="pcstamp"><span class="pcpost">${esc(ph.at.slice(5, 10).replace('-', '.'))}<br>鱼社</span><p>${esc(ph.caption || ph.text || '从外面寄来的')}</p><small>${esc(ph.ref?.title ? `在《${ph.ref.title}》那里` : '')}</small></div>`);
+const SAY_LABEL = { 见闻: '见闻', 想你: '想你', 口信: '口信' }; // 背面那种的小标签；scene 只认这样的 id 才拼进路径，防路径注入
+const SCENE_OK = /^[a-z][a-z0-9]{2,20}$/;
+const mmdd = (at) => { const d = new Date(at); return isNaN(+d) ? '某月某日' : `${d.getMonth() + 1} 月 ${d.getDate()} 日`; }; // 本机时区的哪天（别拿 ISO 前 10 位）
+const pcFront = (ph, big) => (ph.url ? `<img src="${esc(ph.url)}" alt="${esc(ph.caption || '她拍的照片')}"${big ? '' : ' loading="lazy"'}>`
+  : ph.kind !== 'text' && ph.scene && SCENE_OK.test(ph.scene) ? `<div class="pcscene" style="background-image:url(./assets/bg/${esc(ph.scene)}.webp)"><span class="pcpost">${esc(ph.at.slice(5, 10).replace('-', '.'))}<br>鱼社</span><p>${esc(ph.caption || ph.text || '从外面寄来的')}</p></div>`
+  : `<div class="pcstamp"><span class="pcpost">${esc(ph.at.slice(5, 10).replace('-', '.'))}<br>鱼社</span><p>${esc(ph.caption || ph.text || '从外面寄来的')}</p><small>${esc(ph.ref?.title ? `在《${ph.ref.title}》那里` : '')}</small></div>`);
 let PC_BACK = false;
+let GONB_TRIP = null; // 从「去笔记本看」跳过去的：只切筛选，不另外定死到某一趟
 function renderPhotoView() {
   const { list, i } = PHOTOS, ph = list[i];
   const link = ph.ref?.title ? `<div class="psrc">${ph.url ? '拍于《' : '寄自《'}${esc(ph.ref.title)}》${/^https?:\/\//.test(ph.ref.url || '') ? ` · <a href="${esc(ph.ref.url)}" target="_blank" rel="noreferrer">${/bilibili\.com/.test(ph.ref.url) ? '在 B站看' : '去看看'}</a>` : ''}${FRAME[ph.frame] ? ` <span class="pframe">${FRAME[ph.frame]}</span>` : ''}</div>` : '';
   const b = ph.back;
-  const back = `<div class="pcback"><div class="pcmsg">${esc(ph.text || ph.caption || '')}</div>${link}${b && (b.line || b.gist) ? `<div class="pcnote"><b>${esc(b.tag || '心得')}</b>${b.gist ? `<p>${esc(b.gist)}</p>` : ''}${b.line ? `<p class="nb-line">${esc(b.line)}</p>` : ''}</div>` : ''}${!ph.url && ph.moment ? `<div class="jwish">${ICON('camera')} 她想拍下：${esc(ph.moment)}</div>` : ''}<small style="color:var(--mute)">${esc(ph.at.slice(0, 10))} ${esc(hhmm(ph.at))} 寄到</small></div>`;
+  const tag = SAY_LABEL[ph.say] && ph.say !== '见闻' ? `<span class="ptag">${esc(ph.say)}</span>` : '';
+  const when = `<small style="color:var(--mute)">${esc(ph.at.slice(0, 10))} ${esc(hhmm(ph.at))} 寄到</small>`;
+  // F-85：风景卡写了想你和口信 → 只放她的话 + 那种 + 寄到时间，不放链接和便利贴；最下面「去笔记本看」切到这趟的「这一趟」
+  const back = !ph.url && (ph.say === '想你' || ph.say === '口信')
+    ? `<div class="pcback"><div class="pcmsg big">${esc(ph.text || ph.caption || '')}</div>${tag}${when}<div class="pcfoot"><button class="pcgo" data-gonb>寄自 ${esc(mmdd(ph.at))}那趟 · 去笔记本看</button></div></div>`
+    : `<div class="pcback"><div class="pcmsg">${esc(ph.text || ph.caption || '')}</div>${tag}${link}${b && (b.line || b.gist) ? `<div class="pcnote"><b>${esc(b.tag || '心得')}</b>${b.gist ? `<p>${esc(b.gist)}</p>` : ''}${b.line ? `<p class="nb-line">${esc(b.line)}</p>` : ''}</div>` : ''}${!ph.url && ph.moment ? `<div class="jwish">${ICON('camera')} 她想拍下：${esc(ph.moment)}</div>` : ''}${when}</div>`;
   if (!ph.pc) { // 0.34.0 以前的照片（没有背面）：照旧一张照片 + 说明 + 拍于哪条，不翻面
     $('phoneBody').innerHTML = `<div class="pview"><div class="pbig">${pcFront(ph, true)}</div><div class="pcap">${esc(ph.caption || '')}<br><small style="color:var(--mute)">${esc(ph.at.slice(0, 10))} ${esc(hhmm(ph.at))}</small>${link}</div>${navBtns(i, list.length, '上一张', '下一张')}<div style="text-align:center;margin-top:8px"><button class="gb plain sm" data-grid>回到明信片册</button></div></div>`;
     return;
@@ -1136,6 +1148,8 @@ async function renderPhone() {
     body.onclick = (e) => {
       if (e.target.closest('a')) return;
       if (e.target.closest('[data-gocfg]')) { $('phoneM').classList.remove('on'); openCfg(); loadImgApi(); return; }
+      const gonb = e.target.closest('[data-gonb]'); // F-85：风景卡按了「去笔记本看」→ 打开笔记本，切到「这一趟」筛选
+      if (gonb) { PC_BACK = false; PHOTOS.i = -1; GONB_TRIP = true; openApp('journal'); return; }
       const tile = e.target.closest('[data-ph]'); if (tile) { PHOTOS.i = Number(tile.dataset.ph); PC_BACK = false; renderPhotoView(); return; }
       if (e.target.closest('[data-pcflip]')) { PC_BACK = !PC_BACK; renderPhotoView(); return; }
       if (e.target.closest('[data-grid]')) { PHOTOS.i = -1; grid(); return; }
@@ -1144,7 +1158,8 @@ async function renderPhone() {
   } else if (APP === 'journal') {
     // 笔记本（F-82，docs/设计/13）：一张张便利贴，最新的在第一页左上角；明信片翻过来是这趟的读过清单；足迹在筛选里
     const [r, fp, ib] = await Promise.all([api('/journal'), api('/footprints').catch(() => ({ items: [] })), api('/inbox').catch(() => ({ foot: {} }))]);
-    NOTEBOOK = { entries: r.entries || [], foot: fp.items || [], ibFoot: ib?.foot || {}, filter: '全部', page: 0, flipped: new Set() };
+    NOTEBOOK = { entries: r.entries || [], foot: fp.items || [], ibFoot: ib?.foot || {}, filter: GONB_TRIP ? '这一趟' : '全部', page: 0, flipped: new Set() }; // F-85：从「去笔记本看」跳过来就切到「这一趟」
+    GONB_TRIP = null;
     renderNotebook();
     body.onclick = (e) => {
       const t = e.target.closest('[data-jph]'); if (t) { PHOTO_JUMP = t.dataset.jph; openApp('album'); return; }

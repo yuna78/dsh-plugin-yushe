@@ -117,7 +117,7 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
           const plan = tripPlan({ tripId: id, startedAt: cur.startedAt, seen: notes ? notes : seen, energy: energyAtStart, gear, items: hb.itemsPerTrip || 2 });
           let pick = { shots: [], missed: [] };
           try { pick = pickPhotos(result, seen); } catch (e) { log?.warn?.(`[dsh-yushe] 照片出错：${e?.message || e}`); }
-          const postcards = planPostcards({ tripId: id, startedAt: cur.startedAt, durationMs: plan.durationMs, shots: pick.shots, missed: pick.missed, notes: notes || [], seen, text: String(result.postcard || '') });
+          const postcards = planPostcards({ tripId: id, startedAt: cur.startedAt, durationMs: plan.durationMs, shots: pick.shots, missed: pick.missed, notes: notes || [], seen, text: String(result.postcard || ''), say: result.postcardSay, home: f.home }); // F-85：背面的哪种 + 她住的那间寄不出去（家里景挑别的）
           life.setTrip(f, { wantComment: result.wantComment || null, wantPost: result.wantPost || null, state: 'planned', seen: seen.slice(0, 12), cards: plan.cards, returnAt: plan.returnAt, postcard: String(result.postcard || '').slice(0, 300), postcards, souvenirs: souvenirsFor({ tripId: id, seen, gear }), tokens: result.tokens || 0, ...(notes ? { notes } : {}), ...(result.read ? { read: result.read.read, scanned: result.read.scanned } : {}), ...(result.dislikes?.length ? { dislikes: result.dislikes } : {}) });
           try { shootPhotos(pick, seen, postcards); } catch (e) { log?.warn?.(`[dsh-yushe] 照片出错：${e?.message || e}`); }
       };
@@ -126,7 +126,7 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
         who: { name: f.name, call: f.parentCall }, prefer, k, gatherBili,
         onDone: (job) => {
           try { if (job.usage?.totalTokens) wallet.chargeTokens('roam', job.usage.totalTokens); } catch { /* 记账失败不影响 */ }
-          finish(job.state === 'done' && job.result ? { seen: (job.result.seen || []).filter((x) => x.verified), postcard: job.result.postcard, wantComment: job.result.wantComment, wantPost: job.result.wantPost, tokens: job.usage?.totalTokens || 0 } : null);
+          finish(job.state === 'done' && job.result ? { seen: (job.result.seen || []).filter((x) => x.verified), postcard: job.result.postcard, postcardSay: job.result.postcardSay, wantComment: job.result.wantComment, wantPost: job.result.wantPost, tokens: job.usage?.totalTokens || 0 } : null);
         },
       });
       return jobId;
@@ -149,6 +149,7 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
         ups: Object.entries(g.ups || {}).filter(([, u]) => u.mid).sort((x, y) => y[1].n - x[1].n).slice(0, 3).map(([n, u]) => `${n}（mid ${u.mid}）`),
         favZones: hb.favZones || [], avoidWords: hb.avoidWords || [], maxCalls: hb.tripToolCalls || 12, caps: hb,
         dislikes: dislikeList(g), maxNotes: hb.notesPerTrip || 6, // F-82
+        recentSays: (s.album || []).filter((x) => x.say).slice(-3).map((x) => x.say), // F-85：最近几张明信片是哪种，让她自己换着写
         // F-76：出门是对外的场合，只带 B站上的记忆（家里的事不带）；最近评论过的视频提醒别重复
         memoryText: (() => { try { return memory?.section?.(f, { scope: 'public', query: Object.keys(g.interests || {}).join(' '), limit: 4, title: '【你在 B站上的记忆】', tail: '模糊的就别说得很肯定；记不清的人当新认识。' }) || ''; } catch { return ''; } })(),
         commented: (() => { try { return memory?.recentlyCommented?.(f) || []; } catch { return []; } })(),
@@ -169,7 +170,7 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
           log?.info?.(`[dsh-yushe] 工具出门：调了 ${r.calls.length} 次工具（${[...new Set(r.calls.map((c) => c.name))].join('、')}），看过 ${catalog.size} 条，游记 ${rep.seen.length} 条${rep.dropped.length ? `，丢掉编的 ${rep.dropped.length} 条` : ''}，${r.usage.totalTokens} tokens`);
           endJob(jobId, { result: { tools: r.calls, seen } });
           life.setTrip(f, { toolCalls: r.calls.map((c) => c.name).slice(0, 40) });
-          finish({ seen, postcard: rep.postcard, tokens: r.usage.totalTokens, photo: rep.seen.length ? rep.photo : null, ledger: dump, acts, notes, read, dislikes });
+          finish({ seen, postcard: rep.postcard, postcardSay: rep.postcardSay, tokens: r.usage.totalTokens, photo: rep.seen.length ? rep.photo : null, ledger: dump, acts, notes, read, dislikes });
         })
         .catch((e) => {
           log?.warn?.(`[dsh-yushe] 工具出门出错：${String(e?.message || e).slice(0, 120)}${calls ? '' : '，退回老路'}`);

@@ -59,8 +59,9 @@ export function archiveItems({ fish, life = {}, footprints = [], inbox = [], dms
       else out.push({ key: `s:${bvid || x.url}`, at: j.at, kind: 'seen', text: `${where}${!j.final && j.text ? `，${short(j.text, 40)}` : ''}`, url: x.url, keys: { bvid, tag: x.tag, who: x.up, mid: x.mid } });
     }
   }
-  // F-84：路上寄回的文字明信片（没拍成照片的那张）
-  for (const p of life.album || []) if (!p.photo && p.pc && p.at && p.text) out.push({ key: `j:${p.trip || p.at}:card`, at: p.at, kind: 'postcard', text: `在外面给${call}寄了张明信片${p.ref?.title ? `（看《${defang(short(p.ref.title, 30))}》时）` : ''}：${short(p.text, 80)}`, url: p.ref?.url || undefined });
+  // F-84/F-85：路上寄回的明信片（没拍成照片的那张）。她说哪种就记成哪种（想你的 / 口信明信片）；见闻照旧带着是看《什么》时写的
+  const SAY_TEXT = { 想你: '想你的', 口信: '口信' };
+  for (const p of life.album || []) if (!p.photo && p.pc && p.at && p.text) out.push({ key: `j:${p.trip || p.at}:card`, at: p.at, kind: 'postcard', text: `在外面给${call}寄了张${SAY_TEXT[p.say] ? `${SAY_TEXT[p.say]}明信片` : `明信片${p.ref?.title ? `（看《${defang(short(p.ref.title, 30))}》时）` : ''}`}：${short(p.text, 80)}`, url: p.ref?.url || undefined });
   for (const p of life.album || []) if (p.photo && p.at && p.ref?.title) {
     const bvid = String(p.ref.url || '').match(/BV[0-9A-Za-z]{10}/)?.[0];
     out.push({ key: `p:${p.photo}`, at: p.at, kind: 'photo', text: `看《${defang(short(p.ref.title, 40))}》时被打动，拍了一张照片${p.moment ? `：${short(p.moment, 50)}` : ''}`, url: p.ref.url || undefined, keys: { bvid } });

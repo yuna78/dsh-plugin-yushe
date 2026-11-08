@@ -440,6 +440,14 @@ body[data-screen="home"] #homeActs{display:flex}
 .ptile.pctext .pcstamp{min-height:0;height:auto;aspect-ratio:1;padding:10px;gap:2px}.ptile.pctext .pcstamp small{display:none}.ptile.pctext .pcstamp p{font-size:12px;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}.ptile.pctext .pcpost{width:30px;height:30px;font-size:7px;top:4px;right:4px}
 .pcback{padding:16px 18px;background:#fffdf6;border:3px solid var(--ol);border-radius:10px;min-height:180px;text-align:left}.pcmsg{font:16px/1.7 var(--game);margin-bottom:8px}.pcnote{margin:10px 0 6px;padding:8px 10px;background:#cfeaff;border:2px solid var(--ol);border-radius:4px 4px 12px 4px}.pcnote b{font:12px var(--game)}.pcnote p{margin:4px 0 0;font:13px/1.55 var(--body)}.pcnote .nb-line{font:14px/1.55 var(--game)}
 .pctip{font:11px var(--body);color:var(--mute);margin-top:4px}.pview .pbig.pcflip{overflow:auto;align-items:safe center}.pview .pbig.pcflip .pcback{width:100%;box-sizing:border-box;margin:auto 0}
+/* 风景明信片（F-85）：正面是鱼社自己的画（./assets/bg/<scene>.webp），压上她那句话的开头 + 邮戳；半透明底让字看得清 */
+.pcscene{position:relative;display:flex;flex-direction:column;justify-content:flex-end;width:100%;height:100%;min-height:180px;background-size:cover;background-position:center;border-radius:10px;overflow:hidden;text-align:left}
+.pcscene p{margin:0;padding:10px 12px;background:rgba(255,253,246,.82);font:15px/1.6 var(--game);color:var(--ink);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}.pcscene .pcpost{background:rgba(255,253,246,.75)}
+.ptile .pcscene{aspect-ratio:1;height:auto;min-height:0;border-radius:2px}.ptile .pcscene p{font-size:12px;padding:6px 8px;-webkit-line-clamp:4}
+/* 背面的小标签（三选一）和「去笔记本看」那一行 */
+.ptag{display:inline-block;margin:2px 0 6px;padding:0 8px;border:2px solid var(--pink-d);border-radius:999px;background:#ffe3ef;font:12px var(--game);color:var(--pink-d)}
+.pcmsg.big{font:19px/1.7 var(--game)}
+.pcfoot{margin-top:auto;padding-top:10px}.pcback{display:flex;flex-direction:column}.pcgo{align-self:flex-start;padding:0;border:0;background:none;font:12px var(--body);color:var(--blue-d);text-decoration:underline;cursor:pointer}
 .n-old{background:#f6f3ee}
 /* 笔记本（F-82）：便利贴贴在横线纸上，颜色按标签 */
 .nbchips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}.nbchip{font:13px var(--game);padding:4px 10px;border:2px solid var(--ol);border-radius:999px;background:#fff;color:var(--ink);cursor:pointer}.nbchip.on{box-shadow:0 2px 0 var(--ol);transform:translateY(-1px);outline:2px solid var(--ol)}

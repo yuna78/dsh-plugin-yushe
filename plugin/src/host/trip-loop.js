@@ -14,6 +14,9 @@ import { randomUUID } from 'node:crypto';
 // 提示词本体在 src/prompts/trip.md（F-80 搬家-2a）：这里只准备变量再 fill；空行小工具在 shared/prompt.js（搬家-2b 收拢）
 import { fill, DROP, dropLines } from '../shared/prompt.js';
 import PROMPTS from '../prompts/_all.js';
+// 三种明信片（F-85）的词表在 shared/postcard.js（和页面、记忆共用一份）；这里只做契约验收（say 是不是这三种、text 多长）。
+// 怎么选、怎么写全在 prompts/trip-report.md（原则 6：表达不进代码，这个文件里不出现那三个词）。
+import { POSTCARD_SAYS } from '../shared/postcard.js';
 
 const CLEAN = (s, n = 120) => String(s ?? '').replace(/[\u0000-\u001f<>`]/g, ' ').replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, '').replace(/\s+/g, ' ').trim().slice(0, n);
 
@@ -28,11 +31,13 @@ export function collectCatalog(catalog, result) {
   for (const src of result.news || []) for (const n of src.items || []) if (/^https?:\/\/[^\s"'<>]+$/.test(String(n.url || '')) && !catalog.has(n.url)) catalog.set(n.url, { title: CLEAN(n.title, 80), url: n.url, source: CLEAN(src.source, 20), tag: CLEAN(src.kind, 12) || null, via: 'news', ...(n.summary ? { summary: CLEAN(n.summary, 120) } : {}) });
 }
 
-/** 她交的游记（最后一段文字里的 JSON）→ 只留真的看过的。 */
+/** 她交的游记（最后一段文字里的 JSON）→ 只留真的看过的。明信片的话 ≤120 字；她选哪种明信片写在 {say, text} 里（F-85），老的一句话当「见闻」。 */
 export function parseReport(text, catalog) {
   const raw = String(text || '');
   const m = raw.match(/```(?:json)?\s*([\s\S]*?)```/) || raw.match(/(\{[\s\S]*\})/);
   let j = null; try { j = JSON.parse(m ? m[1] : raw); } catch { j = null; }
+  const rawPc = j?.postcard;
+  const pcText = typeof rawPc === 'string' ? rawPc : (rawPc && typeof rawPc === 'object' ? rawPc.text : '');
   const seen = [], dropped = [];
   for (const x of Array.isArray(j?.seen) ? j.seen.slice(0, 16) : []) {
     const key = /^BV[0-9A-Za-z]{10}$/.test(String(x?.bvid || '')) ? x.bvid : String(x?.url || '');
@@ -51,7 +56,9 @@ export function parseReport(text, catalog) {
     const hit = catalog.get(ref) || [...catalog.values()].find((c) => c.url === ref);
     photo = { ref: hit ? hit.url : '', moment: CLEAN(j.photo.moment, 120), caption: CLEAN(j.photo.caption, 60), frame: ['screen', 'object', 'stepin'].includes(j.photo.frame) ? j.photo.frame : null };
   }
-  return { postcard: CLEAN(j?.postcard, 240), seen: seen.slice(0, 12), verdict, dropped, parsed: Boolean(j), photo };
+  // F-85：她的话最多 120 字（和明信片正面一格写得下的长度一致），她说哪种是不是这三种、不对就当见闻（词表来自 shared/postcard.js）
+  const pc = rawPc && typeof rawPc === 'object' && POSTCARD_SAYS.includes(rawPc.say) ? rawPc.say : '见闻';
+  return { postcard: CLEAN(pcText, 120), postcardSay: pc, seen: seen.slice(0, 12), verdict, dropped, parsed: Boolean(j), photo };
 }
 
 /** 她交的梦（最后一段文字里的 JSON）→ 只留真的看过的链接（和游记同一套核实）。 */
@@ -83,7 +90,7 @@ export function dreamSystem({ persona, moodText = '', interests = [], maxCalls =
 }
 
 /** 这趟出门的系统提示（只有她自己的东西）。 */
-export function tripSystem({ persona, moodText = '', interests = [], ups = [], favZones = [], avoidWords = [], maxCalls, caps = {}, memoryText = '', commented = [], dislikes = [], maxNotes = 6 }) {
+export function tripSystem({ persona, moodText = '', interests = [], ups = [], favZones = [], avoidWords = [], maxCalls, caps = {}, memoryText = '', commented = [], dislikes = [], maxNotes = 6, recentSays = [] }) {
   // 「有就加一行、没有就不加」的那几行：先拼成一个块（没有就空串）填进 md
   const extras = [
     interests.length ? `你最近的爱好：${interests.join('、')}。` : '',
@@ -92,6 +99,7 @@ export function tripSystem({ persona, moodText = '', interests = [], ups = [], f
     avoidWords.length ? `不想看的话题：${avoidWords.join('、')}。` : '',
     dislikes.length ? `你最近不太喜欢：${dislikes.join('、')}（遇到了可以绕开，也可以再给一次机会）。` : '', // F-82
     commented.length ? `这些视频你最近评论过，别再评论一遍：${commented.join('、')}。` : '',
+    recentSays.length ? `你最近寄的明信片：${recentSays.join('、')}（换着写，看心情）。` : '', // F-85：最近几张写的是哪种，让她自己换着来；没有就不提
   ].filter((x) => x !== '').join('\n');
   return dropLines(fill(PROMPTS.trip, {
     persona: persona || DROP, moodText: moodText || DROP, memoryText: memoryText || DROP, extras: extras || DROP,

@@ -2119,7 +2119,7 @@ section('明信片：出门途中从外面寄回家，正面照片或文字卡�
   const pcs = PC.planPostcards({ tripId: 'TP', startedAt: t0, durationMs: dur, shots: [{ item: A, moment: 'm1', caption: '深海', frame: 'stepin' }], notes, seen: [A], text: '妈妈看！' });
   LF.setTrip(fish, { id: 'TP', startedAt: t0, state: 'planned', cards: [], returnAt: t0 + dur, postcard: '妈妈看！', postcards: pcs, notes: notes.map((n) => ({ ...n })), seen: [A], read: [{ ...A, depth: 'subtitle', acts: [], like: '喜欢', why: '酷' }], scanned: 30, souvenirs: [] }, t0);
   const mid = LF.state(fish, pcs[0].deliverAt + 1000);
-  ok(mid.trip && mid.album.length === 1 && mid.album[0].pc === pcs[0].id && mid.album[0].kind === 'text' && mid.album[0].text === '妈妈看！', '路上：明信片到点进明信片册（照片还没画好时先是文字卡）');
+  ok(mid.trip && mid.album.length === 1 && mid.album[0].pc === pcs[0].id && mid.album[0].kind === 'scene' && mid.album[0].scene && mid.album[0].text === '妈妈看！', '路上：明信片到点进明信片册（照片还没画好时先是风景明信片，F-85）');
   LF.postcardPhoto(fish, pcs[0].id, { photo: 'pp-1', frame: 'stepin' });
   const mid2 = LF.state(fish, pcs[0].deliverAt + 2000);
   ok(mid2.album[0].photo === 'pp-1' && mid2.album[0].kind === 'photo', '照片画好了：挂到已经寄到的那张明信片正面');
@@ -2146,6 +2146,65 @@ section('明信片：出门途中从外面寄回家，正面照片或文字卡�
   const tsrc = read('src/host/trips.js');
   ok(/rep\.parsed \? acceptNotes\([^\n]*\) : null;/.test(tsrc) && tsrc.includes("postcard: '', notes: null"), '她没交游记：notes 传 null，走「不贴便利贴、照旧记看过的前几条」那条路（审查问题 1）');
   ok(mainSrc.includes('if (!ph.pc) {'), '0.34.0 以前的照片没有背面：照旧显示，不翻成空卡（审查问题 3）');
+}
+
+/* ===== 明信片多种验收（F-85，docs/设计/13-笔记本.md 第 13 节；总指挥写好并锁定，实现方不许改这一块）===== */
+section('明信片多种：正面照片 / 风景图，背面见闻 / 想你 / 口信（F-85）');
+{
+  const imp = (f) => import(pathToFileURL(join(plugin, f)).href);
+  const PC = await imp('src/shared/postcard.js'), TLk = await imp('src/host/trip-loop.js'), LEk = await imp('src/host/life-engine.js'), MEk = await imp('src/host/memory.js');
+  const A = { title: '鮟鱇科普', url: 'https://www.bilibili.com/video/BV1aaaaaaaaa', source: 'B站' };
+  const cat = new Map([['BV1aaaaaaaaa', A]]);
+  // A1 她选写哪种：{say, text}；老写法一句话 = 见闻；乱写的 say → 见闻
+  const r1 = TLk.parseReport(JSON.stringify({ postcard: { say: '想你', text: '妈妈，看到好吃的就想到你～' }, seen: [{ bvid: 'BV1aaaaaaaaa', line: 'x' }] }), cat);
+  const r2 = TLk.parseReport(JSON.stringify({ postcard: '今天看了鮟鱇', seen: [] }), cat);
+  const r3 = TLk.parseReport(JSON.stringify({ postcard: { say: '求红包', text: '<b>嗨</b>' }, seen: [] }), cat);
+  ok(r1.postcard === '妈妈，看到好吃的就想到你～' && r1.postcardSay === '想你', 'F-85 A1：游记 postcard 写成 {say, text}，读出她的话和她选的哪种');
+  ok(r2.postcard === '今天看了鮟鱇' && r2.postcardSay === '见闻', 'F-85 A1：老写法（一句话）当「见闻」');
+  ok(r3.postcardSay === '见闻' && !/[<>]/.test(r3.postcard), 'F-85 A1：say 不在三种里 → 见闻；她的话照旧清洗');
+  ok(String(TLk.parseReport(JSON.stringify({ postcard: { say: '口信', text: 'x'.repeat(400) } }), cat).postcard).length <= 120, 'F-85 A1：明信片的话最多 120 字');
+  // A2 风景图：规则挑、可复现、在 6 张里；每张明信片都有 scene（拍照失败就退回它）
+  ok(Array.isArray(PC.POSTCARD_SCENES) && PC.POSTCARD_SCENES.length === 4 && ['lagoon', 'sakura', 'seaside', 'coral'].every((x) => (PC.POSTCARD_SCENES || []).includes(x)), 'F-85 A2：风景图是鱼社自己的 4 张户外图（不用水族馆、阁楼这种房间；总指挥漏改，验收时补）');
+  { const cnt = {}; for (let i = 0; i < 400; i++) { const sc = PC.planPostcards({ tripId: `T${i.toString(36)}`, startedAt: 0, durationMs: 3600e3, seen: [A] })[0]?.scene; cnt[sc] = (cnt[sc] || 0) + 1; } ok(PC.POSTCARD_SCENES.every((x) => (cnt[x] || 0) >= 60), `F-85 A2：风景图挑得匀（400 趟每张至少 60 次：${JSON.stringify(cnt)}）`); }
+  const t0 = Date.parse('2026-11-08T09:00:00'), dur = 2 * 3600e3;
+  const base = { tripId: 'TK', startedAt: t0, durationMs: dur, notes: [], seen: [A], text: '妈妈记得喝水', say: '口信' };
+  const p1 = PC.planPostcards(base), p1b = PC.planPostcards(base);
+  ok(p1.length === 1 && (PC.POSTCARD_SCENES || []).includes(p1[0].scene) && p1[0].scene === p1b[0].scene && p1[0].say === '口信' && p1[0].text === '妈妈记得喝水', 'F-85 A2：没拍到 → 风景明信片（同一趟挑的图一样），带着她选的哪种和她的话');
+  const seenScenes = new Set(Array.from({ length: 40 }, (_, i) => PC.planPostcards({ ...base, tripId: `T${i}` })[0]?.scene).filter(Boolean));
+  ok(seenScenes.size >= 3, `F-85 A2：不同的趟挑到不同的风景图（40 趟挑到 ${seenScenes.size} 种）`);
+  const p2 = PC.planPostcards({ ...base, shots: [{ item: A, moment: 'm', caption: 'c', frame: 'stepin' }], say: '见闻' });
+  ok(p2[0].wantPhoto && (PC.POSTCARD_SCENES || []).includes(p2[0].scene), 'F-85 A2：要拍照的那张也备着一张风景图（生图失败就用它）');
+  ok(PC.planPostcards({ ...base, say: undefined })[0]?.say === '见闻' && PC.planPostcards({ ...base, say: '瞎写' })[0]?.say === '见闻', 'F-85 A2：没给 / 乱给 say → 见闻');
+  // A3 寄到明信片册：kind = photo / scene，带 scene 和 say
+  const e1 = PC.albumEntry({ ...p1[0], sent: true });
+  ok(e1.kind === 'scene' && e1.scene === p1[0].scene && e1.say === '口信' && !e1.photo, 'F-85 A3：没照片的寄到册子里是 scene（风景明信片），记着图和哪种');
+  ok(PC.albumEntry({ ...p2[0], photo: 'pp-9' }).kind === 'photo', 'F-85 A3：有照片的是 photo');
+  // A4 整趟：路上寄到的是风景明信片，照片晚到换成照片
+  const LF = LEk.createLife(mkdtempSync(join(tmpdir(), 'yushe-pck-'))), fish = { id: 'fish-pck', name: '小', parentCall: '妈妈', personaText: 'p', createdAt: new Date(t0 - 86400e3).toISOString() };
+  LF.state(fish, t0);
+  const pcs = PC.planPostcards({ ...base, tripId: 'TK2', shots: [{ item: A, moment: 'm', caption: 'c', frame: 'screen' }], say: '想你', text: '想你啦' });
+  LF.setTrip(fish, { id: 'TK2', startedAt: t0, state: 'planned', cards: [], returnAt: t0 + dur, postcards: pcs, seen: [A], souvenirs: [] }, t0);
+  const m1 = LF.state(fish, pcs[0].deliverAt + 1);
+  ok(m1.album.at(-1).kind === 'scene' && m1.album.at(-1).say === '想你' && m1.album.at(-1).scene === pcs[0].scene, 'F-85 A4：路上先寄到风景明信片（照片还没画好）');
+  LF.postcardPhoto(fish, pcs[0].id, { photo: 'pk-1', frame: 'screen' });
+  const m2 = LF.state(fish, pcs[0].deliverAt + 2);
+  ok(m2.album.at(-1).kind === 'photo' && m2.album.at(-1).photo === 'pk-1' && m2.album.at(-1).say === '想你', 'F-85 A4：照片画好了换成照片明信片，她选的哪种不变');
+  // A5 记忆：想你 / 口信 记清楚是哪种
+  const mem = MEk.archiveItems({ fish, life: { journal: [], album: [{ at: '2026-11-08T10:00:00', pc: 'TZ-pc0', trip: 'TZ', kind: 'scene', scene: 'lagoon', say: '想你', text: '想妈妈了', ref: A }] } });
+  ok(mem.some((x) => x.kind === 'postcard' && x.text.includes('想你') && x.text.includes('想妈妈了')), 'F-85 A5：记忆里写清是想你的明信片');
+  // A6 提示词：三种写在 md 里，代码不拼
+  const trMd = readFileSync(join(plugin, 'src/prompts/trip-report.md'), 'utf8');
+  ok(trMd.includes('"say"') && trMd.includes('想你') && trMd.includes('口信') && trMd.includes('见闻'), 'F-85 A6：怎么选、怎么写三种明信片在 prompts/trip-report.md');
+  ok(!read('src/host/trip-loop.js').includes('口信'), 'F-85 A6：trip-loop.js 里不拼这段话（原则 6）');
+  // A7 页面：风景图正面、想你 / 口信 背面不放链接和便利贴、老的文字卡照旧
+  const ms = read('src/game/main.js');
+  ok(ms.includes('assets/bg/') && /ph\.scene/.test(ms) && /ph\.say/.test(ms), 'F-85 A7：明信片正面能画风景图，背面按哪种画');
+  ok(ms.includes('pcstamp'), 'F-85 A7：0.35.0 的文字卡（kind text）照旧能画');
+  ok(ms.includes('data-gonb') && ms.includes('去笔记本看'), 'F-85 A7：想你 / 口信背面有「去笔记本看」，点了去那趟的「这一趟」');
+  // A8 不总写同一种：提示词里带上最近几张写的哪种（她自己定，代码不硬规定）
+  const sysK = TLk.tripSystem({ persona: 'p', maxCalls: 6, recentSays: ['想你', '想你', '口信'] });
+  ok(sysK.includes('想你、想你、口信') && !TLk.tripSystem({ persona: 'p', maxCalls: 6 }).includes('最近寄的明信片'), 'F-85 A8：出门提示里告诉她最近几张明信片写的是哪种（没有就不提）');
+  ok(/recentSays/.test(read('src/host/trips.js')), 'F-85 A8：宿主把最近几张明信片的哪种传进出门提示');
 }
 
 /* ===== 提示词搬家-2a 验收（总指挥写好并锁定；实现方不许改这一块，也不许改 verify/prompt-fixtures.mjs、verify/prompt-golden.json）===== */
