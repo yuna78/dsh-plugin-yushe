@@ -157,12 +157,19 @@ export function valueText(f, v) {
   if (f.type === 'int' && v === 0 && f.zero) return f.zero;
   return String(v);
 }
-/** 细配置按组列出来（设置页只读展开 + 工具 config_get 用）。 */
-export function fineView(h, fields = HABIT_FIELDS) {
+/**
+ * 细配置按组列出来（设置页只读展开 + 工具 config_get 用）。
+ *
+ * 设置页那几项（ui:true）默认不进这个列表——它们在面板上已经有可点的控件了，列进来会重复一遍。
+ * 但其中几个本来就能靠聊天改（autoOut / quietFrom / quietTo / speakEvery，都是 ui+chat），
+ * 工具视图必须把它们列出来：否则爸妈在 DSH 里说「十点以后别出门」，她拿到的可改项里没有这一条，
+ * 只能把人推回设置页，而 draftChanges 其实是认这些键的。
+ */
+export function fineView(h, fields = HABIT_FIELDS, { withUiChat = false } = {}) {
   const groups = {};
   for (const [k, f] of Object.entries(fields)) {
-    if (f.ui) continue;
-    (groups[f.group] ||= []).push({ key: k, label: f.label, value: h[k], text: valueText(f, h[k]), range: f.type === 'int' || f.type === 'num' ? `${f.min}–${f.max}` : f.type === 'enum' ? f.values.join('/') : f.type === 'list' ? `最多 ${f.maxItems} 个` : f.type });
+    if (f.ui && !(withUiChat && f.chat)) continue;
+    (groups[f.group] ||= []).push({ key: k, label: f.label, value: h[k], text: valueText(f, h[k]), range: f.type === 'int' || f.type === 'num' ? `${f.min}–${f.max}` : f.type === 'enum' ? f.values.join('/') : f.type === 'time' ? 'HH:MM' : f.type === 'list' ? `最多 ${f.maxItems} 个` : f.type });
   }
   return Object.entries(groups).map(([g, items]) => ({ group: g, name: GROUPS[g] || g, items }));
 }

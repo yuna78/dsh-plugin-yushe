@@ -16,13 +16,15 @@
  * }
  */
 import { ATTR_KEYS, TALENTS } from './core.js';
-import { personality, renderPersonaV2, MIN } from './life.js';
+import { personality, renderPersonaV2, MIN, TOTAL } from './life.js';
 import { outgoingness } from './trip.js';
 
 export const XP_PER = 10;          // 一维攒满 10 点经验涨 1
-export const BASE_CAP = 80;        // 出生时单维上限
-export const GROWN_CAP = 95;       // 长大后单维上限
-export const TOTAL_PER_WEEK = 10;  // 每活过 7 天，总点数上限 +10
+export const BASE_CAP = 80;        // 出生当天的单维上限（= 出生时单项最高可能值）
+export const GROWN_CAP = 95;       // 单维上限爬到顶是多少
+export const GROWN_DAYS = 42;      // 单维上限爬满要几天（慢一点：六周才到 95）
+export const TOTAL_PER_WEEK = 4;   // 总量上限每周 +4（按天摊开；一周大概长 1–2 点，不是想长多少长多少）
+export const BIRTH_ROOM = 3;       // 出生总量是 200，上限从 203 起步：第一天有一点地方长，但不多
 export const STABLE_DAYS = 3;      // 新性格要连续成立几天才转
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -53,9 +55,17 @@ export function freshGrowth(fish, day) {
 }
 
 const sum = (pts) => ATTR_KEYS.reduce((s, k) => s + pts[k], 0);
-/** 活了几天 → 总点数上限、单维上限。 */
+/**
+ * 活了几天 → 总点数上限、单维上限。两条线都随年龄连续长：
+ * 总量每周 +4（每天约 +0.57），单维 42 天从 80 爬到 95。
+ * 出生当天总量上限 203，比出生值 200 多 3 点——第一天有地方长，但不是出生即封顶。
+ * 故意让上限涨得比日常经验慢：一天正常活动能攒 1 点多经验，上限只放开 0.57，
+ * 所以成长是被上限卡着的，慢而稳；勤快只决定长哪一维，闲着她也不会掉队太多。
+ */
 export function capsAt(ageDays) {
-  return { total: 200 + Math.floor(ageDays / 7) * TOTAL_PER_WEEK, single: ageDays >= 14 ? GROWN_CAP : BASE_CAP };
+  const age = Math.max(0, Number(ageDays) || 0);
+  const single = age >= GROWN_DAYS ? GROWN_CAP : Math.round(BASE_CAP + (GROWN_CAP - BASE_CAP) * (age / GROWN_DAYS));
+  return { total: Math.round(TOTAL + BIRTH_ROOM + (age * TOTAL_PER_WEEK) / 7), single };
 }
 const log = (g, at, text) => ({ ...g, log: [...(g.log || []), { at, text }].slice(-40) });
 export const ATTR_LABEL = { brain: '智力', tongue: '嘴', belly: '胃', heart: '心', spark: '灵' };
@@ -149,14 +159,17 @@ const daysBetween = (a, b) => Math.round((Date.parse(`${b}T12:00:00`) - Date.par
 const trimDays = (o) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => a.localeCompare(b)).slice(-14));
 
 /** 面板用：爱好前 8（带升降和原因）、记住的 UP 主、五维（现在 vs 出生）、性格、倾向、日志、近 7 天心情。 */
-export function growthView(g, fish) {
+export function growthView(g, fish, { ageDays = 0 } = {}) {
   const top = Object.entries(g.interests || {}).sort((a, b) => b[1].heat - a[1].heat).slice(0, 8).map(([tag, v]) => ({ tag, heat: Math.round(v.heat), trend: v.trend || 0, src: v.src }));
   const ups = Object.entries(g.ups || {}).filter(([, v]) => v.n >= 3).sort((a, b) => b[1].n - a[1].n).slice(0, 6).map(([name, v]) => ({ name, n: v.n, last: v.last }));
-  const stats = ATTR_KEYS.map((k) => ({ key: k, label: ATTR_LABEL[k], now: g.pts[k], born: fish.pts[k] }));
+  const caps = capsAt(ageDays);
+  // 血条按「单维上限」画，不是按 100 画：不然 80 分的智力看着还剩两格，其实已经到顶了
+  const pct = (v) => Math.max(0, Math.min(100, Math.round((v / caps.single) * 100)));
+  const stats = ATTR_KEYS.map((k) => ({ key: k, label: ATTR_LABEL[k], now: g.pts[k], born: fish.pts[k], nowPct: pct(g.pts[k]), bornPct: pct(fish.pts[k]) }));
   const lean = g.lean || { cling: 0, lively: 0 };
   return {
     type: g.type, prevType: g.prevType || null, pending: g.pending?.type || null,
-    stats, total: sum(g.pts), caps: null,
+    stats, total: sum(g.pts), caps: { total: caps.total, single: caps.single, ageDays: Math.max(0, Math.floor(ageDays)) },
     lean: { cling: lean.cling, lively: lean.lively, clingText: lean.cling >= 3 ? '黏人' : lean.cling <= -3 ? '独立' : '', livelyText: lean.lively >= 3 ? '活泼' : lean.lively <= -3 ? '沉稳' : '' },
     interests: top, ups, log: (g.log || []).slice(-20).reverse(),
     moodDays: Object.entries(g.moodDays || {}).slice(-7).map(([day, mood]) => ({ day, mood })),

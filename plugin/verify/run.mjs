@@ -379,10 +379,13 @@ ok(G0.type === LIFEJS_g.personality(gfish_g.pts).tag && Object.keys(G0.interests
 const G1_g = GRW.gainXp(G0, 'news', { ageDays: 0 });
 ok(G1_g.xp.brain === 3 && G1_g.pts.brain === 30, '念新闻给智力攒经验（满 10 才涨）');
 let G2_g = G0; for (let i = 0; i < 4; i++) G2_g = GRW.gainXp(G2_g, 'news', { ageDays: 0 });
-ok(G2_g.pts.brain === 30 && G2_g.xp.brain <= 9, '刚出生总点数 200 封顶：经验攒着，不会超');
+ok(G2_g.pts.brain === 31 && G2_g.xp.brain === 2, '出生当天就有 5 点空间：念 4 次新闻第一格就能涨（不再出生即封顶）');
 let G3_g = G0; for (let i = 0; i < 4; i++) G3_g = GRW.gainXp(G3_g, 'news', { ageDays: 7 });
-ok(G3_g.pts.brain === 31 && G3_g.log.some((l) => l.text.includes('智力 +1')), '活满 7 天上限 +10：智力 +1 并写进成长日志');
-ok(GRW.capsAt(0).single === 80 && GRW.capsAt(14).single === 95 && GRW.capsAt(70).total === 300, '上限随年龄放开（单维 80 → 95，总量每周 +10）');
+ok(G3_g.pts.brain === 31 && G3_g.log.some((l) => l.text.includes('智力 +1')), '长到第 7 天：上限继续放开，智力 +1 并写进成长日志');
+ok(GRW.capsAt(0).single === 80 && GRW.capsAt(0).total === 203 && GRW.capsAt(7).single === 83 && GRW.capsAt(7).total === 207 && GRW.capsAt(14).single === 85 && GRW.capsAt(42).single === 95 && GRW.capsAt(70).total === 243, '上限随年龄连续放开，但放得慢：出生 3 点空间，单维 42 天才从 80 爬到 95，总量每周 +4');
+const gvCap = GRW.growthView(G0, gfish_g, { ageDays: 14 });
+const gvBrain = gvCap.stats.find((x) => x.key === 'brain');
+ok(gvCap.caps.single === 85 && gvCap.caps.total === 211 && gvBrain.nowPct === Math.round((gvBrain.now / 85) * 100) && gvCap.stats.every((x) => x.nowPct >= 0 && x.nowPct <= 100), '面板：视图带上限，血条按单维上限换算（不再按 100 画）');
 // 模拟 30 天：天天让她念新闻 + 帮忙干活（智力 / 心），从不聊天（嘴）——会偏科、性格会转
 let S_g = GRW.freshGrowth(gfish_g, '2026-11-01');
 const D_g = (n) => new Date(Date.parse('2026-11-01T12:00:00') + n * 86400e3).toISOString().slice(0, 10);
@@ -673,6 +676,16 @@ ok(['yushe_status', 'yushe_config_get', 'yushe_config_propose', 'yushe_config_ap
 ok(fakeHabits.knobList().map((k) => k.level).join('/') === '看性格/中/适中/适中', '默认四个档位：爱不爱出门「看性格」、读多深「中」、记性「适中」、互动多少「适中」（默认值正好是中间档）');
 const cfgGet = await byName.yushe_config_get.execute({});
 ok(cfgGet.ok && cfgGet.knobs.length === 4 && cfgGet.fine.some((g) => g.group === 'cap' && g.items.some((i) => i.key === 'likesPerDay' && i.range === '0–50')), '读配置：档位 + 细项带范围（点赞每天 0–50，50 是硬顶）');
+// 设置页那几项里，autoOut / quietFrom / quietTo / speakEvery 本来就标了 chat（聊得动），
+// 工具视图必须列出来；speakMode / parentMid 是放权项，怎么都不能出现。
+const fineKeys = (v) => new Set(v.flatMap((g) => g.items.map((i) => i.key)));
+const cfgKeys = fineKeys(cfgGet.fine);
+ok(['autoOut', 'quietFrom', 'quietTo', 'speakEvery'].every((k) => cfgKeys.has(k)) && cfgGet.fine.some((g) => g.group === 'home' && g.items.some((i) => i.key === 'quietFrom' && i.range === 'HH:MM')), '读配置：设置页上聊得动的几项也列出来（自己出门 / 安静时段 / 发言间隔），安静时段标成 HH:MM');
+ok(!cfgKeys.has('speakMode') && !cfgKeys.has('parentMid'), '读配置：「在 B站说话」和爸妈 UID 不列（她不能给自己放权）');
+const uiFineKeys = fineKeys(HB.fineView(HB.defaultHabits()));
+ok(!uiFineKeys.has('quietFrom') && !uiFineKeys.has('autoOut'), '设置页那份细配置不重复列设置页项（两组只在工具视图里多出来）');
+const cfgQ = await byName.yushe_config_propose.execute({ changes: { quietFrom: '23:30', quietTo: '08:30' }, reason: '晚上再晚一点收工' });
+ok(cfgQ.ok && cfgQ.diff.some((d) => d.key === 'quietFrom' && d.to === '23:30') && fakeHabits.get().quietFrom === '22:00', '安静时段能靠聊的起草（写完还没确认，值不变）');
 const cfgPr = await byName.yushe_config_propose.execute({ changes: { depth: '深', likesPerDay: 999, tripsPerDay: 1, speakMode: 'auto', parentMid: '1', favZones: '美食，动物圈', nope: 1 }, reason: '想让她看深一点' });
 const cfgPrKeys = Object.fromEntries(cfgPr.diff.map((d) => [d.key, d]));
 ok(cfgPr.ok && cfgPrKeys.readBudget?.to === 600 && cfgPrKeys.danmaku?.to === true && cfgPrKeys.likesPerDay?.to === 50 && cfgPrKeys.likesPerDay.clamped && JSON.stringify(cfgPrKeys.favZones?.to) === '["美食","动物圈"]', '起草：档位展开成细项；超过硬顶的夹回 50 并标出来；列表能用中文逗号');
@@ -1688,6 +1701,44 @@ section('记忆：会慢慢忘的经历、认人、家里 / B站分级、召回'
   ok(chatItems.length === 1 && chatItems[0].text.includes('明天我要出差') && chatItems[0].text.includes('一路平安'), '聊天记成「妈妈说 + 本鱼回」一条，不再只记前 30 字');
   ok(read('src/host/life-routes.js').includes("memory.reflect(fish, wallet, { day })") && read('src/host/planner.js').includes('writeDiary({ wallet, life, memory }'), '写完日记（23:30 定时 / 补写 / 点按钮）后台反思一次');
   ok(read('src/game/main.js').includes('function memPanel') && read('src/game/index.html').includes('data-tab="mem"'), '鱼社房间多一个「记忆」页');
+  // 第三步：时间词
+  const N = new Date(2026, 10, 8, 15, 0).getTime(); // 2026-11-08（周日）15:00，本机时区
+  const at = (y, mo, d, h = 12) => new Date(y, mo - 1, d, h).toISOString();
+  const yday = MM.timeRange('你昨天看了啥', N);
+  ok(yday && yday.from === new Date(2026, 10, 7).getTime() && yday.to === new Date(2026, 10, 8).getTime() && yday.rest === '你 看了啥', '时间词：「昨天」= 前一个自然日，剩下的话照常切词');
+  ok(MM.timeRange('前天', N).from === new Date(2026, 10, 6).getTime() && MM.timeRange('3天前', N).from === new Date(2026, 10, 5).getTime() && MM.timeRange('三天前', N).from === new Date(2026, 10, 5).getTime(), '时间词：前天、3天前、三天前');
+  ok(MM.timeRange('11月8日', N).from === new Date(2026, 10, 8).getTime() && MM.timeRange('2026-11-01', N).from === new Date(2026, 10, 1).getTime() && MM.timeRange('12月1日', N).from === new Date(2025, 11, 1).getTime(), '时间词：具体日期；没到的日子算去年的');
+  ok(MM.timeRange('上周', N).from === new Date(2026, 9, 26).getTime() && MM.timeRange('上周', N).to === new Date(2026, 10, 2).getTime() && MM.timeRange('最近', N).from === new Date(2026, 10, 2).getTime(), '时间词：上周（周一到周日）、最近（7 天）');
+  ok(MM.timeRange('拉面好吃', N) === null, '没有时间词就不按时间筛');
+  const tm = MM.emptyMemory();
+  tm.episodes.push(MM.makeEpisode(tm, { at: at(2026, 11, 7), kind: 'seen', text: '在 B站看了《深夜拉面摊》', keys: { tag: '美食' } }));
+  tm.episodes.push(MM.makeEpisode(tm, { at: at(2026, 11, 7, 20), kind: 'comment', text: '在 B站评论了《猫猫打架》：「好可爱」' }));
+  tm.episodes.push(MM.makeEpisode(tm, { at: at(2026, 11, 5), kind: 'seen', text: '在 B站看了《拉面教程》' }));
+  const yr = MM.recall(tm, { query: '你昨天看了啥', now: N });
+  ok(yr.length === 2 && yr.every((x) => x.at.startsWith('2026-11-07') || new Date(x.at).getDate() === 7), '问「昨天看了啥」：只给昨天的事，没有关键词也找得到');
+  const yl = MM.recall(tm, { query: '昨天的拉面', now: N });
+  ok(yl[0]?.text.includes('深夜拉面摊') && !yl.some((x) => x.text.includes('拉面教程')), '时间 + 关键词：昨天的拉面排第一，3 天前的拉面不算');
+  ok(MM.recall(tm, { query: '前天', now: N }).length === 0, '那天什么都没记：返回空，不硬凑');
+  // 第三步：爸妈让她记住
+  ok(MM.cleanTold('妈妈下周三要去出差').ok && !MM.cleanTold('我的密码是 abc').ok && !MM.cleanTold('手机 13800138000').ok && !MM.cleanTold('你还记得我吗？').ok && !MM.cleanTold('可能下周去吧').ok && !MM.cleanTold('看这个 https://x.com').ok, '记住之前规则查：密码、长号码、链接、问题、猜测都不记');
+  const km = MM.emptyMemory();
+  ok(MM.tell(km, '妈妈下周三要去出差', { at: '2026-11-08T07:00:00Z', today: '2026-11-08' }).ok && km.told.length === 1, '爸妈说的一句记下来（原话清洗，不改意思）');
+  ok(MM.tell(km, '妈妈下周三要出差', { at: '2026-11-08T08:00:00Z', today: '2026-11-08' }).merged && km.told.length === 1, '意思一样的不重复记，只更新');
+  for (const t of ['爸爸不吃香菜', '家里的猫叫团子', '奶奶生日在三月', '周末要去爬山']) MM.tell(km, t, { at: '2026-11-08T09:00:00Z', today: '2026-11-08' });
+  ok(km.told.length === 5 && MM.tell(km, '明年想换个大鱼缸', { at: '2026-11-08T10:00:00Z', today: '2026-11-08' }).ok === false, '每天最多记 5 件');
+  ok(MM.untell(km, km.told[0].id).ok && km.told.length === 4 && !MM.untell(km, 'T999').ok, '爸妈让忘掉的能忘掉（只能忘爸妈让记的）');
+  ok(MM.memoryText([], [], { told: [{ text: '妈妈要出差' }] }).includes('【爸妈让你记住的】'), '给模型的那段带上「爸妈让你记住的」');
+  const tDir = mkdtempSync(join(tmpdir(), 'yushe-told-'));
+  const tmem = MH.createMemory({ storage: tDir, life: { state: () => ({}) }, gate: { footprints: () => [] }, inbox: { all: () => [] }, dms: { view: () => ({ convs: [] }) }, habits: { get: () => ({}) } });
+  const RM = (await import(pathToFileURL(join(plugin, 'src/host/tools/self/remember.js')).href)).default;
+  const recs = [];
+  const tdeps = { pond: { current: () => fish }, life: { record: (_f, k, t) => recs.push(k) }, memory: tmem };
+  const rr1 = await RM.run({ text: '爸爸喜欢吃辣' }, tdeps, { from: 'main' });
+  ok(rr1.ok && recs.includes('told') && (await RM.run({ list: true }, tdeps, { from: 'main' })).items[0].text === '爸爸喜欢吃辣', 'yushe_remember：记下、记进「今天」、list 看得到');
+  ok(RM.expose.main === true && RM.expose.trip === false, 'yushe_remember 只在主会话能用（出门用不了）');
+  ok(!tmem.section(fish, { scope: 'public' }).includes('吃辣') && tmem.section(fish, { scope: 'all' }).includes('吃辣'), '爸妈让记的只在家里说：出门、写评论那段里没有');
+  ok((await RM.run({ forget: rr1.id }, tdeps, { from: 'main' })).ok && tmem.told(fish).length === 0, 'yushe_remember forget：忘掉');
+  ok((await RM.run({ text: '验证码 123456' }, tdeps, { from: 'main' })).ok === false, 'yushe_remember：像密码的直接拒绝');
 }
 
 /* ---------- 发版：版本号两处一致（docs/发版.md） ---------- */

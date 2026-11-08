@@ -36,9 +36,10 @@ export function createHabits(storage, { caps = [] } = {}) {
       return { ok: true, ...habits.patch(p) };
     },
     summary: () => describeHabits(get(), { fields, knobs }),
-    view() {
+    /** 视图。withUiChat=true 时把「设置页上的、但聊得动」的那几项也并进 fine（工具视图用）。 */
+    view({ withUiChat = false } = {}) {
       const h = get();
-      return { habits: h, summary: describeHabits(h, { fields, knobs }), fields: Object.fromEntries(Object.entries(fields).filter(([, f]) => f.ui)), knobs: habits.knobList(), fine: fineView(h, fields) };
+      return { habits: h, summary: describeHabits(h, { fields, knobs }), fields: Object.fromEntries(Object.entries(fields).filter(([, f]) => f.ui)), knobs: habits.knobList(), fine: fineView(h, fields, { withUiChat }) };
     },
     /** 她起草一份改动（不写）：返回 { ok, proposalId, diff, rejected }。 */
     propose(changes, { reason = '' } = {}) {

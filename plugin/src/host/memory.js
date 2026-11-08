@@ -15,7 +15,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { nowMs } from './clock.js';
-import { emptyMemory, makeEpisode, meet, settleMemory, recall, knownPeople, aboutPerson, memoryText, memoryStats, stageOf, STAGE_TEXT, reflectCandidates, reflectPrompt, applyReflection, beliefsFor } from '../shared/memory.js';
+import { emptyMemory, makeEpisode, meet, settleMemory, recall, knownPeople, aboutPerson, memoryText, memoryStats, stageOf, STAGE_TEXT, reflectCandidates, reflectPrompt, applyReflection, beliefsFor, tell, untell } from '../shared/memory.js';
 import { personaFor } from '../shared/growth.js';
 
 export const MEMORY_PATH = '/api/dsh-yushe/memory';
@@ -147,8 +147,10 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log }) {
       try {
         const items = memory.recall(fish, { query, scope, limit });
         const ppl = people ? memory.people(fish, { limit: people, parents: false }) : [];
-        const bl = beliefs ? beliefsFor(load(fish), { scope, limit: beliefs }) : [];
-        return memoryText(items, ppl, { title, tail, beliefs: bl });
+        const m = load(fish);
+        const bl = beliefs ? beliefsFor(m, { scope, limit: beliefs }) : [];
+        const told = scope === 'public' ? [] : (m.told || []).slice(-8); // 爸妈让记的只在家里说
+        return memoryText(items, ppl, { title, tail, beliefs: bl, told });
       } catch { return ''; }
     },
     beliefs(fish, { scope = 'all', limit = 30 } = {}) { return beliefsFor(memory.sync(fish), { scope, limit }).map((b) => ({ text: b.text, about: b.about, times: b.n || 1, since: b.at })); },
@@ -175,12 +177,23 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log }) {
       log?.info?.(`[dsh-yushe] 睡前反思：新认识 ${r.added.length} 条，加深 ${r.merged.length} 条，放下 ${r.dropped.length} 条${r.rejected.length ? `，没依据丢掉 ${r.rejected.length} 条` : ''}`);
       return { ok: r.parsed, ...r };
     },
+    /** 爸妈让她记住 / 忘掉 / 看看记了哪些（yushe_remember 用）。 */
+    tell(fish, text) {
+      const m = load(fish), now = nowMs(), d = new Date(now);
+      const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const r = tell(m, text, { at: d.toISOString(), today });
+      if (r.ok) save(fish, m);
+      return r;
+    },
+    untell(fish, id) { const m = load(fish); const r = untell(m, id); if (r.ok) save(fish, m); return r; },
+    told(fish) { return (load(fish).told || []).map((x) => ({ id: x.id, text: x.text, at: x.at })); },
     view(fish) {
       const m = memory.sync(fish, { minGapMs: 0 }), now = nowMs();
       return {
         days: days(), recallN: recallN(), ...memoryStats(m, { now, baseDays: days() }),
         recent: m.episodes.slice(-20).reverse().map((e) => ({ id: e.id, at: e.at, kind: e.kind, scope: e.scope, stage: STAGE_TEXT[stageOf(e, now, days())], text: e.text })),
         people: knownPeople(m, { now, baseDays: days(), limit: 20 }),
+        told: (m.told || []).slice().reverse().map((x) => ({ text: x.text, at: x.at })),
         beliefs: beliefsFor(m, { limit: 30 }).map((b) => ({ text: b.text, about: b.about, times: b.n || 1, since: b.at, home: b.scope === 'home' })),
         reflectDay: m.cursors.reflectDay || null,
       };

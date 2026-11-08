@@ -50,7 +50,7 @@ export const TIERS = [
   { min: 1, name: '新认识', days: 1.5 },
 ];
 
-export const emptyMemory = () => ({ version: 1, episodes: [], people: {}, beliefs: [], cursors: {}, seq: 0 });
+export const emptyMemory = () => ({ version: 1, episodes: [], people: {}, beliefs: [], told: [], cursors: {}, seq: 0 });
 
 const clean = (s, n) => String(s ?? '').replace(/[\u0000-\u001f<>`]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
 const ms = (iso) => { const t = Date.parse(iso); return Number.isFinite(t) ? t : 0; };
@@ -180,7 +180,7 @@ export function tokens(s) {
   for (const run of t.match(/[一-鿿]+/g) || []) { if (run.length === 1) out.add(run); for (let i = 0; i + 1 < run.length; i++) out.add(run.slice(i, i + 2)); }
   return out;
 }
-const STOP = new Set(['本鱼', '爸妈', '妈妈', '爸爸', '一个', '什么', '这个', '那个', '我们', '你们', '他们', '没有', '就是', '还是', '可以', '今天']);
+const STOP = new Set(['本鱼', '爸妈', '妈妈', '爸爸', '一个', '什么', '这个', '那个', '我们', '你们', '他们', '没有', '就是', '还是', '可以', '今天', '看了', '了啥', '干嘛', '做了', '有啥', '记得', '还记', '得吗', '干了', '了什', '么事']);
 
 /** 说出来的样子（跟阶段走）。 */
 export function phrase(ep, stage) {
@@ -194,13 +194,46 @@ export function phrase(ep, stage) {
  * 召回。scope = 'public'（对外说话）只给 B站范围；'all' 都给。
  * 返回 [{ id, stage, kind, at, text, url? }]（text 已按阶段说好）。
  */
+/**
+ * 时间词（F-76 第三步）：今天 / 昨天 / 前天 / 大前天 / N 天前 / 这周 / 上周 / 最近 / 这个月 / 上个月 / 11月8日 / 11-08 / 2026-11-08。
+ * 按本机时区的自然日算。返回 { from, to, rest, label } 或 null；rest = 去掉时间词以后剩下的话（拿去切词）。
+ */
+const CN_NUM = { 一: 1, 两: 2, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+export function timeRange(query, now) {
+  const s = String(query || '');
+  const d0 = new Date(now); d0.setHours(0, 0, 0, 0);
+  const day = (n) => { const d = new Date(d0); d.setDate(d.getDate() + n); return d.getTime(); };
+  const out = (from, to, re, label) => ({ from, to, rest: s.replace(re, ' ').trim(), label });
+  let m;
+  if ((m = s.match(/(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})日?/))) { const f = new Date(+m[1], +m[2] - 1, +m[3]).getTime(); return out(f, f + DAY, m[0], m[0]); }
+  if ((m = s.match(/(\d{1,2})月(\d{1,2})[日号]?|(?<!\d)(\d{1,2})-(\d{1,2})(?!\d)/))) {
+    const mo = +(m[1] || m[3]), da = +(m[2] || m[4]);
+    if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31) { let f = new Date(d0.getFullYear(), mo - 1, da).getTime(); if (f > now) f = new Date(d0.getFullYear() - 1, mo - 1, da).getTime(); return out(f, f + DAY, m[0], m[0]); }
+  }
+  if ((m = s.match(/([一两二三四五六七八九十\d]+)\s*天(之)?前/))) { const n = CN_NUM[m[1]] || Number(m[1]); if (n > 0 && n < 400) return out(day(-n), day(-n + 1), m[0], m[0]); }
+  if ((m = s.match(/大前天/))) return out(day(-3), day(-2), m[0], '大前天');
+  if ((m = s.match(/前天/))) return out(day(-2), day(-1), m[0], '前天');
+  if ((m = s.match(/昨天|昨晚|昨日/))) return out(day(-1), day(0), m[0], '昨天');
+  if ((m = s.match(/今天|今晚|今早|今日|刚才|刚刚/))) return out(day(0), day(1), m[0], '今天');
+  const wd = (d0.getDay() + 6) % 7; // 周一 = 0
+  if ((m = s.match(/上(个)?(周|星期|礼拜)/))) return out(day(-wd - 7), day(-wd), m[0], '上周');
+  if ((m = s.match(/这(个)?(周|星期|礼拜)|本周/))) return out(day(-wd), day(1), m[0], '这周');
+  if ((m = s.match(/上个?月/))) { const f = new Date(d0.getFullYear(), d0.getMonth() - 1, 1).getTime(); return out(f, new Date(d0.getFullYear(), d0.getMonth(), 1).getTime(), m[0], '上个月'); }
+  if ((m = s.match(/这个?月|本月/))) return out(new Date(d0.getFullYear(), d0.getMonth(), 1).getTime(), day(1), m[0], '这个月');
+  if ((m = s.match(/最近|这几天|这两天/))) return out(day(-6), day(1), m[0], '最近');
+  return null;
+}
+
 export function recall(mem, { query = '', scope = 'all', limit = 5, chars = 600, now, baseDays = 30, kinds = null } = {}) {
-  const q = [...tokens(query)].filter((w) => !STOP.has(w));
-  const ids = String(query).match(/BV[0-9A-Za-z]{10}|\d{5,}/g) || [];
+  const tr = timeRange(query, now); // 有时间词：只在那几天里找，剩下的话照常切词
+  const restQ = tr ? tr.rest : query;
+  const q = [...tokens(restQ)].filter((w) => !STOP.has(w));
+  const ids = String(restQ).match(/BV[0-9A-Za-z]{10}|\d{5,}/g) || [];
   const cands = [];
   for (const ep of mem.episodes || []) {
     if (scope === 'public' && ep.scope !== 'public') continue;
     if (kinds && !kinds.includes(ep.kind)) continue;
+    if (tr && (ms(ep.at) < tr.from || ms(ep.at) >= tr.to)) continue;
     const st = stageOf(ep, now, baseDays);
     if (st === 'forgotten') continue;
     const r = retention(ep, now, baseDays);
@@ -210,7 +243,7 @@ export function recall(mem, { query = '', scope = 'all', limit = 5, chars = 600,
       let hit = 0; for (const w of q) if (hay.has(w)) hit += 1;
       let rel = q.length ? hit / Math.sqrt(q.length * Math.max(4, hay.size) / 4) : 0;
       if (ids.some((x) => x === ep.keys?.bvid || x === ep.keys?.mid)) rel += 1;
-      if (rel <= 0) continue;
+      if (rel <= 0 && !tr) continue; // 问「昨天干了啥」：时间对上就算，剩下的话只用来排序
       score = 0.6 * Math.min(1.5, rel) + 0.25 * r + 0.15 * ep.imp / 5;
     } else {
       const fresh = Math.pow(0.5, Math.max(0, (now - ms(ep.at)) / DAY) / 3);
@@ -253,9 +286,10 @@ export function aboutPerson(mem, { mid, who }, { now, baseDays = 30 } = {}) {
 }
 
 /** 给模型的一段「你记得的事」。 */
-export function memoryText(items, people = [], { title = '【你记得的事】', tail = '', beliefs = [] } = {}) {
-  if (!items.length && !people.length && !beliefs.length) return '';
+export function memoryText(items, people = [], { title = '【你记得的事】', tail = '', beliefs = [], told = [] } = {}) {
+  if (!items.length && !people.length && !beliefs.length && !told.length) return '';
   const lines = [];
+  if (told.length) lines.push('【爸妈让你记住的】', ...told.map((x) => `- ${x.text}`));
   if (beliefs.length) lines.push('【你对自己的认识】（睡前反思攒下的）', ...beliefs.map((b) => `- ${b.text}`));
   if (items.length || people.length) lines.push(title);
   for (const it of items) lines.push(`- ${it.text}`);
@@ -268,7 +302,7 @@ export function memoryText(items, people = [], { title = '【你记得的事】'
 export function memoryStats(mem, { now, baseDays = 30 } = {}) {
   const by = { clear: 0, fuzzy: 0, trace: 0 };
   for (const ep of mem.episodes || []) { const st = stageOf(ep, now, baseDays); if (by[st] !== undefined) by[st] += 1; }
-  return { ...by, people: Object.keys(mem.people || {}).length, beliefs: (mem.beliefs || []).length };
+  return { ...by, people: Object.keys(mem.people || {}).length, beliefs: (mem.beliefs || []).length, told: (mem.told || []).length };
 }
 
 /* ---------- 长期认识（F-76 第二步）：睡前反思，AI 摘、规则验引用 ---------- */
@@ -341,4 +375,42 @@ export function applyReflection(mem, raw, { now, baseDays = 30, at } = {}) {
 export function beliefsFor(mem, { scope = 'all', limit = 5 } = {}) {
   return (mem.beliefs || []).filter((b) => scope !== 'public' || b.scope === 'public')
     .slice().sort((a, b) => ((b.n || 1) - (a.n || 1)) || (ms(b.lastAt) - ms(a.lastAt))).slice(0, limit);
+}
+
+/* ---------- 爸妈让她记住的事（F-76 第三步）：规则查过才记，只在家里说 ---------- */
+export const MAX_TOLD = 20;
+export const TOLD_PER_DAY = 5;
+const SECRET = /密码|口令|验证码|token|api\s*key|secret|私钥|身份证|银行卡|卡号|手机号|cookie|sessdata|bili_jct/i;
+
+/** 爸妈说的那句 → 能记的一句，或者拒绝（不让模型改写成别的意思，只清洗）。 */
+export function cleanTold(text) {
+  const t = String(text ?? '').replace(/[\u0000-\u001f<>`]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (t.length < 2) return { ok: false, why: '要给一句具体要记住的话' };
+  if (t.length > 60) return { ok: false, why: '太长了，记一句话（60 字以内）' };
+  if (SECRET.test(t) || /\d{6,}/.test(t) || /https?:\/\/|www\.|@\w+\.\w+/.test(t)) return { ok: false, why: '像是密码、号码、链接这类东西，不记（存在本机文件里，不安全）' };
+  if (/[?？]\s*$|[吗呢么]\s*$/.test(t)) return { ok: false, why: '这是个问题，不是要记住的事' };
+  if (/^(可能|也许|大概|我猜|好像|应该是)/.test(t)) return { ok: false, why: '这是猜测，不是要记住的事' };
+  return { ok: true, text: t };
+}
+
+/** 记一条（改 mem）。返回 { ok, item, merged? } 或 { ok: false, why }。 */
+export function tell(mem, text, { at, today }) {
+  const c = cleanTold(text);
+  if (!c.ok) return c;
+  mem.told = Array.isArray(mem.told) ? mem.told : [];
+  const same = mem.told.find((x) => sim(x.text, c.text) >= 0.6);
+  if (same) { same.text = c.text; same.at = at; return { ok: true, item: same, merged: true }; }
+  if (mem.told.filter((x) => String(x.at).slice(0, 10) === today).length >= TOLD_PER_DAY) return { ok: false, why: `今天已经记了 ${TOLD_PER_DAY} 件了，明天再说` };
+  if (mem.told.length >= MAX_TOLD) return { ok: false, why: `已经记着 ${MAX_TOLD} 件了，先让她忘掉一件（forget）再记` };
+  mem.seq = (mem.seq || 0) + 1;
+  const item = { id: `T${mem.seq.toString(36)}`, text: c.text, at };
+  mem.told.push(item);
+  return { ok: true, item };
+}
+
+/** 忘掉一条（只有爸妈让记的能这样忘）。 */
+export function untell(mem, id) {
+  const i = (mem.told || []).findIndex((x) => x.id === String(id));
+  if (i < 0) return { ok: false, why: '没有这一条（先 list 看看编号）' };
+  return { ok: true, item: mem.told.splice(i, 1)[0] };
 }
