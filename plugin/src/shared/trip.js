@@ -25,7 +25,7 @@ export const SOUVENIRS = [
   { id: 'clover', name: '四叶草', icon: 'clover', rarity: 'SSR', tags: [], desc: '据说带着它出门，运气会好一点点。' },
   { id: 'lantern', name: '红灯笼', icon: 'lantern', rarity: 'R', tags: ['历史', '旅行', '影视'], desc: '挂在床头，夜里不怕黑。' },
   // 装备：放进背包（一次只能带一件）会影响下一趟
-  { id: 'camera', name: '小相机', icon: 'camera', rarity: 'R', gear: '多记一条见闻', tags: ['数码', '旅行', '科技'], desc: '带着它出门，会多记一条见闻，照片里也会拿着它。' },
+  { id: 'camera', name: '小相机', icon: 'camera', rarity: 'R', gear: '多拍一张照片', tags: ['数码', '旅行', '科技'], desc: '带着它出门，更容易拍下照片、还能多拍一张寄回来，照片里也会拿着它。' },
   { id: 'compass', name: '指南针', icon: 'compass', rarity: 'R', gear: '多逛一个地方', tags: ['旅行', '知识'], desc: '带着它出门，会多去一个新闻站。' },
   { id: 'headphones', name: '大耳机', icon: 'headphones', rarity: 'R', gear: '更爱刷 B站', tags: ['音乐', '游戏', '动画'], desc: '带着它出门，她更想去 B站逛。' },
   { id: 'goggles', name: '潜水镜', icon: 'goggles', rarity: 'N', gear: '回来得早一点', tags: ['纪录片', '旅行', '运动'], desc: '带着它出门，游得快，回来得早。' },

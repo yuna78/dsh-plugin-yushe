@@ -82,7 +82,7 @@ export function readList({ catalog = new Map(), ledger = {}, acts = {}, verdict 
     if (!c) continue;
     const did = [...new Set((acts[bv] || []).map((t) => ACT_NAMES[t]).filter(Boolean))];
     const v = said.get(bv);
-    read.push({ title: c.title, url: c.url, up: c.up || undefined, tag: c.tag || undefined, depth: depthOf(c, ledger), acts: did, like: v ? v.like : did.length ? '喜欢' : '没说', why: v?.why || '' });
+    read.push({ title: c.title, url: c.url, up: c.up || undefined, tag: c.tag || undefined, depth: depthOf(c, ledger), acts: did, like: v ? v.like : did.length ? '喜欢' : '没说', why: v?.why || '', ...(!v && did.length ? { inferred: true } : {}) }); // inferred：她没开口，是按她点赞收藏推的（页面写「看样子喜欢」）
     if (read.length >= max) break;
   }
   return { scanned: catalog.size, read };
@@ -97,10 +97,16 @@ export function dislikedFrom({ read = [], notes = [] } = {}) {
   return out;
 }
 
-/** 页面 / recall 用：一条 journal 是不是便利贴、是哪种（老条目当「心得」）。 */
+/**
+ * 页面 / recall 用：一条 journal 是哪种。F-84：只有她真写的（有 note）才是便利贴；
+ * 回家那页是「这一趟」；以前的见闻（只有链接 / 占位话）是「见闻」，不冒充「心得」。
+ */
 export function noteKind(j) {
   if (!j) return null;
   if (j.dream) return '梦';
-  if (j.final) return '明信片';
-  return j.note?.tag && NOTE_TAGS.includes(j.note.tag) ? j.note.tag : '心得';
+  if (j.final) return '这一趟';
+  return j.note?.tag && NOTE_TAGS.includes(j.note.tag) ? j.note.tag : '见闻';
 }
+
+/** 以前的见闻里那种占位话（「在B站看到的」「11-06 挑了 10 条值得看的…」）不是她的话，页面不当心得显示。 */
+export const isFiller = (t) => !t || /^在.{0,12}看到的$/.test(String(t).trim()) || /挑了 ?\d+ ?条值得看的/.test(String(t));

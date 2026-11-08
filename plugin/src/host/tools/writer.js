@@ -11,13 +11,11 @@ import { checkDraft } from '../../shared/gate.js';
 import { evidenceCheck } from '../../shared/evidence.js';
 import { personaFor } from '../../shared/growth.js';
 import { moodTone } from '../../shared/mood.js';
-import { fill } from '../../shared/prompt.js';
+// 空行小工具在 shared/prompt.js（搬家-2b 收拢）
+import { fill, DROP, dropLines } from '../../shared/prompt.js';
 import PROMPTS from '../../prompts/_all.js';
 
 export const SKIP = '（不发）';
-// 可选变量为空时填进 md 的占位；fill 之后把这样的行删掉（等价于旧拼法的 .filter((x) => x !== '')）
-const DROP = '\u0000';
-const lines = (t) => t.split('\n').filter((x) => x !== DROP).join('\n');
 const stripEmoji = (s) => String(s ?? '').replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}\u{20E3}]/gu, '');
 
 /** 主会话给的意图 → 能交给她的一句话，或者拒绝。 */
@@ -42,7 +40,7 @@ export function parseDraft(raw, max) {
 /** 写正文的提示词（只有人设、心情、公开资料、意图）。 */
 export function draftPrompt({ fish, growth, mood = 60, what, material = [], intent, max, rules = [] }) {
   const persona = (() => { try { return personaFor(fish, growth) || fish.personaText || ''; } catch { return fish.personaText || ''; } })();
-  return lines(fill(PROMPTS.draft, {
+  return dropLines(fill(PROMPTS.draft, {
     persona: persona || DROP,
     mood: moodTone(mood, fish.parentCall || '妈妈').text || DROP,
     what,

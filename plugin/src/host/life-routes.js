@@ -15,6 +15,9 @@ import { moodTone, SIG_INSTRUCTION, sigFilter, parseSignals, applySignals } from
 import { gainXp, leanOnce, feedInterests, growthView } from '../shared/growth.js';
 import { asksAboutGame, kbText } from '../shared/tips.js';
 import { nowDate } from './clock.js';
+// 提示词本体在 src/prompts/diary.md、chat.md（+「此刻」/ 说明书的可选段，F-80 搬家-2b）：这里只准备变量再 fill
+import { fill, DROP, dropLines } from '../shared/prompt.js';
+import PROMPTS from '../prompts/_all.js';
 
 export const LIFE_PATH = '/api/dsh-yushe/life';
 export const CHAT_PATH = '/api/dsh-yushe/chat';
@@ -29,14 +32,31 @@ function diaryPrompt(fish, s, day, life) {
   const work = s.work?.[day] || 0;
   if (work) events.push(`- 这一天你在 DSH 里帮${fish.parentCall}干了 ${work} 次活`);
   const chats = (s.chat || []).filter((c) => dayOf(new Date(c.at)) === day).slice(-10).map((c) => `${c.role === 'user' ? fish.parentCall : '你'}：${c.text}`);
-  return [
-    fish.personaText, '',
-    `【今天是 ${day}，睡前写日记】`,
-    '这一天真实发生的事：', ...(events.length ? events : ['- （这一天很安静，没人来）']),
-    ...(chats.length ? ['', '你们聊过的话（节选）：', ...chats] : []),
-    '',
-    `用你自己的口吻写一篇日记，80–150 字。只写上面真实发生的事和你的心情，可以写想对${fish.parentCall}说的话；不要编造别的经历、地点、数字或链接。只输出日记正文，不要标题和日期。`,
-  ].join('\n');
+  return diaryText({ persona: fish.personaText, day, call: fish.parentCall, events, chats });
+}
+
+/** 睡前日记的提示词（本体在 prompts/diary.md，搬家-2b）。events / chats：已经拼好的行。 */
+export function diaryText({ persona, day, call, events = [], chats = [] }) {
+  return dropLines(fill(PROMPTS.diary, {
+    persona: persona || '', day, call,
+    eventsLine: events.length ? events.join('\n') : DROP,
+    quietLine: events.length ? DROP : fill(PROMPTS['diary-quiet'], {}),
+    chatsBlock: chats.length ? `\n\n你们聊过的话（节选）：\n${chats.join('\n')}` : '',
+  }));
+}
+
+/** 鱼社房间聊天的提示词（本体在 prompts/chat.md，搬家-2b）。memoryText / kb 空串 = 不带那一段。 */
+export function chatPrompt({ persona, lifeText, sleeping, call, moodText, memoryText = '', history = [], kb = '', text, sig = SIG_INSTRUCTION }) {
+  // 可选段「有就连着前后空行一起填，没有就整段不加」，保证和搬家前一字不差；说明书那句在 prompts/chat-kb.md
+  const extraBlock = [
+    memoryText ? `\n${memoryText}\n` : '',
+    history.length ? `\n刚才的对话：\n${history.join('\n')}\n` : '',
+    kb ? `\n${fill(PROMPTS['chat-kb'], { call })}\n${kb}\n` : '',
+  ].join('');
+  return fill(PROMPTS.chat, {
+    persona: persona || '', lifeText: lifeText || '', call, text, moodText, sig, extraBlock,
+    nowLine: fill(PROMPTS[sleeping ? 'chat-sleep' : 'chat-home'], { call }),
+  });
 }
 
 /** 零花钱花光时的日记：规则把今天的事串成流水账（ai: false）。 */
@@ -98,7 +118,7 @@ export function registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, ga
       bagCount: Object.keys(s.bag?.items || {}).length,
       pendingDrafts: (() => { try { const v = gate ? gate.view() : null; return v ? v.pending.length + v.queued.length : 0; } catch { return 0; } })(),
       inboxUnseen: (() => { try { return (inbox ? inbox.unseen() : 0) + (dms ? dms.unseen() : 0); } catch { return 0; } })(),
-      trip: s.trip ? { note: s.trip.note, returnAt: s.trip.returnAt, state: s.trip.state, sent: (s.trip.cards || []).filter((c) => c.sent).length, total: (s.trip.cards || []).length, gear: s.trip.gear } : null,
+      trip: s.trip ? { note: s.trip.note, returnAt: s.trip.returnAt, state: s.trip.state, sent: (s.trip.cards || []).filter((c) => c.sent).length, total: (s.trip.cards || []).length, pcSent: (s.trip.postcards || []).filter((p) => p.sent).length, pcTotal: (s.trip.postcards || []).length, gear: s.trip.gear } : null,
       events: life.eventsOf(s, today).slice(-20),
       chat: (s.chat || []).slice(-20),
       diary: (s.diary || []).slice(-30).reverse(),
@@ -121,20 +141,9 @@ export function registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, ga
     life.pushChat(f, 'user', text);
     const s = life.record(f, 'chat', `和${f.parentCall}聊天：「${text.slice(0, 30)}」`, { mood: 3, visit: true });
     const snap = snapshot(s);
-    const prompt = [
-      f.personaText, '',
-      lifeSection(f, s),
-      snap.where === 'sleep' ? `【此刻】你正在睡觉，被${f.parentCall}叫醒了，迷迷糊糊地回话，可以撒娇说困。` : `【此刻】你在鱼社的家里，${f.parentCall}来找你聊天。`,
-      moodTone(snap.mood, f.parentCall).text,
-      // F-76：爸妈这句话让她想起的事（本地召回，不花 token）
-      ...(() => { try { const m = memory?.section?.(f, { query: text, scope: 'all', people: 0, title: '【这句话让你想起的事】' }); return m ? ['', m] : []; } catch { return []; } })(),
-      ...(history.length ? ['', '刚才的对话：', ...history] : []),
-      // 问到鱼社怎么玩：带上系统知识库，只按它答（F-42）；平常聊天不带，省 token
-      ...(asksAboutGame(text) ? ['', `【鱼社说明书】（${f.parentCall}在问鱼社怎么玩时，用你自己的口吻、按这份说明回答；说明里没有的就说不知道，别编；「还在做的」要老实说还在做）`, kbText()] : []),
-      '', `${f.parentCall}：${text}`, '',
-      `回复${f.parentCall}：一到三句话，像发消息一样自然，符合你的性格、口头禅和现在的心情；不要编造具体的事实、数字、链接；${f.parentCall}问到你不知道的事就直说不知道。`,
-      SIG_INSTRUCTION,
-    ].join('\n');
+    // F-76：爸妈这句话让她想起的事（本地召回，不花 token）；问到鱼社怎么玩才带说明书（F-42，平常聊天不带，省 token）
+    const memoryText = (() => { try { return memory?.section?.(f, { query: text, scope: 'all', people: 0, title: '【这句话让你想起的事】' }) || ''; } catch { return ''; } })();
+    const prompt = chatPrompt({ persona: f.personaText, lifeText: lifeSection(f, s), sleeping: snap.where === 'sleep', call: f.parentCall, moodText: moodTone(snap.mood, f.parentCall).text, memoryText, history, kb: asksAboutGame(text) ? kbText() : '', text });
     try {
       // 信号行 <sig>…</sig> 不给人看：流式过滤，最后解析成心情变化（AI 听懂，规则记账）
       const filt = sigFilter();

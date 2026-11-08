@@ -18,6 +18,10 @@ export async function fixtures() {
   const MO = await imp('shared/mood.js');
   const MM = await imp('shared/memory.js');
   const PH = await imp('shared/photo.js');
+  const GR = await imp('host/game-routes.js');
+  const TR = await imp('host/trips.js');
+  const RR = await imp('host/room-routes.js');
+  const LR = await imp('host/life-routes.js');
   const eps = [
     { id: 'M1', at: '2026-11-01T10:00:00.000Z', text: '在 B站看了《深夜拉面摊》' },
     { id: 'M2', at: '2026-11-02T10:00:00.000Z', text: '妈妈说：「明天要考试」，本鱼回：「加油！」' },
@@ -43,5 +47,16 @@ export async function fixtures() {
     'translatePrompt.stepin': () => PH.translatePrompt({ item: { title: '海边日落' }, frame: 'stepin' }),
     'photoPrompt.full': () => PH.photoPrompt({ proto: 'chat', scene: 'she is sitting by a ramen stall at night', frame: 'stepin', gear: null }),
     'photoPrompt.fallback': () => PH.photoPrompt({ proto: 'nope', frame: 'screen' }),
+    // 搬家-2b：从路由里抽出来的 6 段
+    'firstPrompt': () => GR.firstPrompt({ persona: fish.personaText, call: '妈妈' }),
+    'greetPrompt.working': () => GR.greetPrompt({ persona: fish.personaText, call: '妈妈', when: '下午', working: true }),
+    'greetPrompt.home': () => GR.greetPrompt({ persona: '', call: '爸爸', when: '深夜', working: false }),
+    'notePrompt.gear': () => TR.notePrompt({ persona: fish.personaText, lifeText: '【你的近况】在家。', gearName: '小雨伞', call: '妈妈' }),
+    'notePrompt.bare': () => TR.notePrompt({ persona: '', lifeText: '', call: '爸爸' }),
+    'newsPrompt': () => RR.newsPrompt({ persona: fish.personaText, lifeText: '【你的近况】早上。', items: [{ title: '新闻甲', source: '来源一' }, { title: '新闻乙', source: '来源二' }], call: '妈妈' }),
+    'diaryText.full': () => LR.diaryText({ persona: fish.personaText, day: '2026-11-08', call: '妈妈', events: ['- 09:00 出门看了拉面', '- 这一天你在 DSH 里帮妈妈干了 3 次活'], chats: ['妈妈：在干嘛', '你：在想你'] }),
+    'diaryText.quiet': () => LR.diaryText({ persona: '', day: '2026-11-09', call: '爸爸' }),
+    'chatPrompt.full': () => LR.chatPrompt({ persona: fish.personaText, lifeText: '【你的近况】在家。', sleeping: false, call: '妈妈', moodText: '你心情很好。', memoryText: '【这句话让你想起的事】\n- 拉面', history: ['妈妈：在吗', '你：在！'], kb: '说明书第一条', text: '鱼社怎么玩' }),
+    'chatPrompt.sleepy': () => LR.chatPrompt({ persona: '', lifeText: '', sleeping: true, call: '爸爸', moodText: '你有点困。', text: '醒醒' }),
   };
 }

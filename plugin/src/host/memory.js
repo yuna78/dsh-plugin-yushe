@@ -50,7 +50,7 @@ export function archiveItems({ fish, life = {}, footprints = [], inbox = [], dms
       out.push({ key: `dr:${j.at}`, at: j.at, kind: 'dream', text: `做梦梦见在刷 B站：${short(j.text, 100)}`, keys: { tags: (j.seen || []).map((x) => x.tag).filter(Boolean) } });
       continue;
     }
-    if (j.final) out.push({ key: `j:${j.trip || j.at}:card`, at: j.at, kind: 'postcard', text: `出门回来给${call}写明信片：${short(j.text, 100)}` });
+    if (j.final && j.text) out.push({ key: `j:${j.trip || j.at}:card`, at: j.at, kind: 'postcard', text: `出门回来给${call}写明信片：${short(j.text, 100)}` }); // F-84 以后明信片在路上寄（album），这页只有读过清单
     for (const x of j.seen || []) if (x?.url) {
       const bvid = String(x.url).match(/BV[0-9A-Za-z]{10}/)?.[0];
       const where = `${bvid ? '在 B站看了' : `在${short(x.source, 10) || '网上'}看到`}《${defang(short(x.title, 50))}》`;
@@ -59,6 +59,8 @@ export function archiveItems({ fish, life = {}, footprints = [], inbox = [], dms
       else out.push({ key: `s:${bvid || x.url}`, at: j.at, kind: 'seen', text: `${where}${!j.final && j.text ? `，${short(j.text, 40)}` : ''}`, url: x.url, keys: { bvid, tag: x.tag, who: x.up, mid: x.mid } });
     }
   }
+  // F-84：路上寄回的文字明信片（没拍成照片的那张）
+  for (const p of life.album || []) if (!p.photo && p.pc && p.at && p.text) out.push({ key: `j:${p.trip || p.at}:card`, at: p.at, kind: 'postcard', text: `在外面给${call}寄了张明信片${p.ref?.title ? `（看《${defang(short(p.ref.title, 30))}》时）` : ''}：${short(p.text, 80)}`, url: p.ref?.url || undefined });
   for (const p of life.album || []) if (p.photo && p.at && p.ref?.title) {
     const bvid = String(p.ref.url || '').match(/BV[0-9A-Za-z]{10}/)?.[0];
     out.push({ key: `p:${p.photo}`, at: p.at, kind: 'photo', text: `看《${defang(short(p.ref.title, 40))}》时被打动，拍了一张照片${p.moment ? `：${short(p.moment, 50)}` : ''}`, url: p.ref.url || undefined, keys: { bvid } });

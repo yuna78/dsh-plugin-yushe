@@ -20,19 +20,31 @@ import { readJsonBody } from './game-routes.js';
 import { leanOnce } from '../shared/growth.js';
 import { wantsToLeave, tripPlan, souvenirsFor, gearEffects, SOUVENIRS, souvenirById, equip, outgoingness } from '../shared/trip.js';
 import { pickShots, photoPrompt, translatePrompt, cleanScene, bannedTerms } from '../shared/photo.js';
+import { planPostcards } from '../shared/postcard.js';
 import { imageApiReady, generatePhoto } from './photos.js';
 import { newsSourcesFor } from '../shared/habits.js';
 import { createGates } from './gates.js';
+// 提示词本体在 src/prompts/note.md（F-80 搬家-2b）：这里只准备变量再 fill
+import { fill } from '../shared/prompt.js';
+import PROMPTS from '../prompts/_all.js';
 
 export const BAG_PATH = '/api/dsh-yushe/bag';
 // 出门次数默认不限（F-50）：出不出门由性格掷骰子；设置里还能手动限
 
 export const LOOP_MIN_TOKENS = 60_000; // 零花钱剩得比这少就走老路（老路一趟约 1.5 万）
 
+/** 出门前贴在门上的字条（本体在 prompts/note.md，搬家-2b）。gearName 空 = 没带装备。 */
+export function notePrompt({ persona, lifeText, gearName = '', call }) {
+  return fill(PROMPTS.note, {
+    persona: persona || '', lifeText: lifeText || '', call,
+    gear: gearName ? `，带着${gearName}` : '',
+  });
+}
+
 export function createTrips({ life, wallet, pond, storage, log, habits, biliRead, gate, memory = null, gates = null }) {
   let loop = null; // { tools(ledger) → 出门用的工具成品, model() → { llm, provider, model } }
   const G = gates || createGates({ habits }); // 没传就自己建一个：行为跟旧的 asleepAt + 安静时段一致
-  const noteLine = (f, gear) => `${f.parentCall}，我出去逛逛${gear ? `，带上了${souvenirById(gear)?.name}` : ''}，回来给你寄明信片～别担心！`;
+  const noteLine = (f, gear) => `${f.parentCall}，我出去逛逛${gear ? `，带上了${souvenirById(gear)?.name}` : ''}，看到有意思的贴进笔记本，路上给你寄明信片～别担心！`;
 
   const trips = {
     /** 接上工具出门（宿主建好工具表后调）。 */
@@ -53,7 +65,7 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
       if (reason === 'self') life.grow(f, (g) => leanOnce(g, 'cling', -1, dayOf()));
       life.setTrip(f, { id, startedAt: nowMs(), state: 'roaming', reason, gear, note: noteLine(f, gear), cards: [], returnAt: nowMs() + 4 * 3600_000 });
       // 字条让她自己写（花一点零花钱）；写不出来就用上面那句
-      wallet.say('note', [f.personaText, '', lifeSection(f, s), '', `【此刻】你要出门闲逛了${gear ? `，带着${souvenirById(gear)?.name}` : ''}。给${f.parentCall}留一张字条贴在门上：一两句话、不超过 40 字，说你去哪逛逛（新闻、B站之类）、让 TA 别担心。只输出字条内容。`].join('\n'), null, 30_000)
+      wallet.say('note', notePrompt({ persona: f.personaText, lifeText: lifeSection(f, s), gearName: gear ? souvenirById(gear)?.name : '', call: f.parentCall }), null, 30_000)
         .then((r) => { const cur = life.state(f).trip; if (cur?.id === id) life.setTrip(f, { note: r.text.slice(0, 80) }); })
         .catch(() => { /* 用默认字条 */ });
       // 她自己的 B站（M5a）：首页推荐 + 记住的 UP 主的新视频 + 搜她最近最爱的东西；不够再拿热门
@@ -70,47 +82,44 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
         if (items.length < 4) { try { add(await biliRead.popular(8), '热门'); } catch { /* 跳过 */ } }
         return { withCookie: biliRead.loggedIn(), items: items.slice(0, 12) };
       } : null;
-      /**
-       * 照片（F-74，docs/设计/10）：她在游记里写了想拍的那一刻，规则判资格、掷骰、看今天拍了几张；
-       * 拍的话：她的中文画面 → 一次短调用翻成英文 → 规则清洗 → 生图。拍不了（没配 API / 到上限 / 生图失败）只记一行「她想拍下」，不补拍。
-       */
-      const shootPhotos = (result, seen) => {
+      /** 照片（F-74）该不该拍、拍哪条：规则挑（她在游记里写了想拍的那一刻 + 读账打分 + 掷骰 + 今天拍了几张）。 */
+      const pickPhotos = (result, seen) => {
         const st = life.state(f), today = dayOf();
-        const todayCount = (st.album || []).filter((x) => x.trip !== 'test' && x.at && dayOf(new Date(x.at)) === today).length;
+        const todayCount = (st.album || []).filter((x) => x.photo && x.trip !== 'test' && x.at && dayOf(new Date(x.at)) === today).length;
         const interests = Object.entries(st.growth?.interests || {}).sort((a, b) => b[1].heat - a[1].heat).slice(0, 5).map(([t]) => t);
         const pick = pickShots({ tripId: id, seen, photo: result.photo || null, ledger: result.ledger || {}, acts: result.acts || {}, interests, gear, todayCount, ready: imageApiReady(storage) });
         log?.info?.(`[dsh-yushe] 照片：${{ 'not-moved': '她没想拍', 'none-qualified': '没有读得够深的', roll: '这趟不拍', 'no-api': '想拍，没配生图 API', cap: '想拍，今天拍够了', ok: `拍 ${pick.shots.length} 张` }[pick.reason] || pick.reason}`);
-        const wish = (x) => ({ title: x.item.title, url: x.item.url, moment: x.moment || `在《${x.item.title}》里`, frame: x.frame });
-        if (pick.missed.length) life.setTrip(f, { wantPhoto: wish(pick.missed[0]) });
+        return pick;
+      };
+      /**
+       * 明信片（F-84）：途中从外面寄回家。拍中的那几张：她的中文画面 → 一次短调用翻成英文 → 规则清洗 → 生图，画好挂到那张明信片正面；
+       * 画不成就还是文字卡（不补拍）。
+       */
+      const shootPhotos = (pick, seen, pcs) => {
         const banned = bannedTerms(seen);
-        const firstLine = String(result.postcard || '').split(/[。！!？?\n]/)[0].slice(0, 60);
-        for (const x of pick.shots) {
+        pick.shots.slice(0, 2).forEach((x, k) => {
+          const pcId = pcs[k]?.id;
           (async () => {
             const scene = await wallet.say('photo', translatePrompt({ moment: x.moment, item: x.item, frame: x.frame, banned }), null, 30_000).then((r) => cleanScene(r.text, banned)).catch(() => '');
             const { id: photoId } = await generatePhoto(storage, photoPrompt({ proto: f.proto, scene, frame: x.frame, gear }));
-            const entry = { photo: photoId, caption: x.caption || firstLine, ref: { title: x.item.title, url: x.item.url, source: x.item.source || null }, moment: x.moment || null, frame: x.frame, trip: id };
-            const now = life.state(f).trip;
-            if (now?.id === id) life.setTrip(f, { photos: [...(now.photos || []), entry] });
-            else life.addPhoto(f, { at: new Date().toISOString(), ...entry }); // 画好时她已经回家了：直接进相册
-          })().catch((e) => {
-            log?.warn?.(`[dsh-yushe] 照片没画成：${e?.message || e}`);
-            const now = life.state(f).trip;
-            if (now?.id === id && !now.wantPhoto) life.setTrip(f, { wantPhoto: wish(x) });
-          });
-        }
+            if (!life.postcardPhoto(f, pcId, { photo: photoId, frame: x.frame, moment: x.moment || null })) log?.warn?.(`[dsh-yushe] 照片画好了，但找不到那张明信片（${pcId}），没挂上`);
+          })().catch((e) => { log?.warn?.(`[dsh-yushe] 照片没画成（明信片就是文字卡）：${e?.message || e}`); });
+        });
       };
-      /** 这一趟逛完：排明信片、照片、想说的话（老路和工具出门共用）。result = { seen, postcard, wantComment?, wantPost?, photo?, ledger?, acts? } 或 null（没逛成）。 */
+      /** 这一趟逛完：排便利贴、明信片、照片、想说的话（老路和工具出门共用）。result = { seen, postcard, wantComment?, wantPost?, photo?, ledger?, acts?, notes?, read?, dislikes? } 或 null（没逛成）。 */
       const finish = (result) => {
           const cur = life.state(f).trip;
           if (cur?.id !== id) return;
           if (!result) { life.setTrip(f, { state: 'planned', failed: true, cards: [], souvenirs: [], returnAt: nowMs() + 20 * 60_000 }); return; }
           const seen = result.seen || [];
-          // F-82：有便利贴就让途中寄回的那几张正好是便利贴（到点贴进笔记本）；没有（老路 / 没交游记）照旧用见闻
+          // F-82：有便利贴就让途中贴上的那几张正好是便利贴；没有（老路 / 没交游记）照旧用见闻
           const notes = Array.isArray(result.notes) ? result.notes : null;
           const plan = tripPlan({ tripId: id, startedAt: cur.startedAt, seen: notes ? notes : seen, energy: energyAtStart, gear, items: hb.itemsPerTrip || 2 });
-          life.setTrip(f, { wantComment: result.wantComment || null, wantPost: result.wantPost || null, state: 'planned', seen: seen.slice(0, 12), cards: plan.cards, returnAt: plan.returnAt, postcard: String(result.postcard || '').slice(0, 300), souvenirs: souvenirsFor({ tripId: id, seen, gear }), tokens: result.tokens || 0, ...(notes ? { notes } : {}), ...(result.read ? { read: result.read.read, scanned: result.read.scanned } : {}), ...(result.dislikes?.length ? { dislikes: result.dislikes } : {}) });
-          // 相册照片（F-74）：老路没有读账，不拍
-          try { shootPhotos(result, seen); } catch (e) { log?.warn?.(`[dsh-yushe] 照片出错：${e?.message || e}`); }
+          let pick = { shots: [], missed: [] };
+          try { pick = pickPhotos(result, seen); } catch (e) { log?.warn?.(`[dsh-yushe] 照片出错：${e?.message || e}`); }
+          const postcards = planPostcards({ tripId: id, startedAt: cur.startedAt, durationMs: plan.durationMs, shots: pick.shots, missed: pick.missed, notes: notes || [], seen, text: String(result.postcard || '') });
+          life.setTrip(f, { wantComment: result.wantComment || null, wantPost: result.wantPost || null, state: 'planned', seen: seen.slice(0, 12), cards: plan.cards, returnAt: plan.returnAt, postcard: String(result.postcard || '').slice(0, 300), postcards, souvenirs: souvenirsFor({ tripId: id, seen, gear }), tokens: result.tokens || 0, ...(notes ? { notes } : {}), ...(result.read ? { read: result.read.read, scanned: result.read.scanned } : {}), ...(result.dislikes?.length ? { dislikes: result.dislikes } : {}) });
+          try { shootPhotos(pick, seen, postcards); } catch (e) { log?.warn?.(`[dsh-yushe] 照片出错：${e?.message || e}`); }
       };
       const roamOld = () => {
         const jobId = startRoam(storage, 4 * 60_000, {
@@ -154,9 +163,9 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
           const seen = rep.seen.length ? rep.seen : [...catalog.values()].slice(0, 4).map((c) => ({ ...c, verified: true, why: '' }));
           // F-82：便利贴验收（读账封顶、标签、张数、7 天重复）+ 读过清单 + 这趟不喜欢的
           const dump = ledger.dump();
-          const notes = rep.parsed ? acceptNotes({ seen: rep.seen, ledger: dump, catalog, cap: hb.notesPerTrip || 6, recent: recentNoteUrls(life.state(f).journal, nowMs()) }) : [];
+          const notes = rep.parsed ? acceptNotes({ seen: rep.seen, ledger: dump, catalog, cap: hb.notesPerTrip || 6, recent: recentNoteUrls(life.state(f).journal, nowMs()) }) : null; // 没交游记 → null：不贴便利贴，照旧用看过的前几条（设计 5.2）；交了但一张没贴 → []
           const read = readList({ catalog, ledger: dump, acts, verdict: rep.verdict });
-          const dislikes = dislikedFrom({ read: read.read, notes });
+          const dislikes = dislikedFrom({ read: read.read, notes: notes || [] });
           log?.info?.(`[dsh-yushe] 工具出门：调了 ${r.calls.length} 次工具（${[...new Set(r.calls.map((c) => c.name))].join('、')}），看过 ${catalog.size} 条，游记 ${rep.seen.length} 条${rep.dropped.length ? `，丢掉编的 ${rep.dropped.length} 条` : ''}，${r.usage.totalTokens} tokens`);
           endJob(jobId, { result: { tools: r.calls, seen } });
           life.setTrip(f, { toolCalls: r.calls.map((c) => c.name).slice(0, 40) });
@@ -165,7 +174,7 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
         .catch((e) => {
           log?.warn?.(`[dsh-yushe] 工具出门出错：${String(e?.message || e).slice(0, 120)}${calls ? '' : '，退回老路'}`);
           endJob(jobId, { state: 'error', error: String(e?.message || e).slice(0, 200) });
-          if (!calls) { const old = roamOld(); life.setOut(f, old); } else finish({ seen: [...catalog.values()].slice(0, 4).map((c) => ({ ...c, verified: true, why: '' })), postcard: '', notes: [], read: readList({ catalog, ledger: ledger.dump(), acts }) });
+          if (!calls) { const old = roamOld(); life.setOut(f, old); } else finish({ seen: [...catalog.values()].slice(0, 4).map((c) => ({ ...c, verified: true, why: '' })), postcard: '', notes: null, read: readList({ catalog, ledger: ledger.dump(), acts }) });
         });
     }
       life.setOut(f, jobId);

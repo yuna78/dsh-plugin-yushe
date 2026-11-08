@@ -76,7 +76,7 @@ export function goOutAnswer({ fishId = '', call = '妈妈', energy = 70, mood = 
   const p = Math.max(0.2, Math.min(0.92, 0.5 + (energy - 50) / 100 + (mood - 50) / 200));
   const roll = (hashOf(fishId, 'goout', Math.floor(now / 600_000)) % 1000) / 1000;
   if (roll < p) {
-    const lines = [`好呀！${call}等我，回来给你寄明信片～`, '正想出去逛逛！我收拾一下小书包～', `出发！${call}别太想本鱼哦～`];
+    const lines = [`好呀！${call}等我，看到好玩的贴进笔记本给你看～`, '正想出去逛逛！我收拾一下小书包～', `出发！${call}别太想本鱼哦～`];
     return { go: true, reason: 'yes', line: lines[hashOf(fishId, 'goline', Math.floor(now / 600_000)) % lines.length] };
   }
   const lines = ['现在不想动……等会儿再说嘛。', '今天想在家待着，陪陪你不好吗？', '外面好像没什么好玩的，本鱼先不去了。'];

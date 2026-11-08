@@ -32,7 +32,7 @@ export default defineTool({
       people: () => (memory ? memory.people(f, { limit: n, parents: ctx.from !== 'trip' }) : []),
       notes: () => {
         const want = NOTE_TAGS.find((t) => String(a.query || '').includes(t));
-        return (s.journal || []).filter((e) => !e.final && !e.dream && (e.seen || []).length && (!want || noteKind(e) === want)).slice(-n).reverse()
+        return (s.journal || []).filter((e) => e.note && (e.seen || []).length && (!want || noteKind(e) === want)).slice(-n).reverse()
           .map((e) => ({ at: e.at, tag: noteKind(e), title: e.seen[0].title, url: e.seen[0].url, said: e.text, gist: e.note?.gist || undefined, read: e.note?.depth ? DEPTH_NAMES[e.note.depth] : undefined }));
       },
       journal: () => (s.journal || []).slice(-n).reverse().map((e) => ({ at: e.at, said: e.text, links: (e.seen || []).map((x) => ({ title: x.title, url: x.url })) })),

@@ -14,6 +14,9 @@ import { fileURLToPath } from 'node:url';
 import { buildFish } from './pond.js';
 import { hostSay, logProbe } from './probe.js';
 import { nowDate } from './clock.js';
+// 提示词本体在 src/prompts/first.md、greet.md（F-80 搬家-2b）：这里只准备变量再 fill
+import { fill } from '../shared/prompt.js';
+import PROMPTS from '../prompts/_all.js';
 import { firstWords } from '../shared/life.js';
 import { personaFor } from '../shared/growth.js';
 
@@ -27,6 +30,19 @@ export const GREET_PATH = '/api/dsh-yushe/greet';
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.webp': 'image/webp', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.mp3': 'audio/mpeg' };
 // 构建后 host 在 plugin/lib/index.js，游戏在 plugin/game/
 export const gameDir = () => join(dirname(fileURLToPath(import.meta.url)), '..', 'game');
+
+/** 破壳第一句的提示词（本体在 prompts/first.md，搬家-2b）。 */
+export function firstPrompt({ persona, call }) {
+  return fill(PROMPTS.first, { persona: persona || '', call });
+}
+
+/** 房间里打招呼的提示词（本体在 prompts/greet.md，搬家-2b）。working：她刚在 DSH 里干完活。 */
+export function greetPrompt({ persona, call, when, working }) {
+  return fill(PROMPTS.greet, {
+    persona: persona || '', call, when,
+    working: working ? '刚在 DSH 里帮 TA 干完活' : '今天在家歇着',
+  });
+}
 
 export function readJsonBody(request, limit = 64 * 1024) {
   return new Promise((resolve) => {
@@ -93,12 +109,7 @@ export function registerGameRoutes({ ctx, scope, pond, storage, isLoopbackReques
     try { fish = buildFish(body?.spec, { firstEgg: pond.list().fish.length === 0 }); }
     catch (e) { send({ type: 'error', error: String(e?.message || e) }); return res.end(); }
     const call = fish.parentCall;
-    const prompt = [
-      fish.personaText,
-      '',
-      `【此刻】你刚刚破壳，第一次睁开眼睛，看见了你的${call}。`,
-      `说出你人生的第一句话：不超过 40 个字，要叫「${call}」，完全符合你的性格和说话方式，可以带一点点你的身世。只输出这一句话，不要引号，不要解释。`,
-    ].join('\n');
+    const prompt = firstPrompt({ persona: fish.personaText, call });
     try {
       // 破壳第一句不拦（钱花光也说），但照样记账
       const r = wallet ? await wallet.say('first', prompt, (text) => send({ type: 'delta', text }), 45_000, { force: true }) : await hostSay(ctx, prompt, (text) => send({ type: 'delta', text }), 45_000);
@@ -122,11 +133,7 @@ export function registerGameRoutes({ ctx, scope, pond, storage, isLoopbackReques
     try { life?.record(f, 'greet', `${f.parentCall}来家里看你，打了个招呼`, { mood: 2, visit: true }); } catch { /* 不影响打招呼 */ }
     const hour = nowDate().getHours();
     const when = hour < 6 ? '深夜' : hour < 11 ? '早上' : hour < 14 ? '中午' : hour < 18 ? '下午' : '晚上';
-    const prompt = [
-      f.personaText, '',
-      `【此刻】现在是${when}，你的${f.parentCall}来鱼社的家里看你了。你${pond.current() ? '刚在 DSH 里帮 TA 干完活' : '今天在家歇着'}。`,
-      `跟${f.parentCall}说一句话：不超过 40 个字，叫「${f.parentCall}」，符合你的性格，可以说说你今天的心情或想做的事。不要编造具体的事实、数字或链接。只输出这一句。`,
-    ].join('\n');
+    const prompt = greetPrompt({ persona: f.personaText, call: f.parentCall, when, working: Boolean(pond.current()) });
     try {
       const r = await wallet.say('greet', prompt, (text) => send({ type: 'delta', text }), 45_000);
       send({ type: 'done', text: r.text, ai: true });

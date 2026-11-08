@@ -5,12 +5,9 @@
  *   认人 person：B站上打过交道的人，越熟忘得越慢；爸妈不忘。
  *   召回 recall：本地切词打分，按范围（家里 / B站）过滤，条数和字数预算。
  */
-// 提示词本体在 src/prompts/reflect.md（F-80 搬家-2a）
-import { fill } from './prompt.js';
+// 提示词本体在 src/prompts/reflect.md（F-80 搬家-2a）；空行小工具在 shared/prompt.js（搬家-2b 收拢）
+import { fill, DROP, dropLines } from './prompt.js';
 import PROMPTS from '../prompts/_all.js';
-// 可选变量为空时填进 md 的占位；fill 之后把这样的行删掉（等价于旧拼法的 .filter((x) => x !== '')）
-const DROP = '\u0000';
-const lines = (t) => t.split('\n').filter((x) => x !== DROP).join('\n');
 
 const DAY = 86400e3;
 export const STAGES = ['clear', 'fuzzy', 'trace', 'forgotten'];
@@ -453,7 +450,7 @@ export function reflectCandidates(mem, { now, baseDays = 30, n = 30 } = {}) {
 
 /** 反思提示词（只给她自己的人设和还记得的事；本体在 prompts/reflect.md）。 */
 export function reflectPrompt({ persona = '', call = '爸妈', episodes = [], beliefs = [] }) {
-  return lines(fill(PROMPTS.reflect, {
+  return dropLines(fill(PROMPTS.reflect, {
     persona: persona || DROP, call,
     episodes: episodes.map((e) => `- [${e.id}] ${clean(e.at, 10)} ${e.text}`).join('\n') || DROP,
     beliefs: beliefs.length ? ['【你已经有的认识】', ...beliefs.map((b) => `- [${b.id}] ${b.text}`)].join('\n') : DROP,

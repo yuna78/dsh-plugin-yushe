@@ -10,3 +10,15 @@ export function fill(template, vars) {
     return String(vars[name]);
   });
 }
+
+/**
+ * 空行小工具（搬家-2b：之前在 trip-loop / writer / dm / photo / memory 各写一份，收拢到这里）。
+ * 可选变量为空时填进 md 的占位；fill 之后把「整行恰好是 DROP」的行删掉，
+ * 等价于旧拼法的 .filter((x) => x !== DROP)，又不会误删变量自己的空行。
+ */
+export const DROP = '\u0000';
+
+/** 去掉整行恰好等于 DROP 的行，别的（包括真正的空行）原样保留。 */
+export function dropLines(text) {
+  return String(text).split('\n').filter((x) => x !== DROP).join('\n');
+}

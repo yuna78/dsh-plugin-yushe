@@ -17,6 +17,7 @@ import { planNow } from '../shared/plan.js';
 import { freshGrowth, dailyTick, gainXp, XP_RULES, feedInterests, feedDislikes } from '../shared/growth.js';
 import { cardsDue, addToBag, souvenirById } from '../shared/trip.js';
 import { DREAM_COST } from '../shared/dream.js';
+import { postcardsDue, albumEntry } from '../shared/postcard.js';
 
 export const JOURNAL_MAX = 400; // F-82：一趟最多 10 张便利贴 + 明信片，200 太紧
 /** 便利贴 → journal 的一条（F-82：不另开数组，记忆 / 照片跳转都读 journal）。 */
@@ -108,7 +109,7 @@ export function settle(state, now = nowMs()) {
 }
 
 /**
- * 推进这一趟：到点的明信片寄进相册；到了回家时间就收尾——最后一张明信片、小东西进背包、记事件、爱好。
+ * 推进这一趟：到点的便利贴贴进笔记本、到点的明信片（F-84：途中从外面寄回）进明信片册；到了回家时间就收尾——「这一趟」那页、小东西进背包、记事件、爱好。
  * 返回回家信息（给写信用）或 null。直接改 s（调用方负责落盘）。
  */
 export function tickTrip(fish, s, now) {
@@ -122,23 +123,32 @@ export function tickTrip(fish, s, now) {
     if (n) { n.posted = true; s.journal = [...(s.journal || []), noteEntry(n, tr.id, c.deliverAt)].slice(-JOURNAL_MAX); continue; }
     s.journal = [...(s.journal || []), { at: new Date(c.deliverAt).toISOString(), text: c.why || `在${c.source || '外面'}看到的`, seen: [{ title: c.title, url: c.url, source: c.source, verified: true }], trip: tr.id }].slice(-JOURNAL_MAX);
   }
+  // F-84：明信片途中从外面寄回家（正面照片或文字卡），到点进明信片册；回家时没寄出的也一起到
+  const sendPc = (p) => { p.sent = true; s.album = [...(s.album || []), albumEntry(p)].slice(-100); };
+  for (const p of postcardsDue(tr.postcards, now)) sendPc(p);
   if (now < (tr.returnAt || 0)) return null;
   // 回家
+  for (const p of tr.postcards || []) if (!p.sent) { p.deliverAt = Math.min(p.deliverAt, tr.returnAt - 1); sendPc(p); }
+  const pcPhotos = (tr.postcards || []).filter((p) => p.photo).map((p) => ({ photo: p.photo, ref: p.ref }));
   // 照片（F-74）：每张挂着拍的是哪条见闻；见闻里那条带上照片 id（缩略图），没拍成的记一行「她想拍下」
-  const photos = [...(tr.photos || []), ...(tr.photoId ? [{ photo: tr.photoId, caption: String(tr.postcard || tr.note || '').split(/[。！!？?\n]/)[0].slice(0, 60), trip: tr.id }] : [])];
+  const photos = [...(tr.photos || []), ...(tr.photoId ? [{ photo: tr.photoId, caption: String(tr.postcard || tr.note || '').split(/[。！!？?\n]/)[0].slice(0, 60), trip: tr.id }] : [])]; // 老格式（0.34.0 以前出的门）：回家才进相册
+  const allPhotos = [...photos, ...pcPhotos];
   const seenOut = (tr.seen || []).slice(0, 6).map((x) => { const p = photos.find((ph) => ph.ref?.url === x.url); return p ? { ...x, photo: p.photo } : x; });
   // F-82：途中没寄回的便利贴回家时一起贴（排在明信片前面），被拍了的挂上缩略图
-  const photoOf = (url) => photos.find((ph) => ph.ref?.url === url)?.photo;
+  const photoOf = (url) => allPhotos.find((ph) => ph.ref?.url === url)?.photo;
   for (const n of tr.notes || []) if (!n.posted) { n.posted = true; s.journal = [...(s.journal || []), noteEntry({ ...n, photo: photoOf(n.url) }, tr.id, tr.returnAt - 1)].slice(-JOURNAL_MAX); }
-  if (photos.length) s.journal = s.journal.map((j) => (j.note && j.trip === tr.id && !j.seen?.[0]?.photo && photoOf(j.seen?.[0]?.url) ? { ...j, seen: [{ ...j.seen[0], photo: photoOf(j.seen[0].url) }] } : j));
-  const readOut = tr.read ? { read: tr.read.slice(0, 20), scanned: tr.scanned || 0 } : {}; // 读过清单挂在明信片背面
-  if (tr.postcard || tr.wantPhoto || tr.read?.length) s.journal = [...(s.journal || []), { at: new Date(tr.returnAt).toISOString(), text: tr.postcard || '', seen: seenOut, trip: tr.id, final: true, ...readOut, ...(tr.wantPhoto && !photos.length ? { wantPhoto: tr.wantPhoto } : {}) }].slice(-JOURNAL_MAX);
+  if (allPhotos.length) s.journal = s.journal.map((j) => (j.note && j.trip === tr.id && !j.seen?.[0]?.photo && photoOf(j.seen?.[0]?.url) ? { ...j, seen: [{ ...j.seen[0], photo: photoOf(j.seen[0].url) }] } : j));
+  const readOut = tr.read ? { read: tr.read.slice(0, 20), scanned: tr.scanned || 0 } : {};
+  if (tr.postcards) {
+    // F-84：回家那一刻在笔记本里夹一页「这一趟」（规则写：扫过几个、点进去哪些、喜不喜欢），明信片已经在路上寄回了
+    if (tr.read || seenOut.length) s.journal = [...(s.journal || []), { at: new Date(tr.returnAt).toISOString(), text: '', seen: seenOut, trip: tr.id, final: true, page: 'trip', ...readOut }].slice(-JOURNAL_MAX);
+  } else if (tr.postcard || tr.wantPhoto || tr.read?.length) s.journal = [...(s.journal || []), { at: new Date(tr.returnAt).toISOString(), text: tr.postcard || '', seen: seenOut, trip: tr.id, final: true, ...readOut, ...(tr.wantPhoto && !photos.length ? { wantPhoto: tr.wantPhoto } : {}) }].slice(-JOURNAL_MAX);
   for (const p of photos) s.album = [...(s.album || []), { at: new Date(tr.returnAt).toISOString(), ...p }].slice(-100);
   const got = tr.souvenirs || [];
   s.bag = addToBag(s.bag, got);
   const names = got.map((id) => souvenirById(id)?.name).filter(Boolean);
   const day = dayOf(new Date(now));
-  s.events = [...(s.events || []), { at: new Date(tr.returnAt).toISOString(), day, kind: 'back', text: tr.failed ? '出门转了一圈，没带回什么就回家了' : `逛完回家了，${tr.notes ? `往笔记本贴了 ${tr.notes.length} 张便利贴` : `记下 ${(tr.cards || []).length + (tr.postcard ? 1 : 0)} 条见闻`}${photos.length ? `、拍了${photos[0].ref?.title ? `一张《${photos[0].ref.title}》的照片` : '一张照片'}${photos.length > 1 ? `等 ${photos.length} 张` : ''}` : ''}${names.length ? `，带回了${names.join('、')}` : ''}` }].slice(-MAX_EVENTS);
+  s.events = [...(s.events || []), { at: new Date(tr.returnAt).toISOString(), day, kind: 'back', text: tr.failed ? '出门转了一圈，没带回什么就回家了' : `逛完回家了，${tr.notes ? `往笔记本贴了 ${tr.notes.length} 张便利贴` : `记下 ${(tr.cards || []).length + (tr.postcard ? 1 : 0)} 条见闻`}${tr.postcards?.length ? `、路上寄回 ${tr.postcards.length} 张明信片` : ''}${allPhotos.length ? `、拍了${allPhotos[0].ref?.title ? `一张《${allPhotos[0].ref.title}》的照片` : '一张照片'}${allPhotos.length > 1 ? `等 ${allPhotos.length} 张` : ''}` : ''}${names.length ? `，带回了${names.join('、')}` : ''}` }].slice(-MAX_EVENTS);
   if (!tr.failed) { s.mood = clamp(s.mood + 5); s.energy = clampF(s.energy - 8); }
   if (s.growth && !tr.failed) {
     s.growth = gainXp(s.growth, 'back', { ageDays: Math.floor((now - (s.bornAt || now)) / 86400e3), at: new Date(now).toISOString() });
@@ -255,6 +265,18 @@ export function createLife(dir) {
     },
     eventsOf: (s, day) => (s.events || []).filter((e) => e.day === day),
     /** 照片晚到（这一趟已经回家了）：直接放进相册。 */
+    /** 明信片正面的照片画好了（F-84）：还没寄出就挂在路上那张上；已经寄到了就挂到明信片册那条上；便利贴挂缩略图。 */
+    postcardPhoto(fish, pcId, patch) {
+      const s = load(fish);
+      const pc = (s.trip?.postcards || []).find((p) => p.id === pcId);
+      let ref = pc?.ref, trip = pc?.trip;
+      if (pc) Object.assign(pc, patch); // 路上那张记着（回家时便利贴挂缩略图要用）
+      const a = (s.album || []).find((x) => x.pc === pcId); // 已经寄到了：明信片册那条也换成照片
+      if (a) { Object.assign(a, patch, { kind: 'photo' }); ref = ref || a.ref; trip = trip || a.trip; }
+      if (!pc && !a) return false; // 路上和明信片册里都找不到（被挤出 100 条了）：调用方记日志
+      if (ref?.url && trip) s.journal = (s.journal || []).map((j) => (j.note && j.trip === trip && j.seen?.[0]?.url === ref.url && !j.seen[0].photo ? { ...j, seen: [{ ...j.seen[0], photo: patch.photo }] } : j));
+      save(s); return true;
+    },
     addPhoto(fish, entry) {
       const s = load(fish);
       s.album = [...(s.album || []), entry].slice(-100);

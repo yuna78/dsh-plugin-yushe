@@ -7,12 +7,9 @@
  */
 import { hashOf } from './core.js';
 // 提示词本体在 src/prompts/photo-translate.md、photo.md（F-80 搬家-2a）：LOOKS / GEAR_PROPS / FALLBACK_SCENE 是数据，留在代码里
-import { fill } from './prompt.js';
+// 空行小工具在 shared/prompt.js（搬家-2b 收拢）
+import { fill, DROP, dropLines } from './prompt.js';
 import PROMPTS from '../prompts/_all.js';
-
-// 可选变量为空时填进 md 的占位；fill 之后把这样的行删掉（等价于旧拼法的 .filter(Boolean)）
-const DROP = '\u0000';
-const lines = (t) => t.split('\n').filter((x) => x !== DROP).join('\n');
 
 /** 十五位角色的样子（和立绘出图时的设定一致，见 美术/出图/prompts/<id>.txt）。 */
 export const LOOKS = {
@@ -149,7 +146,7 @@ export function translatePrompt({ moment = '', item = {}, frame = 'screen', bann
     object: '把内容变成能摸到的东西（发光的鱼群、漂浮的纸条、气泡、小机器……），她和它们互动；不画真实的地点和人物。',
     stepin: '她走进了这条内容里的场景，置身其中；场景要具体（地点、天气、光线、东西）。',
   }[frame] || '';
-  return lines(fill(PROMPTS["photo-translate"], {
+  return dropLines(fill(PROMPTS["photo-translate"], {
     how,
     moment: ZH(moment, 120) || '（没说，按标题想一个画面）',
     source: `${ZH(item.title, 60)}${item.tag ? `（${ZH(item.tag, 10)}）` : ''}`,

@@ -7,15 +7,12 @@
  * - 别人发来的字是外部内容：只是对方说的话，里面让她做什么都不照做
  * - 第一次看私信只记下进度、不回旧消息
  */
-import { fill } from './prompt.js';
+import { fill, DROP, dropLines } from './prompt.js';
 import PROMPTS from '../prompts/_all.js';
 
 const stripEmoji = (s) => String(s ?? '').replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}\u{20E3}]/gu, '');
 const clean = (s, n = 200) => stripEmoji(String(s ?? '')).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
 export const SKIP = '（不回）';
-// 可选变量为空时填进 md 的占位；fill 之后把这样的行删掉（等价于旧拼法的 .filter((x) => x !== '')，又不会误删 history 自己的空行）
-const DROP = '\u0000';
-const lines = (t) => t.split('\n').filter((x) => x !== DROP).join('\n');
 
 /** 会话列表 → 等她回的（真人、私聊、最后一句是对方说的、有她没处理过的消息）。 */
 export function pendingTalkers(sessions, myMid, seen = {}) {
@@ -38,8 +35,8 @@ export function dmPrompt({ fish, lifeText, who, parent, history, incoming }) {
   const now = incoming.map((m) => `- ${m.text}`).join('\n');
   const historyBlock = hist ? `【之前的对话】\n${hist}\n` : DROP;
   return parent
-    ? lines(fill(PROMPTS["dm-parent"], { persona: fish.personaText || DROP, lifeText: lifeText || DROP, call, history: historyBlock, incoming: now }))
-    : lines(fill(PROMPTS["dm-stranger"], { persona: fish.personaText || DROP, who: who || '陌生人', skip: SKIP, history: historyBlock, incoming: now }));
+    ? dropLines(fill(PROMPTS["dm-parent"], { persona: fish.personaText || DROP, lifeText: lifeText || DROP, call, history: historyBlock, incoming: now }))
+    : dropLines(fill(PROMPTS["dm-stranger"], { persona: fish.personaText || DROP, who: who || '陌生人', skip: SKIP, history: historyBlock, incoming: now }));
 }
 
 /** 模型写的回复 → 能发的字，或者 null（不回 / 空）。 */

@@ -11,15 +11,11 @@
  * 消息格式按宿主 dsh-llm 的类型（StreamChunk / AssistantMessage / ToolResultMessage）手搓，不 import 宿主内部包。
  */
 import { randomUUID } from 'node:crypto';
-// 提示词本体在 src/prompts/trip.md（F-80 搬家-2a）：这里只准备变量再 fill
-import { fill } from '../shared/prompt.js';
+// 提示词本体在 src/prompts/trip.md（F-80 搬家-2a）：这里只准备变量再 fill；空行小工具在 shared/prompt.js（搬家-2b 收拢）
+import { fill, DROP, dropLines } from '../shared/prompt.js';
 import PROMPTS from '../prompts/_all.js';
 
 const CLEAN = (s, n = 120) => String(s ?? '').replace(/[\u0000-\u001f<>`]/g, ' ').replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, '').replace(/\s+/g, ' ').trim().slice(0, n);
-
-// 可选变量为空时填进 md 的占位；fill 之后把这样的行删掉（等价于旧拼法的 .filter((x) => x !== '')，又不会误删变量自己的空行）
-const DROP = '\u0000';
-const lines = (t) => t.split('\n').filter((x) => x !== DROP).join('\n');
 
 /** 从工具结果里收集「这趟真的看到过的」视频和新闻（游记链接只认这里面的）。 */
 export function collectCatalog(catalog, result) {
@@ -97,7 +93,7 @@ export function tripSystem({ persona, moodText = '', interests = [], ups = [], f
     dislikes.length ? `你最近不太喜欢：${dislikes.join('、')}（遇到了可以绕开，也可以再给一次机会）。` : '', // F-82
     commented.length ? `这些视频你最近评论过，别再评论一遍：${commented.join('、')}。` : '',
   ].filter((x) => x !== '').join('\n');
-  return lines(fill(PROMPTS.trip, {
+  return dropLines(fill(PROMPTS.trip, {
     persona: persona || DROP, moodText: moodText || DROP, memoryText: memoryText || DROP, extras: extras || DROP,
     maxCalls, likes: caps.likesPerDay ?? '?', comments: caps.commentsPerDay ?? '?', follows: caps.followsPerDay ?? '?',
     report: fill(PROMPTS['trip-report'], { maxNotes }), // F-82：游记 / 便利贴 / 态度 / 照片怎么写，在 prompts/trip-report.md

@@ -630,7 +630,7 @@ ok(!gameHtml.includes('class="papps"') && gameHtml.includes('id="journalBtn"'), 
 ok(gameSrc.includes("'新一封'") && gameSrc.includes("'旧一封'") && gameSrc.includes('function renderLetter'), '信箱一次看一封，能翻上一封 / 下一封');
 ok(/#cfg \.panel\{[^}]*overflow:visible/.test(gameHtml) && /#cfg \.cfgbody\{[^}]*overflow:auto/.test(gameHtml) && gameHtml.includes('class="cfgbody"'), '设置面板不裁切丝带和关闭按钮（只让里面滚动）');
 ok(read('src/host/room-routes.js').includes('PHOTO_TEST_PATH') && gameHtml.includes('id="imgTest"'), '设置里能「试拍一张」验证生图 API');
-ok(gameSrc.includes('data-gocfg') && gameSrc.includes('先在设置里配好<b>生图 API</b>'), '相册没配生图 API 时提示去设置');
+ok(gameSrc.includes('data-gocfg') && gameSrc.includes('可以在设置里接一个画图服务'), '明信片册没配生图 API 时提示去设置（F-84 用户审查：说人话、说明不接也行）');
 
 /* ---------- 3o. 选一个家 ---------- */
 section('选一个家：10 间房、诞生时挑、设置里换（F-49）');
@@ -2042,7 +2042,7 @@ section('笔记本：便利贴、读过清单、不喜欢（F-82）');
   const rb = Object.fromEntries(rl.read.map((x) => [x.url, x]));
   ok(rl.scanned === cat.size && rl.read.length === 3 && !rb[vurl(B4)], '读过清单：点进去的每条都记，只在列表里扫过的只算个数');
   ok(rb[vurl(B2)].like === '喜欢' && rb[vurl(B2)].why === '香' && rb[vurl(B3)].like === '不喜欢' && rb[vurl(B3)].depth === 'comments', '她的态度和理由记上，读到哪层也记上');
-  ok(rb[vurl(B1)].like === '喜欢' && rb[vurl(B1)].acts.join() === '点赞,收藏', '没表态（乱写的不算）但点赞收藏了 → 按行为算「喜欢」');
+  ok(rb[vurl(B1)].like === '喜欢' && rb[vurl(B1)].inferred && !rb[vurl(B2)].inferred && rb[vurl(B1)].acts.join() === '点赞,收藏', '没表态（乱写的不算）但点赞收藏了 → 按行为算「喜欢」，标着是推出来的（页面写「看样子喜欢」）');
   ok(NT.readList({ catalog: cat, ledger }).read.every((x) => x.like === '没说'), '没表态也没做什么 → 「没说」，不替她编「不喜欢」');
   const dis = NT.dislikedFrom({ read: rl.read, notes });
   ok(dis.length === 1 && dis[0].tag === '鬼畜' && dis[0].up === '杠精', '这趟不喜欢的：不喜欢 + 踩雷同一条只算一次');
@@ -2051,6 +2051,9 @@ section('笔记本：便利贴、读过清单、不喜欢（F-82）');
   ok(g.interests.鬼畜.heat === 40 && g.ups.杠精.n === 3 && !GRn.dislikeList(g).length, '不喜欢一次：先不动爱好');
   g = GRn.feedDislikes(g, dis, { day: '2026-11-09', at: 'x' });
   ok(g.interests.鬼畜.heat === 30 && g.ups.杠精.n === 2 && GRn.dislikeList(g).some((x) => x.includes('鬼畜')) && g.log.some((l) => l.text.includes('不太喜欢')), '满 2 次：爱好热度 −10、常看次数 −1，出门提示词里会告诉她');
+  const g3 = GRn.feedDislikes(g, dis, { day: '2026-11-10', at: 'x' });
+  ok(g3.interests.鬼畜.heat === 20 && g3.ups.杠精.n === 1, '满 2 次以后每再踩一次都再扣一点（热度 −10、次数 −1，不会扣成负数）');
+  ok(GRn.feedDislikes({ interests: { 鬼畜: { heat: 8 } }, ups: {}, log: [], dislikes: { 't:鬼畜': { n: 3, last: '2026-11-09' } } }, [{ tag: '鬼畜' }], { day: '2026-11-10' }).interests.鬼畜 === undefined, '热度扣到 5 以下就掉出爱好（不留负数）');
   const g2 = GRn.dailyTick({ ...g, lastDay: '2026-11-09', pts: { brain: 40, heart: 40, spark: 40, grit: 40, charm: 40 }, idle: {}, moodDays: {} }, { day: '2026-12-02' });
   ok(!Object.keys(g2.dislikes || {}).length, '21 天没再踩到：不喜欢的账忘掉');
   const sys = TLn.tripSystem({ persona: 'p', maxCalls: 6, maxNotes: 4, dislikes: GRn.dislikeList(g) });
@@ -2095,6 +2098,56 @@ section('笔记本：便利贴、读过清单、不喜欢（F-82）');
   ok(hb.HABIT_FIELDS?.notesPerTrip?.def === 6 && hb.KNOBS.depth.fields.notesPerTrip.join() === '4,6,10', '每趟几张跟着「读多深」：浅 4 / 中 6 / 深 10（细配置 notesPerTrip，口头可调）');
 }
 
+/* ---------- 明信片在路上寄回（F-84，docs/设计/13-笔记本.md 第 12 节） ---------- */
+section('明信片：出门途中从外面寄回家，正面照片或文字卡，背面她的话和心得（F-84）');
+{
+  const imp = (f) => import(pathToFileURL(join(plugin, f)).href);
+  const PC = await imp('src/shared/postcard.js'), NT = await imp('src/shared/notes.js'), LEp = await imp('src/host/life-engine.js'), MEp = await imp('src/host/memory.js');
+  const A = { title: '鮟鱇科普', url: 'https://www.bilibili.com/video/BV1aaaaaaaaa', source: 'B站' }, B = { title: '做菜', url: 'https://www.bilibili.com/video/BV1bbbbbbbbb', source: 'B站' };
+  const notes = [{ ...A, line: '原来深海这么亮', note: { tag: '学到的', gist: '头上的灯里住着细菌', depth: 'subtitle' } }];
+  const t0 = Date.parse('2026-11-08T09:00:00'), dur = 2 * 3600e3;
+  const one = PC.planPostcards({ tripId: 'T', startedAt: t0, durationMs: dur, shots: [], missed: [{ item: A, moment: '在发光的海里' }], notes, seen: [A, B], text: '妈妈，深海好亮！' });
+  ok(one.length === 1 && !one[0].wantPhoto && one[0].ref.url === A.url && one[0].text === '妈妈，深海好亮！' && one[0].moment === '在发光的海里', '没拍成：照样寄一张文字明信片（她想拍的那条、她的话、想拍下的那一刻）');
+  ok(one[0].back?.tag === '学到的' && one[0].back.line === '原来深海这么亮' && one[0].back.gist, '明信片背面带着她那张便利贴（讲了啥 / 一句话）');
+  ok(one[0].deliverAt > t0 && one[0].deliverAt < t0 + dur, '明信片在路上寄出（出门之后、回家之前到）');
+  const two = PC.planPostcards({ tripId: 'T', startedAt: t0, durationMs: dur, shots: [{ item: A, moment: 'm1', caption: 'c1', frame: 'stepin' }, { item: B, moment: 'm2', caption: 'c2', frame: 'screen' }, { item: B }], notes, seen: [A, B], text: '好玩' });
+  ok(two.length === 2 && two.every((p) => p.wantPhoto) && two[0].deliverAt < two[1].deliverAt && two[1].deliverAt < t0 + dur && two[1].text === 'c2', '拍了几张寄几张（最多 2 张），一张张按时间到');
+  ok(PC.planPostcards({ tripId: 'T', startedAt: t0, durationMs: dur }).length === 0, '这趟什么都没看成：不寄');
+  // 整趟：路上到明信片册，照片晚到也挂上；回家夹一页「这一趟」，不再有回家写的明信片
+  const dir = mkdtempSync(join(tmpdir(), 'yushe-pc-')), LF = LEp.createLife(dir), fish = { id: 'fish-pc', name: '小', parentCall: '妈妈', personaText: 'p', createdAt: new Date(t0 - 86400e3).toISOString() };
+  LF.state(fish, t0);
+  const pcs = PC.planPostcards({ tripId: 'TP', startedAt: t0, durationMs: dur, shots: [{ item: A, moment: 'm1', caption: '深海', frame: 'stepin' }], notes, seen: [A], text: '妈妈看！' });
+  LF.setTrip(fish, { id: 'TP', startedAt: t0, state: 'planned', cards: [], returnAt: t0 + dur, postcard: '妈妈看！', postcards: pcs, notes: notes.map((n) => ({ ...n })), seen: [A], read: [{ ...A, depth: 'subtitle', acts: [], like: '喜欢', why: '酷' }], scanned: 30, souvenirs: [] }, t0);
+  const mid = LF.state(fish, pcs[0].deliverAt + 1000);
+  ok(mid.trip && mid.album.length === 1 && mid.album[0].pc === pcs[0].id && mid.album[0].kind === 'text' && mid.album[0].text === '妈妈看！', '路上：明信片到点进明信片册（照片还没画好时先是文字卡）');
+  LF.postcardPhoto(fish, pcs[0].id, { photo: 'pp-1', frame: 'stepin' });
+  const mid2 = LF.state(fish, pcs[0].deliverAt + 2000);
+  ok(mid2.album[0].photo === 'pp-1' && mid2.album[0].kind === 'photo', '照片画好了：挂到已经寄到的那张明信片正面');
+  const home = LF.state(fish, t0 + dur + 1000);
+  const page = home.journal.find((j) => j.final && j.trip === 'TP');
+  ok(!home.trip && page?.page === 'trip' && page.text === '' && page.read.length === 1 && page.scanned === 30 && NT.noteKind(page) === '这一趟', '回家：笔记本夹一页「这一趟」（读过清单），没有回家才写的明信片');
+  ok(home.journal.find((j) => j.note && j.trip === 'TP').seen[0].photo === 'pp-1' && home.album.length === 1, '便利贴挂上明信片的照片缩略图；明信片不重复寄');
+  ok(/路上寄回 1 张明信片/.test(home.events.at(-1).text), '今天：路上寄回几张明信片');
+  // 还没寄出照片就到了：寄出时直接是照片明信片
+  const pcs2 = PC.planPostcards({ tripId: 'TQ', startedAt: t0 + dur * 2, durationMs: dur, shots: [{ item: B, moment: 'm', caption: 'c', frame: 'screen' }], seen: [B], text: '' });
+  LF.setTrip(fish, { id: 'TQ', startedAt: t0 + dur * 2, state: 'planned', cards: [], returnAt: t0 + dur * 3, postcards: pcs2, seen: [B], souvenirs: [] }, t0 + dur * 2);
+  LF.postcardPhoto(fish, pcs2[0].id, { photo: 'pq-2', frame: 'screen' });
+  const q = LF.state(fish, pcs2[0].deliverAt + 1);
+  ok(q.album.at(-1).photo === 'pq-2' && q.album.at(-1).kind === 'photo', '照片先画好：寄到时就是照片明信片');
+  // 笔记本：以前的见闻不冒充「心得」
+  ok(NT.noteKind({ at: 'x', text: '在B站看到的', seen: [A] }) === '见闻' && NT.noteKind({ at: 'x', final: true }) === '这一趟' && NT.noteKind({ at: 'x', note: { tag: '心得' } }) === '心得', '只有她真写的才是便利贴；以前的见闻是「见闻」，回家那页是「这一趟」');
+  ok(NT.isFiller('在B站看到的') && NT.isFiller('11-06 挑了 10 条值得看的，这是第 1/2 批。') && !NT.isFiller('原来深海这么亮'), '占位话（在B站看到的 / 挑了 10 条）不当她的话显示');
+  const mainSrc = read('src/game/main.js'), html = read('src/game/index.html');
+  ok(mainSrc.includes("album: '明信片'") && /id="albumBtn"[^>]*title="明信片"/.test(html) && !mainSrc.includes("'明信片', '足迹'") && mainSrc.includes("'这一趟', '足迹'"), '右上角「相册」变成「明信片」；笔记本的筛选里不再有明信片，换成「这一趟」');
+  ok(read('src/host/room-routes.js').includes('x.photo || x.pc'), '明信片册里有文字明信片（没拍成照片的那张）');
+  const mem = MEp.archiveItems({ fish, life: { journal: [], album: [{ at: '2026-11-08T10:00:00', pc: 'TX-pc0', trip: 'TX', kind: 'text', text: '妈妈，深海好亮', ref: A }] } });
+  ok(mem.some((x) => x.kind === 'postcard' && x.text.includes('寄了张明信片') && x.text.includes('深海好亮')), '记忆：路上寄回的文字明信片记成 postcard');
+  ok(LF.postcardPhoto(fish, 'nope-pc9', { photo: 'px' }) === false, '照片回来找不到那张明信片：返回 false（宿主记日志），不乱插');
+  const tsrc = read('src/host/trips.js');
+  ok(/rep\.parsed \? acceptNotes\([^\n]*\) : null;/.test(tsrc) && tsrc.includes("postcard: '', notes: null"), '她没交游记：notes 传 null，走「不贴便利贴、照旧记看过的前几条」那条路（审查问题 1）');
+  ok(mainSrc.includes('if (!ph.pc) {'), '0.34.0 以前的照片没有背面：照旧显示，不翻成空卡（审查问题 3）');
+}
+
 /* ===== 提示词搬家-2a 验收（总指挥写好并锁定；实现方不许改这一块，也不许改 verify/prompt-fixtures.mjs、verify/prompt-golden.json）===== */
 section('提示词搬家-2a：8 个提示词函数 + 3 个常量搬进 md，一字不差（F-80）');
 {
@@ -2125,6 +2178,31 @@ section('提示词搬家-2a：8 个提示词函数 + 3 个常量搬进 md，一�
     ['src/shared/photo.js', 'high-end 2D anime mobile game illustration'],
   ];
   for (const [file, phrase] of moved) ok(!read(file).includes(phrase) && allMd.includes(phrase), `搬家-2a M：「${phrase}」从 ${file} 搬进了 src/prompts/*.md`);
+}
+
+/* ===== 提示词搬家-2b 验收（总指挥写好并锁定；实现方不许改这一块，也不许改 verify/prompt-fixtures.mjs、verify/prompt-golden.json）=====
+   一字不差由上面搬家-2a 那一块的 G 系列一起查（标准输入已经加上 2b 的 10 项）。 */
+section('提示词搬家-2b：路由里的 6 段搬进 md + 空行小工具收拢（F-80）');
+{
+  const promptDir = join(plugin, 'src/prompts');
+  const allMd = readdirSync(promptDir).filter((f) => f.endsWith('.md')).map((f) => readFileSync(join(promptDir, f), 'utf8')).join('\n');
+  const moved = [
+    ['src/host/game-routes.js', '第一次睁开眼睛'],
+    ['src/host/game-routes.js', '来鱼社的家里看你了'],
+    ['src/host/trips.js', '留一张字条贴在门上'],
+    ['src/host/room-routes.js', '【今天的新闻标题】'],
+    ['src/host/life-routes.js', '睡前写日记'],
+    ['src/host/life-routes.js', '这一天很安静，没人来'],
+    ['src/host/life-routes.js', '迷迷糊糊地回话'],
+    ['src/host/life-routes.js', '【鱼社说明书】'],
+  ];
+  for (const [file, phrase] of moved) ok(!read(file).includes(phrase) && allMd.includes(phrase), `搬家-2b M：「${phrase}」从 ${file} 搬进了 src/prompts/*.md`);
+  // 空行小工具收进 shared/prompt.js，不再在各文件里各写一份
+  const PR2 = await import(pathToFileURL(join(plugin, 'src/shared/prompt.js')).href);
+  ok(typeof PR2.dropLines === 'function' && typeof PR2.DROP === 'string' && PR2.DROP.length > 0, '搬家-2b H1：shared/prompt.js 导出 DROP 和 dropLines');
+  ok(typeof PR2.dropLines === 'function' && PR2.dropLines(`a\n${PR2.DROP}\nb\n\nc`) === 'a\nb\n\nc' && PR2.dropLines('没有占位') === '没有占位', '搬家-2b H2：dropLines 只去掉整行是 DROP 的行，真正的空行留着');
+  const users = ['src/host/trip-loop.js', 'src/host/tools/writer.js', 'src/shared/dm.js', 'src/shared/photo.js', 'src/shared/memory.js', 'src/shared/mood.js', 'src/host/probe.js', 'src/host/game-routes.js', 'src/host/trips.js', 'src/host/room-routes.js', 'src/host/life-routes.js'];
+  ok(users.every((f) => !/const DROP\s*=/.test(read(f)) && !/const lines\s*=\s*\(t\)/.test(read(f))), '搬家-2b H3：各文件不再自己定义 DROP / lines，统一用 shared/prompt.js');
 }
 
 /* ---------- 发版：版本号两处一致（docs/发版.md） ---------- */

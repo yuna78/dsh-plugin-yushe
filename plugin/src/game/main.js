@@ -10,7 +10,7 @@ import { poseFor, pickIdlePose } from '../shared/room.js';
 import { tokensText } from '../shared/allowance.js';
 import { nextTip } from '../shared/tips.js';
 import { HOMES, homeOf } from '../shared/homes.js';
-import { noteKind, DEPTH_NAMES } from '../shared/notes.js';
+import { noteKind, DEPTH_NAMES, isFiller } from '../shared/notes.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -650,7 +650,7 @@ function renderMailDot(n) {
 }
 
 /** 三态 + 正在干的事 → 画面：睡觉换抱枕闭眼立绘 + Zzz；出门人没了，挂「暂停营业」牌和字条；其余按动作库回落站姿。 */
-let lastActivity = null, prevSent = null;
+let lastActivity = null, prevSent = null, prevPc = null;
 function renderPresence(L) {
   const f = homeFish(); if (!f) return;
   const act = L.activity || (L.where === 'sleep' ? 'sleep' : 'home');
@@ -666,15 +666,17 @@ function renderPresence(L) {
   if (act === 'out') {
     const tr = L.trip;
     const back = tr?.state === 'planned' && tr.returnAt ? `　大概 ${new Date(tr.returnAt).toTimeString().slice(0, 5)} 回来` : '';
-    $('awayNote').textContent = `${tr?.note || `${L.fish.parentCall}，我出去逛逛，回来给你寄明信片～`}${tr?.total ? `\n（已经寄回 ${tr.sent}/${tr.total} 张明信片${back}）` : back ? `\n（${back.trim()}）` : ''}`;
+    $('awayNote').textContent = `${tr?.note || `${L.fish.parentCall}，我出去逛逛，看到有意思的贴进笔记本～`}${tr?.total || tr?.pcSent ? `\n（${[tr.total ? `往笔记本贴了 ${tr.sent} 张${tr.sent < tr.total ? '，剩下的回家一起贴' : ''}` : '', tr.pcSent ? `寄回 ${tr.pcSent} 张明信片` : ''].filter(Boolean).join('、')}${back}）` : back ? `\n（${back.trim()}）` : ''}`;
   }
   // 明信片寄到了：提醒一下
   if (L.trip && prevSent !== null && L.trip.sent > prevSent) toast('她往笔记本上贴了一张新的便利贴（右上角「笔记本」）');
+  if (L.trip && prevPc !== null && (L.trip.pcSent || 0) > prevPc) toast('她从外面寄回一张明信片（右上角「明信片」）');
   prevSent = L.trip ? L.trip.sent : null;
+  prevPc = L.trip ? (L.trip.pcSent || 0) : null;
   $('rSub').textContent = `${f.rarity} · ${f.personality || ''} · ${L.activityText || L.whereText}`;
   document.querySelectorAll('.quick .qa').forEach((b) => { if (b.dataset.act !== 'work') b.disabled = act === 'out'; });
   $('sayIn').placeholder = act === 'out' ? '她出门了，回来再聊～' : act === 'sleep' ? '她在睡觉……小声点说（会把她叫醒）' : '跟她说点什么…（回车发送）';
-  if (lastActivity === 'out' && act !== 'out') { bounce(); bubbleSay(`${L.fish.parentCall}，我回来啦！笔记本和照片都放好了～`); }
+  if (lastActivity === 'out' && act !== 'out') { bounce(); bubbleSay(`${L.fish.parentCall}，我回来啦！笔记本里夹好「这一趟」了～`); }
   lastActivity = act;
 }
 // 零花钱：余额 + 今天花了多少；每次花钱从钱包飘出一个「−N」（F-36）
@@ -1002,7 +1004,7 @@ $('diaryWrite2').addEventListener('click', async () => {
 // 手机：相册 / 日程 / 日记
 let APP = 'album';
 // 右上角各入口的页面（F-45 / F-46 / F-47）：不再有手机那排二级入口，点哪个就是哪一页
-const BOOK_TITLE = { letters: '信箱', album: '相册', journal: '她的笔记本', bag: '背包' };
+const BOOK_TITLE = { letters: '信箱', album: '明信片', journal: '她的笔记本', bag: '背包' };
 let MAIL = { list: [], i: 0, unread: new Set() }, PHOTOS = { list: [], i: -1 }, PHOTO_JUMP = null; // PHOTO_JUMP：从见闻缩略图点进来，直接翻到那张
 const navBtns = (i, n, prev, next) => `<div class="lnav"><button class="gb plain sm" data-nav="prev" ${i <= 0 ? 'disabled' : ''}><i class="tri l"></i>${prev}</button><span>${n ? `第 ${i + 1} / ${n}` : ''}</span><button class="gb plain sm" data-nav="next" ${i >= n - 1 ? 'disabled' : ''}>${next}<i class="tri"></i></button></div>`;
 const draftLabel = (d) => d.kind === 'comment' ? `评论 · 在《${esc(d.target?.title || '')}》下面` : d.kind === 'dm' ? `私信 · 回 ${esc(d.target?.who || '网友')}` : '动态';
@@ -1039,44 +1041,57 @@ function renderLetter() {
   if (!l) { $('phoneBody').innerHTML = dmsHtml() + inboxHtml() + draftsHtml(); return; }
   $('phoneBody').innerHTML = dmsHtml() + inboxHtml() + draftsHtml() + `<div class="lview"><div class="lpaper"><div class="lhead">${MAIL.unread.has(l.id) ? '<span class="newtag">新</span>' : ''}${esc(l.kindText || '信')} · ${esc(l.day)} ${esc(hhmm(l.at))}</div><p>${esc(l.text)}</p></div>${navBtns(i, list.length, '新一封', '旧一封')}</div>`;
 }
+// 明信片（F-84）：她出门途中从外面寄回家的。正面是她拍的照片，没拍成就是一张邮票风格的文字卡；背面是她写给你的话、链接、她那张便利贴
+const FRAME = { screen: '隔着屏幕', object: '变成东西', stepin: '走进去' };
+const pcFront = (ph, big) => (ph.url ? `<img src="${esc(ph.url)}" alt="${esc(ph.caption || '她拍的照片')}"${big ? '' : ' loading="lazy"'}>` : `<div class="pcstamp"><span class="pcpost">${esc(ph.at.slice(5, 10).replace('-', '.'))}<br>鱼社</span><p>${esc(ph.caption || ph.text || '从外面寄来的')}</p><small>${esc(ph.ref?.title ? `在《${ph.ref.title}》那里` : '')}</small></div>`);
+let PC_BACK = false;
 function renderPhotoView() {
   const { list, i } = PHOTOS, ph = list[i];
-  // F-74：照片挂着拍的是哪条见闻（点开就是那条），角标是取景法
-  const FRAME = { screen: '隔着屏幕', object: '变成东西', stepin: '走进去' };
-  const src = ph.ref?.title ? `<div class="psrc">拍于《${esc(ph.ref.title)}》${/^https?:\/\//.test(ph.ref.url || '') ? ` · <a href="${esc(ph.ref.url)}" target="_blank" rel="noreferrer">${/bilibili\.com/.test(ph.ref.url) ? '在 B站看' : '去看看'}</a>` : ''}${FRAME[ph.frame] ? ` <span class="pframe">${FRAME[ph.frame]}</span>` : ''}</div>` : '';
-  $('phoneBody').innerHTML = `<div class="pview"><div class="pbig"><img src="${esc(ph.url)}" alt=""></div><div class="pcap">${esc(ph.caption || '')}<br><small style="color:var(--mute)">${esc(ph.at.slice(0, 10))} ${esc(hhmm(ph.at))}</small>${src}</div>${navBtns(i, list.length, '上一张', '下一张')}<div style="text-align:center;margin-top:8px"><button class="gb plain sm" data-grid>回到相册</button></div></div>`;
+  const link = ph.ref?.title ? `<div class="psrc">${ph.url ? '拍于《' : '寄自《'}${esc(ph.ref.title)}》${/^https?:\/\//.test(ph.ref.url || '') ? ` · <a href="${esc(ph.ref.url)}" target="_blank" rel="noreferrer">${/bilibili\.com/.test(ph.ref.url) ? '在 B站看' : '去看看'}</a>` : ''}${FRAME[ph.frame] ? ` <span class="pframe">${FRAME[ph.frame]}</span>` : ''}</div>` : '';
+  const b = ph.back;
+  const back = `<div class="pcback"><div class="pcmsg">${esc(ph.text || ph.caption || '')}</div>${link}${b && (b.line || b.gist) ? `<div class="pcnote"><b>${esc(b.tag || '心得')}</b>${b.gist ? `<p>${esc(b.gist)}</p>` : ''}${b.line ? `<p class="nb-line">${esc(b.line)}</p>` : ''}</div>` : ''}${!ph.url && ph.moment ? `<div class="jwish">${ICON('camera')} 她想拍下：${esc(ph.moment)}</div>` : ''}<small style="color:var(--mute)">${esc(ph.at.slice(0, 10))} ${esc(hhmm(ph.at))} 寄到</small></div>`;
+  if (!ph.pc) { // 0.34.0 以前的照片（没有背面）：照旧一张照片 + 说明 + 拍于哪条，不翻面
+    $('phoneBody').innerHTML = `<div class="pview"><div class="pbig">${pcFront(ph, true)}</div><div class="pcap">${esc(ph.caption || '')}<br><small style="color:var(--mute)">${esc(ph.at.slice(0, 10))} ${esc(hhmm(ph.at))}</small>${link}</div>${navBtns(i, list.length, '上一张', '下一张')}<div style="text-align:center;margin-top:8px"><button class="gb plain sm" data-grid>回到明信片册</button></div></div>`;
+    return;
+  }
+  $('phoneBody').innerHTML = `<div class="pview"><div class="pbig pcflip" data-pcflip>${PC_BACK ? back : pcFront(ph, true)}</div><div class="pcap">${PC_BACK ? '' : esc(ph.caption || '')}<div class="pctip">${PC_BACK ? '点一下翻回正面' : '点一下翻过来看背面'}</div></div>${navBtns(i, list.length, '上一张', '下一张')}<div style="text-align:center;margin-top:8px"><button class="gb plain sm" data-grid>回到明信片册</button></div></div>`;
 }
 // 笔记本（F-82）：只看不改；筛选和翻页只是换个看法
 let NOTEBOOK = { entries: [], foot: [], ibFoot: {}, filter: '全部', page: 0, flipped: new Set() };
-const NB_FILTERS = ['全部', '学到的', '感悟', '好点子', '心得', '踩雷', '明信片', '足迹'];
-const NB_CLASS = { 学到的: 'n-learn', 感悟: 'n-feel', 好点子: 'n-idea', 心得: 'n-thought', 踩雷: 'n-meh', 明信片: 'n-card', 梦: 'n-dream' };
+const NB_FILTERS = ['全部', '学到的', '感悟', '好点子', '心得', '踩雷', '这一趟', '足迹'];
+const NB_CLASS = { 学到的: 'n-learn', 感悟: 'n-feel', 好点子: 'n-idea', 心得: 'n-thought', 踩雷: 'n-meh', 这一趟: 'n-card', 梦: 'n-dream', 见闻: 'n-old' };
 const NB_PER_PAGE = 6;
 const footHtml = (items, st) => items.length ? items.map((x) => { const s = st[x.id]; return `<div class="jentry"><b>${esc(({ comment: '评论', reply: '回复评论', dyncomment: '评论动态', post: '动态', like: '点赞', unlike: '取消点赞', comment_like: '给评论点赞', collect: '收藏', follow: '关注', unfollow: '取关' })[x.kind] || (x.kind === 'dm' ? `私信 · 回 ${x.target?.who || '网友'}` : '动态'))} · ${esc(x.at.slice(0, 10))} ${esc(hhmm(x.at))}${x.uncertain ? ' · 不确定有没有发出去' : ''}${s ? ` · ${[s.likes ? `${s.likes} 个赞` : '', s.replies ? `${s.replies} 条回复` : ''].filter(Boolean).join('、')}` : ''}</b><p>${esc(x.text)}</p>${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noreferrer">在 B站看</a>` : ''}${x.target?.title ? ` <small style="color:var(--mute)">《${esc(x.target.title)}》</small>` : ''}</div>`; }).join('') : `<div class="needcfg">${ICON('sprout')}<div>她还没在 B站留下什么。</div></div>`;
 const linkOf = (s) => `<a href="${esc(s.url)}" target="_blank" rel="noreferrer">${esc(s.title)}</a>${s.source ? ` <small>${esc(s.source)}</small>` : ''}`;
 const thumbOf = (s) => (s.photo && /^[a-z0-9-]{4,40}$/.test(s.photo) ? `<img class="jthumb" data-jph="${esc(s.photo)}" src="/api/dsh-yushe/photo/${esc(s.photo)}" alt="她拍的照片" title="她拍的照片">` : '');
 function stickyHtml(c, i) {
-  const kind = noteKind(c), cls = NB_CLASS[kind] || 'n-thought', key = `${c.trip || ''}|${c.at}`;
+  const kind = noteKind(c), cls = NB_CLASS[kind] || 'n-old';
   const tilt = ((i * 37 + c.at.length * 11) % 7) - 3; // 歪一点点，像手贴的
   const when = `${esc(c.at.slice(5, 10))} ${esc(hhmm(c.at))}`;
-  if (kind === '明信片') {
-    const back = NOTEBOOK.flipped.has(key);
-    const rows = (c.read || []).map((x) => `<li><span class="nb-lk nb-lk-${esc({ 喜欢: 'y', 一般: 'm', 不喜欢: 'n' }[x.like] || 'q')}">${esc(x.like || '没说')}</span>${linkOf(x)}<small>${esc(DEPTH_NAMES[x.depth] || '')}${x.acts?.length ? ` · ${esc(x.acts.join('、'))}` : ''}</small>${x.why ? `<em>${esc(x.why)}</em>` : ''}</li>`).join('');
-    const front = `${c.text ? `<p class="nb-line">${esc(c.text)}</p>` : '<p class="nb-line">这趟逛完回家啦。</p>'}${c.wantPhoto?.moment ? `<div class="jwish">${ICON('camera')} 她想拍下：${esc(c.wantPhoto.moment)}</div>` : ''}${c.read ? `<div class="nb-flip">翻过来看看这趟读了啥 ↺</div>` : ''}`;
-    const backHtml = `<div class="nb-scan">这趟扫过 ${c.scanned || 0} 个标题，点进去看了 ${(c.read || []).length} 个：</div>${rows ? `<ul class="nb-read">${rows}</ul>` : '<div class="nb-scan">一个都没点进去。</div>'}<div class="nb-flip">翻回正面 ↺</div>`;
-    return `<div class="nb-sticky ${cls}${back ? ' nb-back' : ''}" style="--tilt:${tilt}deg" ${c.read ? `data-flip="${esc(key)}"` : ''}><div class="nb-head"><b>${ICON('postcard')} 这一趟</b><span>${when}</span></div>${back ? backHtml : front}</div>`;
+  const links = (arr) => arr.map((x) => `<div class="nb-more">· ${linkOf(x)}${thumbOf(x)}</div>`).join('');
+  if (kind === '这一趟') {
+    // F-84：回家时规则夹进来的一页：这趟扫过几个、点进去哪些、喜不喜欢（明信片已经在路上寄回了，在「明信片」册里）
+    const rows = (c.read || []).map((x) => `<li><span class="nb-lk nb-lk-${esc({ 喜欢: 'y', 一般: 'm', 不喜欢: 'n' }[x.like] || 'q')}">${esc(x.inferred ? '看样子喜欢' : (x.like || '没说'))}</span>${linkOf(x)}<small>${esc(DEPTH_NAMES[x.depth] || '')}${x.acts?.length ? ` · ${esc(x.acts.join('、'))}` : ''}</small>${x.why ? `<em>${esc(x.why)}</em>` : ''}</li>`).join('');
+    const body = c.read
+      ? `<div class="nb-scan">扫过 ${c.scanned || 0} 个标题，点进去看了 ${(c.read || []).length} 个${rows ? '：' : '。'}</div>${rows ? `<ul class="nb-read">${rows}</ul>` : ''}`
+      : `${c.text ? `<p class="nb-line">${esc(c.text)}</p>` : ''}${links(c.seen || [])}${c.wantPhoto?.moment ? `<div class="jwish">${ICON('camera')} 她想拍下：${esc(c.wantPhoto.moment)}</div>` : ''}`; // 以前的格式：回家写的那几句 + 链接
+    return `<div class="nb-sticky ${cls}" style="--tilt:${tilt}deg"><div class="nb-head"><b>${ICON('door')} 这一趟</b><span>${when}</span></div>${body}</div>`;
+  }
+  if (kind === '见闻' || kind === '梦') {
+    // 以前的见闻 / 梦：只是看过的链接，不冒充心得；占位话不显示
+    return `<div class="nb-sticky ${cls}" style="--tilt:${tilt}deg"><div class="nb-head"><b>${kind === '梦' ? `${ICON('moon')} 梦` : '看过的'}</b><span>${when}</span></div>${!isFiller(c.text) ? `<p class="nb-line">${esc(c.text)}</p>` : ''}${links(c.seen || [])}</div>`;
   }
   const s = (c.seen || [])[0];
   const depth = c.note?.depth && c.note.depth !== 'title' ? DEPTH_NAMES[c.note.depth] : ''; // 只扫过标题的已经写在正文里了
   const gist = c.note?.gist ? `<p class="nb-gist">${esc(c.note.gist)}</p>` : c.note?.depth === 'title' ? '<p class="nb-gist none">只扫了一眼标题</p>' : '';
-  const extra = (c.seen || []).slice(1).map((x) => `<div class="nb-more">· ${linkOf(x)}</div>`).join('');
-  return `<div class="nb-sticky ${cls}" style="--tilt:${tilt}deg"><div class="nb-head"><b>${esc(kind)}</b><span>${when}</span></div>${s ? `<div class="nb-title">${linkOf(s)}${thumbOf(s)}</div>` : ''}${gist}${c.text ? `<p class="nb-line">${esc(c.text)}</p>` : ''}${extra}${depth ? `<span class="nb-depth">${esc(depth)}</span>` : ''}</div>`;
+  return `<div class="nb-sticky ${cls}" style="--tilt:${tilt}deg"><div class="nb-head"><b>${esc(kind)}</b><span>${when}</span></div>${s ? `<div class="nb-title">${linkOf(s)}${thumbOf(s)}</div>` : ''}${gist}${c.text ? `<p class="nb-line">${esc(c.text)}</p>` : ''}${depth ? `<span class="nb-depth">${esc(depth)}</span>` : ''}</div>`;
 }
 function renderNotebook() {
   const nb = NOTEBOOK, body = $('phoneBody');
   const chips = `<div class="nbchips">${NB_FILTERS.map((f) => `<button class="nbchip ${NB_CLASS[f] || ''} ${nb.filter === f ? 'on' : ''}" data-nf="${f}">${f}</button>`).join('')}</div>`;
   if (nb.filter === '足迹') { body.innerHTML = chips + `<div class="drafts">${footHtml(nb.foot, nb.ibFoot)}</div>`; return; }
   const list = nb.entries.filter((c) => nb.filter === '全部' || noteKind(c) === nb.filter);
-  if (!list.length) { body.innerHTML = chips + `<div class="needcfg">${ICON('book')}<div>${nb.filter === '全部' ? '笔记本还是空的。<br>她出门逛的时候，看到有意思的会贴一张便利贴。' : `还没有「${esc(nb.filter)}」的便利贴。`}</div></div>`; return; }
+  if (!list.length) { body.innerHTML = chips + `<div class="needcfg">${ICON('book')}<div>${nb.filter === '全部' ? '笔记本还是空的。<br>她出门逛的时候，看到有意思的会贴一张便利贴。' : nb.filter === '这一趟' ? '还没有。<br>她每趟逛完回家，会在这里夹一页：这趟看了哪些、喜不喜欢。' : `还没有「${esc(nb.filter)}」的便利贴。${nb.filter === '心得' ? '<br>以前看过的在「全部」里，标着「看过的」。' : ''}`}</div></div>`; return; }
   const pages = Math.ceil(list.length / NB_PER_PAGE);
   nb.page = Math.max(0, Math.min(pages - 1, nb.page));
   const cards = list.slice(nb.page * NB_PER_PAGE, (nb.page + 1) * NB_PER_PAGE);
@@ -1108,26 +1123,23 @@ async function renderPhone() {
       const b = e.target.closest('[data-nav]'); if (!b || b.disabled) return; MAIL.i += b.dataset.nav === 'next' ? 1 : -1; renderLetter();
     };
   } else if (APP === 'album') {
-    // 相册：只放照片（她出门时拍的，用生图 API 画）；没配 API 先提示去配
+    // 明信片册（F-84）：她出门途中寄回的明信片，正面照片或文字卡；点开翻面看背面
     const r = await api('/album');
-    PHOTOS = { list: r.photos || [], i: -1 };
+    PHOTOS = { list: r.photos || [], i: -1 }; PC_BACK = false;
     const grid = () => {
-      if (!PHOTOS.list.length) {
-        body.innerHTML = r.configured
-          ? `<div class="needcfg">${ICON('album')}<div>相册还是空的。<br>她下次出门会拍一张照片带回来。</div></div>`
-          : `<div class="needcfg">${ICON('album')}<div>相册里是她出门时拍的照片。<br>先在设置里配好<b>生图 API</b>，她下次出门就会拍照带回来。</div><button class="gb sm" data-gocfg>去设置</button></div>`;
-        return;
-      }
-      body.innerHTML = `${r.configured ? '' : '<div class="cfgnote" style="margin-bottom:10px">生图 API 没配好，新的照片拍不了。<button class="gb plain sm" data-gocfg>去设置</button></div>'}<div class="pgrid">${PHOTOS.list.map((ph, k) => `<div class="ptile" data-ph="${k}"><img src="${esc(ph.url)}" alt="" loading="lazy"><span>${esc(ph.at.slice(5, 10))} ${esc(ph.caption || '')}</span></div>`).join('')}</div>`;
+      if (!PHOTOS.list.length) { body.innerHTML = `<div class="needcfg">${ICON('postcard')}<div>还没有明信片。<br>她出门时会从外面寄回来。${r.configured ? '' : '<br>想让她寄照片？可以在设置里接一个画图服务（不接也行，会寄文字明信片）。'}</div>${r.configured ? '' : '<button class="gb plain sm" data-gocfg>去设置</button>'}</div>`; return; }
+      body.innerHTML = `<div class="pgrid">${PHOTOS.list.map((ph, k) => `<div class="ptile${ph.url ? '' : ' pctext'}" data-ph="${k}">${pcFront(ph)}<span>${esc(ph.at.slice(5, 10))} ${esc(ph.url ? (ph.caption || '') : (String(ph.text || ph.caption || '寄来的明信片').slice(0, 8) + (String(ph.text || '').length > 8 ? '…' : '')))}</span></div>`).join('')}</div>`;
     };
     const jump = PHOTO_JUMP; PHOTO_JUMP = null;
     const at = jump ? PHOTOS.list.findIndex((p) => p.photo === jump) : -1;
     if (at >= 0) { PHOTOS.i = at; renderPhotoView(); } else grid();
     body.onclick = (e) => {
+      if (e.target.closest('a')) return;
       if (e.target.closest('[data-gocfg]')) { $('phoneM').classList.remove('on'); openCfg(); loadImgApi(); return; }
-      const tile = e.target.closest('[data-ph]'); if (tile) { PHOTOS.i = Number(tile.dataset.ph); renderPhotoView(); return; }
+      const tile = e.target.closest('[data-ph]'); if (tile) { PHOTOS.i = Number(tile.dataset.ph); PC_BACK = false; renderPhotoView(); return; }
+      if (e.target.closest('[data-pcflip]')) { PC_BACK = !PC_BACK; renderPhotoView(); return; }
       if (e.target.closest('[data-grid]')) { PHOTOS.i = -1; grid(); return; }
-      const b = e.target.closest('[data-nav]'); if (b && !b.disabled) { PHOTOS.i += b.dataset.nav === 'next' ? 1 : -1; renderPhotoView(); }
+      const b = e.target.closest('[data-nav]'); if (b && !b.disabled) { PHOTOS.i += b.dataset.nav === 'next' ? 1 : -1; PC_BACK = false; renderPhotoView(); }
     };
   } else if (APP === 'journal') {
     // 笔记本（F-82，docs/设计/13）：一张张便利贴，最新的在第一页左上角；明信片翻过来是这趟的读过清单；足迹在筛选里
@@ -1154,7 +1166,7 @@ async function renderPhone() {
     };
   }
 }
-// 右上角入口：信箱 / 相册 / 见闻 / 背包各自直达
+// 右上角入口：信箱 / 明信片 / 笔记本 / 背包各自直达
 const openApp = (app) => { APP = app; $('phoneM').classList.add('on'); renderPhone(); };
 $('mailBtn').addEventListener('click', () => openApp('letters'));
 $('albumBtn').addEventListener('click', () => openApp('album'));
@@ -1244,7 +1256,7 @@ $('imgTest').addEventListener('click', async () => {
   const b = $('imgTest'); b.disabled = true; b.textContent = '在拍…';
   try {
     const r = await api('/photo-test', {});
-    if (!r.ok) toast(r.error || '没拍成'); else { toast('拍好了，在右上角「相册」里'); }
+    if (!r.ok) toast(r.error || '没拍成'); else { toast('试拍好了（只是试拍，不算她寄的明信片），在右上角「明信片」里'); }
   } catch (e) { toast(`没拍成：${e.message}`); }
   b.disabled = false; b.textContent = '试拍一张';
 });
