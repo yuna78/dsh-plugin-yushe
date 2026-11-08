@@ -592,6 +592,16 @@ ok(['yushe_status', 'yushe_config_get', 'yushe_config_propose', 'yushe_config_ap
 ok(fakeHabits.knobList().map((k) => k.level).join('/') === '看性格/中/适中/适中', '默认四个档位：爱不爱出门「看性格」、读多深「中」、记性「适中」、互动多少「适中」（默认值正好是中间档）');
 const cfgGet = await byName.yushe_config_get.execute({});
 ok(cfgGet.ok && cfgGet.knobs.length === 4 && cfgGet.fine.some((g) => g.group === 'cap' && g.items.some((i) => i.key === 'likesPerDay' && i.range === '0–50')), '读配置：档位 + 细项带范围（点赞每天 0–50，50 是硬顶）');
+// 设置页那几项里，autoOut / quietFrom / quietTo / speakEvery 本来就标了 chat（聊得动），
+// 工具视图必须列出来；speakMode / parentMid 是放权项，怎么都不能出现。
+const fineKeys = (v) => new Set(v.flatMap((g) => g.items.map((i) => i.key)));
+const cfgKeys = fineKeys(cfgGet.fine);
+ok(['autoOut', 'quietFrom', 'quietTo', 'speakEvery'].every((k) => cfgKeys.has(k)) && cfgGet.fine.some((g) => g.group === 'home' && g.items.some((i) => i.key === 'quietFrom' && i.range === 'HH:MM')), '读配置：设置页上聊得动的几项也列出来（自己出门 / 安静时段 / 发言间隔），安静时段标成 HH:MM');
+ok(!cfgKeys.has('speakMode') && !cfgKeys.has('parentMid'), '读配置：「在 B站说话」和爸妈 UID 不列（她不能给自己放权）');
+const uiFineKeys = fineKeys(HB.fineView(HB.defaultHabits()));
+ok(!uiFineKeys.has('quietFrom') && !uiFineKeys.has('autoOut'), '设置页那份细配置不重复列设置页项（两组只在工具视图里多出来）');
+const cfgQ = await byName.yushe_config_propose.execute({ changes: { quietFrom: '23:30', quietTo: '08:30' }, reason: '晚上再晚一点收工' });
+ok(cfgQ.ok && cfgQ.diff.some((d) => d.key === 'quietFrom' && d.to === '23:30') && fakeHabits.get().quietFrom === '22:00', '安静时段能靠聊的起草（写完还没确认，值不变）');
 const cfgPr = await byName.yushe_config_propose.execute({ changes: { depth: '深', likesPerDay: 999, tripsPerDay: 1, speakMode: 'auto', parentMid: '1', favZones: '美食，动物圈', nope: 1 }, reason: '想让她看深一点' });
 const cfgPrKeys = Object.fromEntries(cfgPr.diff.map((d) => [d.key, d]));
 ok(cfgPr.ok && cfgPrKeys.readBudget?.to === 600 && cfgPrKeys.danmaku?.to === true && cfgPrKeys.likesPerDay?.to === 50 && cfgPrKeys.likesPerDay.clamped && JSON.stringify(cfgPrKeys.favZones?.to) === '["美食","动物圈"]', '起草：档位展开成细项；超过硬顶的夹回 50 并标出来；列表能用中文逗号');
