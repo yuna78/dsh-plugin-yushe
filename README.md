@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/icon.png" alt="鱼社" width="128">
+
 # 鱼社 · YuShe
 
 **点几下，就能养一条自己的大肥鱼。**

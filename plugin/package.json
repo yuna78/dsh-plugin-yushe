@@ -1,12 +1,13 @@
 {
   "name": "dsh-plugin-yushe",
-  "version": "0.28.0",
+  "version": "0.28.1",
   "repository": { "type": "git", "url": "git+https://github.com/yuna78/dsh-plugin-yushe.git" },
   "homepage": "https://github.com/yuna78/dsh-plugin-yushe#readme",
   "bugs": "https://github.com/yuna78/dsh-plugin-yushe/issues",
   "author": "Yuna",
   "keywords": ["dsh", "dsh-plugin", "deepseek-harness", "ai-pet", "bilibili", "game"],
-  "description": "鱼社 · AI 原生的养鱼游戏：孵出一条有性格、有身世的 AI 鱼，她替你干活，自己出门刷 B站、留下评论和动态，回家跟爸妈讲见闻",
+  "description": "鱼社：点几下就能养一条自己的 AI 鱼。可视化引导一键上手，她陪你聊天、替你干活、自己去 B站学习长大，每天写日记汇报，还会写信、拍照片回来给你看",
+  "icon": "icon.png",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -18,6 +19,7 @@
     "NOTICE",
     "README.md",
     "cordis.patch.yml",
+    "icon.png",
     "game/",
     "lib/client.js",
     "lib/index.js"

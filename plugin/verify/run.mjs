@@ -1475,6 +1475,15 @@ section('出门循环：她自己决定调哪些工具，额度、游记链接�
   ok(read('src/host/index.js').includes("trips.useLoop({ tools: (ledger) => yusheToolDefs({ ...toolDeps, ledger }, { from: 'trip' })"), '出门用的是同一张工具表的「出门」出口');
 }
 
+/* ---------- 发版：版本号两处一致（docs/发版.md） ---------- */
+section('发版');
+{
+  const pkgV = JSON.parse(read('package.json')).version;
+  const hostV = (read('src/host/index.js').match(/export const VERSION = '([^']+)'/) || [])[1];
+  ok(pkgV && pkgV === hostV, `版本号两处一致：package.json ${pkgV} / host VERSION ${hostV}`);
+  ok(JSON.parse(read('package.json')).name === 'dsh-plugin-yushe' && /name:\s*dsh-plugin-yushe/.test(read('cordis.patch.yml')), '包名和 cordis.patch.yml 里的插件名都是 dsh-plugin-yushe');
+}
+
 /* ---------- 4. 脱敏 ---------- */
 section('脱敏（plugin/ tools/）');
 const walk = (d) => readdirSync(d).flatMap((n) => { const p = join(d, n); return statSync(p).isDirectory() ? (n === 'node_modules' ? [] : walk(p)) : [p]; });
