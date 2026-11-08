@@ -18,8 +18,8 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { readJsonBody } from './game-routes.js';
 import { nowDate, nowMs } from './clock.js';
-import { asleepAt } from './life-engine.js';
 import { checkDraft, capCheck, trustOf, KINDS } from '../shared/gate.js';
+import { createGates } from './gates.js';
 
 export const DRAFTS_PATH = '/api/dsh-yushe/drafts';
 export const FOOTPRINTS_PATH = '/api/dsh-yushe/footprints';
@@ -30,9 +30,10 @@ const QUEUE_TTL = 24 * 3600_000; // 排队超过一天的草稿就不发了（�
  * 任务 50：说话工具表（tools/speak/*.js）声明的类型（kinds）、发法（senders）、每天上限字段（capKeys）并进来，
  * 加新的说话类型不用改这里；对同一个人每天上限（G4）用互动账本（usePerson(acts)）。
  */
-export function createGate({ storage, life, habits, biliRead, biliWrite, log, kinds: extraKinds = {}, senders = {}, capKeys = {} }) {
+export function createGate({ storage, life, habits, biliRead, biliWrite, log, gates = null, kinds: extraKinds = {}, senders = {}, capKeys = {} }) {
   const K = { ...KINDS, ...extraKinds };
   let person = null;
+  const G = gates || createGates({ habits }); // 没传就自己建一个（verify 用）
   const fileOf = (n) => join(storage, n);
   const load = (n, d) => { try { return JSON.parse(readFileSync(fileOf(n), 'utf8')); } catch { return d; } };
   const save = (n, v) => { mkdirSync(storage, { recursive: true }); const tmp = `${fileOf(n)}.tmp`; writeFileSync(tmp, JSON.stringify(v, null, 2)); renameSync(tmp, fileOf(n)); };
@@ -110,7 +111,8 @@ export function createGate({ storage, life, habits, biliRead, biliWrite, log, ki
         const list = all();
         for (const d of list) if (d.status === 'queued' && nowMs() - Date.parse(d.createdAt) > QUEUE_TTL) { d.status = 'expired'; }
         save('drafts.json', list);
-        if (asleepAt()) return { sent: false, why: '她在睡觉' };
+        const speak = G.open('speak');
+        if (!speak.ok) return { sent: false, why: speak.why }; // 出口闸（F-79）
         const wait = lastSpokeAt() + everyMs() - nowMs();
         if (wait > 0) return { sent: false, why: `还要等 ${Math.ceil(wait / 60_000)} 分钟` };
         for (const d of list.filter((x) => x.status === 'queued' && x.kind !== 'dm')) {

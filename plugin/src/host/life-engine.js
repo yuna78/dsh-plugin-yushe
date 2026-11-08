@@ -16,11 +16,12 @@ import { workDrain, lateNight, workToneNote } from '../shared/mood.js';
 import { planNow } from '../shared/plan.js';
 import { freshGrowth, dailyTick, gainXp, XP_RULES, feedInterests } from '../shared/growth.js';
 import { cardsDue, addToBag, souvenirById } from '../shared/trip.js';
+import { DREAM_COST } from '../shared/dream.js';
 
 export const SLEEP_FROM = 0;      // 00:00 睡
 export const WAKE_AT = 7.5;       // 07:30 醒
 const MAX_EVENTS = 200, MAX_CHAT = 40, MAX_DIARY = 60;
-export const LIFE_VERSION = 6;
+export const LIFE_VERSION = 7;
 
 /**
  * 存档迁移：老版本的状态文件升到当前版本，不丢日记 / 相册 / 聊天 / 干活记录。
@@ -47,6 +48,10 @@ export function migrateLife(s, fish) {
     const old = Array.isArray(m.album) ? m.album : [];
     m = { ...m, version: 6, journal: [...(m.journal || []), ...old.filter((x) => !x.photo)], album: old.filter((x) => x.photo) };
   }
+  // v6 → v7（F-79 梦游）：她睡觉时也能读一轮，记在这一格；null = 今晚还没梦过 / 梦完了
+  if (m.version < 7) m = { ...m, version: 7, dream: null, dreamTries: { day: '', n: 0 }, lastDreamDay: '' };
+  // 手改过 / 旧版降级过的存档：数组字段兜一下，别让一次迭代直接抛
+  for (const k of ['events', 'journal', 'chat', 'diary', 'album', 'letters']) if (!Array.isArray(m[k])) m[k] = [];
   return m;
 }
 const clamp = (v) => Math.max(0, Math.min(100, Math.round(v)));
@@ -135,7 +140,7 @@ export function tickTrip(fish, s, now) {
 export function createLife(dir) {
   const base = join(dir, 'life');
   const file = (id) => join(base, `${id.replace(/[^\w-]/g, '')}.json`);
-  const fresh = (fish) => ({ journal: [], bag: { items: {}, gear: null }, trip: null, lastBackAt: 0, growth: fish.pts ? freshGrowth(fish, dayOf()) : null, version: LIFE_VERSION, fishId: fish.id, mood: 72, energy: 82, bornAt: Date.parse(fish.createdAt) || nowMs(), lastTickAt: nowMs(), lastVisitAt: nowMs(), events: [], chat: [], diary: [], album: [], work: {}, letters: [], napUntil: 0, workAcc: 0, moodGain: {} });
+  const fresh = (fish) => ({ journal: [], bag: { items: {}, gear: null }, trip: null, lastBackAt: 0, growth: fish.pts ? freshGrowth(fish, dayOf()) : null, version: LIFE_VERSION, dream: null, dreamTries: { day: '', n: 0 }, lastDreamDay: '', fishId: fish.id, mood: 72, energy: 82, bornAt: Date.parse(fish.createdAt) || nowMs(), lastTickAt: nowMs(), lastVisitAt: nowMs(), events: [], chat: [], diary: [], album: [], work: {}, letters: [], napUntil: 0, workAcc: 0, moodGain: {} });
   const load = (fish) => {
     try { const j = JSON.parse(readFileSync(file(fish.id), 'utf8')); if (j?.fishId === fish.id) return migrateLife(j, fish); } catch { /* 新鱼 */ }
     return fresh(fish);
@@ -184,6 +189,40 @@ export function createLife(dir) {
       if (s.growth && XP_RULES[kind]) s.growth = gainXp(s.growth, kind, { ageDays: Math.floor((now - (s.bornAt || now)) / 86400e3), at: new Date(now).toISOString() });
       save(s);
       return s;
+    },
+    /** 梦游一轮（F-79）：见闻里一条「梦」、今天一条 dream 事件、精力付代价；记忆从这条抄（imp 1，忘得快）。 */
+    dream(fish, { text = '', seen = [] } = {}, now = nowMs()) {
+      const s = settle(load(fish), now);
+      const day = dayOf(new Date(now));
+      const t = String(text || '').slice(0, 200);
+      s.journal = [...(s.journal || []), { at: new Date(now).toISOString(), text: t, seen: (seen || []).slice(0, 5), dream: true }].slice(-200);
+      s.events = [...s.events, { at: new Date(now).toISOString(), day, kind: 'dream', text: t ? `做梦去了：${t.slice(0, 60)}` : '做梦去了，梦见一些东西' }].slice(-MAX_EVENTS);
+      s.energy = clampF(s.energy + DREAM_COST.energy);
+      s.dream = { at: new Date(now).toISOString(), day, text: t.slice(0, 120), until: now + 3 * 60_000 };
+      s.lastDreamDay = day; // 一晚一次的凭据：events 会被 MAX_EVENTS 裁掉，这一格不会
+      save(s);
+      return s.dream;
+    },
+    /** 梦游开始（F-79）：整轮读的这几分钟就显示「在梦游」，别等跑完才显示。 */
+    dreamStart(fish, minutes = 20, now = nowMs()) {
+      const s = settle(load(fish), now);
+      s.dream = { at: new Date(now).toISOString(), day: dayOf(new Date(now)), text: '', until: now + minutes * 60_000 };
+      save(s);
+      return s.dream;
+    },
+    /** 梦游结束但没梦成：把「在梦游」收掉（失败不留状态）。 */
+    dreamEnd(fish, now = nowMs()) {
+      const s = settle(load(fish), now);
+      if (s.dream && !s.dream.text) { s.dream = null; save(s); }
+      return s.dream;
+    },
+    /** 记一次尝试（失败也算，免得整夜每 10 分钟重试）。 */
+    dreamTry(fish, now = nowMs()) {
+      const s = settle(load(fish), now);
+      const day = dayOf(new Date(now));
+      s.dreamTries = s.dreamTries?.day === day ? { day, n: (s.dreamTries.n || 0) + 1 } : { day, n: 1 };
+      save(s);
+      return s.dreamTries;
     },
     /** 聊天记录（给模型当上下文，也给 UI 显示）。 */
     pushChat(fish, role, text, now = nowMs()) {
@@ -278,7 +317,8 @@ export function createLife(dir) {
   api.isOut = (fish) => { const tr = load(fish).trip; if (tr && (tr.state === 'roaming' || nowMs() < (tr.returnAt || 0))) return true; const id = outing.get(fish.id); if (!id) return false; const st = roamStatus(id); if (st?.state === 'running') return true; outing.delete(fish.id); return false; };
   /** 她现在在做什么（三态 + 正在干的事）。busy 来自钱包（哪个 AI 调用正在跑）。 */
   api.activity = (fish, s, busy = null, now = nowDate()) => {
-    const a = activityOf({ out: api.isOut(fish), sleeping: snapshot(s, now).where === 'sleep', busy, workedAgoMs: now.getTime() - (lastWorkAt.get(fish.id) || 0) });
+    const snap = snapshot(s, now);
+    const a = activityOf({ out: api.isOut(fish), sleeping: snap.where === 'sleep', dreaming: snap.dreaming, busy, workedAgoMs: now.getTime() - (lastWorkAt.get(fish.id) || 0) });
     return { activity: a, activityText: ACTIVITY_TEXT[a] };
   };
   return api;
@@ -287,6 +327,7 @@ export function createLife(dir) {
 /** 她此刻的样子（UI / 小条 / 近况共用）。 */
 export function snapshot(s, now = nowDate()) {
   const napping = Boolean(s.napUntil && now.getTime() < s.napUntil);
+  const dreaming = Boolean(s.dream && s.dream.until && now.getTime() < s.dream.until); // F-79：梦游那二十几分钟
   const sleeping = asleepAt(now) || s.energy < 8 || napping;
   const [word, moodIcon] = moodWord(s.mood);
   const today = dayOf(now);
@@ -294,8 +335,8 @@ export function snapshot(s, now = nowDate()) {
   return {
     mood: Math.round(s.mood), energy: Math.round(s.energy), moodWord: word, moodIcon,
     where: sleeping ? 'sleep' : 'home',
-    whereText: sleeping ? (asleepAt(now) ? '在睡觉' : napping ? '在午睡' : '累得睡着了') : '在家',
-    napping, unreadLetters: (s.letters || []).filter((l) => !l.read).length,
+    whereText: dreaming ? '在梦游' : sleeping ? (asleepAt(now) ? '在睡觉' : napping ? '在午睡' : '累得睡着了') : '在家',
+    napping, dreaming, unreadLetters: (s.letters || []).filter((l) => !l.read).length,
     today: { chats: todayEvents.filter((e) => e.kind === 'chat').length, feeds: todayEvents.filter((e) => e.kind === 'feed').length, greets: todayEvents.filter((e) => e.kind === 'greet').length },
     lastDiary: (s.diary || []).at(-1) || null,
   };

@@ -4,17 +4,20 @@
  *   planner.tick(fish)     宿主 10 分钟定时器：早上补打算；23:30 以后写今天的日记
  */
 import { nowDate, nowMs } from './clock.js';
-import { dayOf, asleepAt, lifeSection, snapshot } from './life-engine.js';
+import { dayOf, lifeSection, snapshot } from './life-engine.js';
 import { planPrompt, validatePlan, templatePlan, diaryDue } from '../shared/plan.js';
 import { outgoingness } from '../shared/trip.js';
 import { writeDiary } from './life-routes.js';
+import { createGates } from './gates.js';
 
-export function createPlanner({ life, wallet, pond, log, memory = null }) {
+export function createPlanner({ life, wallet, pond, log, memory = null, gates = null }) {
   const busy = new Set();
+  const G = gates || createGates({}); // 没传就自己建一个
   const parseArr = (text) => { const m = String(text || '').match(/\[[\s\S]*\]/); if (!m) return null; try { return JSON.parse(m[0]); } catch { return null; } };
   const planner = {
     ensure(fish) {
-      if (!fish || asleepAt() || busy.has(fish.id)) return false;
+      if (!fish || busy.has(fish.id)) return false;
+      if (G.closed('plan')) return false; // 出口闸（F-79）：打算只在她醒着时写
       const s = life.state(fish), day = dayOf();
       if (s.plans?.[day]) return false;
       busy.add(fish.id);

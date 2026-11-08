@@ -21,7 +21,7 @@ export default defineTool({
     const f = deps.pond.current();
     const s = deps.life?.state?.(f) || {};
     const today = (s.events || []).filter((e) => e.day === dayOf() && OK_EVENTS.has(e.kind)).slice(-6).map((e) => `今天：${e.text}`);
-    const seen = (s.journal || []).slice(-4).flatMap((j) => (j.seen || []).slice(0, 1).map((x) => `最近看到：《${String(x.title || '').slice(0, 40)}》`));
+    const seen = (s.journal || []).filter((j) => !j.dream).slice(-4).flatMap((j) => (j.seen || []).slice(0, 1).map((x) => `最近看到：《${String(x.title || '').slice(0, 40)}》`)); // F-79：梦里的东西不进对外素材
     return speak(deps, from, { kind: 'post', what: '发一条纯文字动态', max: 120, args: a, material: [...today, ...seen], target: null });
   },
 });

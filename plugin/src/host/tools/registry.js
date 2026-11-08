@@ -20,8 +20,8 @@ const OUTPUT = {
 };
 const safe = (v) => { try { return JSON.parse(JSON.stringify(v)); } catch { return { ok: false, error: '结果无法序列化' }; } };
 
-/** 某个出口能用的工具。 */
-export const toolsFor = (from, tools = TOOLS) => tools.filter((t) => t.expose?.[from]);
+/** 某个出口能用的工具。kinds 给了就只留这几种（梦游只给 read，F-79）。 */
+export const toolsFor = (from, tools = TOOLS, kinds = null) => tools.filter((t) => t.expose?.[from] && (!kinds || kinds.includes(t.kind)));
 
 /** 互动 / 说话工具声明的每天上限（并进细配置的「互动上限」组，见 shared/habits.js schemaWith）。 */
 export const capsOf = (tools = TOOLS) => tools.filter((t) => t.cap?.key).map((t) => t.cap);
@@ -53,8 +53,8 @@ export async function runTool(tool, args, deps, from = 'main') {
 }
 
 /** 给某个出口的「成品」定义（verify 和出门循环用）。 */
-export function yusheToolDefs(deps, { from = 'main', tools = TOOLS } = {}) {
-  return toolsFor(from, tools).map((t) => ({
+export function yusheToolDefs(deps, { from = 'main', tools = TOOLS, kinds = null } = {}) {
+  return toolsFor(from, tools, kinds).map((t) => ({
     name: t.name, kind: t.kind, description: t.description, parameters: from === 'trip' ? t.tripParameters : t.parameters,
     execute: (args) => runTool(t, args, deps, from),
   }));

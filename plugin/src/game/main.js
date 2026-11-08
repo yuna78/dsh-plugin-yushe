@@ -18,7 +18,7 @@ const ART = (id) => `./assets/girl-${id}.webp`;
 const ICON = (n, cls = '') => `<img class="ic${cls ? ` ${cls}` : ''}" src="./assets/icons/${n}.webp" alt="">`;
 const UP_SVG = '<svg class="trend-up" viewBox="0 0 12 12"><path d="M6 2l4 6H2z" fill="#2fbf71" stroke="#2a2440" stroke-width="1.2" stroke-linejoin="round"/></svg>';
 const DN_SVG = '<svg class="trend-dn" viewBox="0 0 12 12"><path d="M6 10L2 4h8z" fill="#e0475b" stroke="#2a2440" stroke-width="1.2" stroke-linejoin="round"/></svg>';
-const ACT_ICON = { sleep: 'moon', out: 'door', working: 'work', reading: 'news', writing: 'diary', thinking: 'think', home: 'house' };
+const ACT_ICON = { sleep: 'moon', dream: 'moon', out: 'door', working: 'work', reading: 'news', writing: 'diary', thinking: 'think', home: 'house' };
 // 动作库（F-67）：每位角色 stand + sleep + assets/pose/<鱼种>/ 里出好的姿势（清单由构建生成）；没出的回落站姿
 let POSE_MANIFEST = {};
 fetch('./assets/pose/manifest.json').then((r) => r.json()).then((m) => { POSE_MANIFEST = m || {}; }).catch(() => {});

@@ -20,15 +20,17 @@ import { leanOnce } from '../shared/growth.js';
 import { wantsToLeave, tripPlan, souvenirsFor, gearEffects, SOUVENIRS, souvenirById, equip, outgoingness } from '../shared/trip.js';
 import { pickShots, photoPrompt, translatePrompt, cleanScene, bannedTerms } from '../shared/photo.js';
 import { imageApiReady, generatePhoto } from './photos.js';
-import { inQuiet, newsSourcesFor } from '../shared/habits.js';
+import { newsSourcesFor } from '../shared/habits.js';
+import { createGates } from './gates.js';
 
 export const BAG_PATH = '/api/dsh-yushe/bag';
 // 出门次数默认不限（F-50）：出不出门由性格掷骰子；设置里还能手动限
 
 export const LOOP_MIN_TOKENS = 60_000; // 零花钱剩得比这少就走老路（老路一趟约 1.5 万）
 
-export function createTrips({ life, wallet, pond, storage, log, habits, biliRead, gate, memory = null }) {
+export function createTrips({ life, wallet, pond, storage, log, habits, biliRead, gate, memory = null, gates = null }) {
   let loop = null; // { tools(ledger) → 出门用的工具成品, model() → { llm, provider, model } }
+  const G = gates || createGates({ habits }); // 没传就自己建一个：行为跟旧的 asleepAt + 安静时段一致
   const noteLine = (f, gear) => `${f.parentCall}，我出去逛逛${gear ? `，带上了${souvenirById(gear)?.name}` : ''}，回来给你寄明信片～别担心！`;
 
   const trips = {
@@ -165,7 +167,8 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
       const f = pond.current() || pond.list().fish.at(-1);
       if (!f) return false;
       const hb = habits?.get();
-      if (hb && (!hb.autoOut || inQuiet(hb, nowDate()))) return false; // 上网习惯：不让她自己出门 / 安静时段
+      if (hb && !hb.autoOut) return false; // 上网习惯：不让她自己出门
+      if (G.closed('out')) return false; // 出口闸（F-79）：出门要醒着 + 不安静
       const s = life.state(f), snap = snapshot(s), day = dayOf();
       const tripsToday = (s.events || []).filter((e) => e.day === day && e.kind === 'out').length;
       const go = wantsToLeave({ fishId: f.id, now: nowMs(), asleep: asleepAt() || snap.where === 'sleep', out: life.isOut(f), broke: wallet.view().broke, energy: snap.energy, mood: snap.mood, outgoing: outgoingness(s.growth?.pts || f.pts, s.growth?.lean).score, tripsToday, maxPerDay: hb?.tripsPerDay ? hb.tripsPerDay : Infinity, lastBackAt: s.lastBackAt || 0, bias: hb?.outBias ?? 1, restBias: hb?.restBias ?? 1 });

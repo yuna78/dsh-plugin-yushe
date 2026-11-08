@@ -7,8 +7,9 @@
 import { hashOf } from './core.js';
 
 /** 活动优先级：出门 > 睡觉 > 正在干的事（念新闻 / 写日记 / 想事）> 在 DSH 干活 > 在家。 */
-export function activityOf({ out = false, sleeping = false, busy = null, workedAgoMs = Infinity } = {}) {
+export function activityOf({ out = false, sleeping = false, dreaming = false, busy = null, workedAgoMs = Infinity } = {}) {
   if (out) return 'out';
+  if (dreaming) return 'dream'; // F-79：睡觉但正在读，房间要说「在梦游」
   if (sleeping) return 'sleep';
   if (busy === 'news') return 'reading';
   if (busy === 'diary') return 'writing';
@@ -17,7 +18,7 @@ export function activityOf({ out = false, sleeping = false, busy = null, workedA
   return 'home';
 }
 
-export const ACTIVITY_TEXT = { out: '出门冲浪了', sleep: '在睡觉', reading: '在看新闻', writing: '在写日记', thinking: '在想事', working: '在 DSH 帮忙干活', home: '在家' };
+export const ACTIVITY_TEXT = { out: '出门冲浪了', dream: '在梦游', sleep: '在睡觉', reading: '在看新闻', writing: '在写日记', thinking: '在想事', working: '在 DSH 帮忙干活', home: '在家' };
 
 /** 动作库（F-67）：每位角色 16 个姿势。stand / sleep 是老的，其余 14 个按 美术/出图/poses.tsv 出图。 */
 export const ALL_POSES = ['stand', 'sleep', 'wave', 'cheer', 'read', 'write', 'think', 'work', 'eat', 'phone', 'sulk', 'yawn', 'shy', 'sad', 'wow', 'love'];
@@ -27,6 +28,7 @@ export const IDLE_POSES = ['stand', 'wave', 'cheer', 'phone', 'wow', 'love', 'th
 /** 每种活动想用的姿势，按顺序找；都没有就回落 stand。out 不画人；home 交给心情 / 闲着随机。 */
 export const POSE_WANT = {
   out: [null],
+  dream: ['sleep'], // 梦游用睡觉的姿势（闭眼），但文案说「在梦游」
   sleep: ['sleep'],
   reading: ['read', 'stand'],
   writing: ['write', 'stand'],

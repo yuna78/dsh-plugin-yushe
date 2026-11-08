@@ -9,18 +9,19 @@
 import { nowDate } from './clock.js';
 import { dayOf, lifeSection } from './life-engine.js';
 import { shouldWrite, letterPrompt, LETTER_KINDS } from '../shared/mood.js';
-import { inQuiet } from '../shared/habits.js';
+import { createGates } from './gates.js';
 
 export const LETTERS_PATH = '/api/dsh-yushe/letters';
 export const LETTERS_READ_PATH = '/api/dsh-yushe/letters/read';
 
-export function createLetters({ life, wallet, pond, log, habits }) {
+export function createLetters({ life, wallet, pond, log, habits, gates = null }) {
   const writing = new Set();
+  const G = gates || createGates({ habits }); // 没传就自己建一个
   const letters = {
     /** 有由头就试着写一封（不等结果）。extra：给模型的补充材料（比如这趟看到了什么）。 */
     maybe(fish, kind, extra = '') {
       if (!fish || writing.has(fish.id)) return false;
-      if (habits && inQuiet(habits.get(), nowDate())) return false; // 安静时段不写信打扰
+      if (G.closed('letter')) return false; // 出口闸（F-79）：写信要醒着 + 不安静
       const s = life.state(fish);
       const now = nowDate();
       const day = dayOf(now);

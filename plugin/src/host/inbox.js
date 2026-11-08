@@ -12,18 +12,19 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { accountFile } from './account.js';
 import { readJsonBody } from './game-routes.js';
+import { createGates } from './gates.js';
 import { nowDate, nowMs } from './clock.js';
-import { asleepAt } from './life-engine.js';
 import { emptyInbox, mergeInbox, newsEvents, footStats, whatToFetch } from '../shared/inbox.js';
 
 export const INBOX_PATH = '/api/dsh-yushe/inbox';
 const EVERY = 60 * 60_000;
 
-export function createInbox({ storage, life, biliRead, gate, log }) {
+export function createInbox({ storage, life, biliRead, gate, log, gates = null }) {
   const file = () => accountFile(storage, 'inbox.json'); // G5：按号分开存，换号从零开始
   const load = () => { try { return { ...emptyInbox(), ...JSON.parse(readFileSync(file(), 'utf8')) }; } catch { return emptyInbox(); } };
   const save = (v) => { mkdirSync(storage, { recursive: true }); const f = file(); mkdirSync(dirname(f), { recursive: true }); writeFileSync(`${f}.tmp`, JSON.stringify(v)); renameSync(`${f}.tmp`, f); };
   let busy = false;
+  const G = gates || createGates({}); // 没传就自己建一个
 
   const inbox = {
     /** 看一眼。force 跳过一小时间隔和睡觉（测试 / 手动刷新用）。返回 { ok, news?, why? }。 */
@@ -32,7 +33,7 @@ export function createInbox({ storage, life, biliRead, gate, log }) {
       if (!biliRead?.loggedIn?.()) return { ok: false, why: '她还没登录 B站' };
       const st = load();
       if (!force && st.lastPoll && nowMs() - Date.parse(st.lastPoll) < EVERY) return { ok: false, why: '一小时看一次' };
-      if (!force && asleepAt()) return { ok: false, why: '她在睡觉' };
+      if (!force && G.closed('act')) return { ok: false, why: G.open('act').why }; // 出口闸（F-79）
       busy = true;
       try {
         const [unread, stat] = await Promise.all([biliRead.unread().catch(() => null), biliRead.myStat().catch(() => null)]);

@@ -31,6 +31,8 @@ import { createBiliRead } from './bili-read.js';
 import { createBiliWrite } from './bili-write.js';
 import { createActs } from './acts.js';
 import { createPlanner } from './planner.js';
+import { createGates } from './gates.js';
+import { createDreams } from './dreams.js';
 import { createGate, registerGateRoutes } from './gate.js';
 import { createInbox, registerInboxRoutes } from './inbox.js';
 import { createDms, registerDmsRoutes } from './dms.js';
@@ -42,7 +44,7 @@ import { createWorkspaces, registerWorkspaceRoutes } from './workspaces.js';
 export const name = 'dsh-plugin-yushe'; // 包名；存档目录、路由前缀仍叫 dsh-yushe（老存档不丢）
 // 人设注入要用 systemPrompt（所有带 dsh-base 的 profile 都有）
 export const inject = ['systemPrompt'];
-export const VERSION = '0.32.0';
+export const VERSION = '0.33.0';
 export const STATUS_PATH = '/api/dsh-yushe/status';
 export const SAY_PATH = '/api/dsh-yushe/probe/say';
 export const ROAM_PATH = '/api/dsh-yushe/probe/roam';
@@ -112,30 +114,33 @@ export function apply(ctx) {
   const pond = createPond(storageDir());
   const life = createLife(storageDir());
   const habits = createHabits(storageDir(), { caps: capsOf() }); // 两层配置：工具声明的上限也并进细配置（F-59）
+  const gates = createGates({ habits }); // 出口闸（F-79）：六个出口各自一道，不再一个 asleepAt 问六遍
   // 接口白名单 = 宿主自己用的 + 工具表里声明的（F-59：加工具不用改 bili-read / bili-write）
   const biliRead = createBiliRead(storageDir(), fetch, { extraPaths: pathsOf('GET'), budget: () => habits.get().readBudget }); // 每天读多少次 = 细配置 readBudget
   const biliWrite = createBiliWrite(storageDir(), fetch, { sign: (p) => biliRead.signQuery(p), blocked: () => biliRead.blocked(), extraPaths: pathsOf('POST') }); // 发私信要 WBI 签名；风控期间不发（G3）
-  const letters = createLetters({ life, wallet, pond, log, habits });
-  const planner = createPlanner({ life, wallet, pond, log, memory: { reflect: (...a) => memory.reflect(...a) } }); // memory 在下面建（要用 gate / inbox / dms）
-  const gate = createGate({ storage: storageDir(), life, habits, biliRead, biliWrite, log, kinds: draftKindsOf(), senders: sendersOf(), capKeys: capKeysOf() }); // 说话工具声明的类型 / 发法 / 上限（任务 50）
+  const letters = createLetters({ life, wallet, pond, log, habits, gates });
+  const planner = createPlanner({ life, wallet, pond, log, gates, memory: { reflect: (...a) => memory.reflect(...a) } }); // memory 在下面建（要用 gate / inbox / dms）
+  const gate = createGate({ storage: storageDir(), life, habits, biliRead, biliWrite, log, gates, kinds: draftKindsOf(), senders: sendersOf(), capKeys: capKeysOf() }); // 说话工具声明的类型 / 发法 / 上限（任务 50）
   const acts = createActs({ storage: storageDir(), habits, life, gate, pond, log }); // 互动账本（任务 49）：上限、对同一个人上限、她自己关注的名单、回执 → 足迹
   gate.usePerson(acts); // G4：说话也算进「对同一个人每天上限」
-  const inbox = createInbox({ storage: storageDir(), life, biliRead, gate, log });
+  const inbox = createInbox({ storage: storageDir(), life, biliRead, gate, log, gates });
   const official = createOfficial({ storage: storageDir(), biliRead, biliWrite, life, pond, version: VERSION });
-  const dms = createDms({ storage: storageDir(), life, wallet, habits, biliRead, gate, log });
+  const dms = createDms({ storage: storageDir(), life, wallet, habits, biliRead, gate, log, gates });
   const memory = createMemory({ storage: storageDir(), life, gate, inbox, dms, habits, log }); // F-76：从档案抄成会慢慢忘的记忆
-  const trips = createTrips({ life, wallet, pond, storage: storageDir(), log, habits, biliRead, gate, memory });
+  const trips = createTrips({ life, wallet, pond, storage: storageDir(), log, habits, biliRead, gate, memory, gates });
   const toolDeps = { pond, life, wallet, habits, trips, log, biliRead, biliWrite, inbox, dms, gate, acts, memory };
   registerYusheTools(ctx, toolDeps);
   // 任务 51：出门 = 她自己调工具（同一张工具表的「出门」出口，带读账给 G2 证据检查）；宿主模型拿不到就走 headless 老路
   trips.useLoop({ tools: (ledger) => yusheToolDefs({ ...toolDeps, ledger }, { from: 'trip' }), model: () => hostModel(ctx) });
+  // F-79 梦游：睡觉时段里她自己读一轮 B站（只读工具、不出门、不留对外痕迹）
+  const dreams = createDreams({ life, wallet, pond, habits, biliRead, memory, gates, log, tools: () => yusheToolDefs(toolDeps, { from: 'trip', kinds: ['read'] }).filter((t) => !['bili_dms', 'bili_inbox'].includes(t.name)), model: () => hostModel(ctx) });
   // 回家了：给爸妈写封信（出门回来这个由头）
   life.onTripBack = (f, back) => {
     // 回家：这趟想发的评论 / 动态交给闸门，过了就寄到信箱等爸妈批准（M5b）
     try { if (back.trip.wantComment) gate.propose(f, { kind: 'comment', text: back.trip.wantComment.text, target: back.trip.wantComment.target }); if (back.trip.wantPost) gate.propose(f, { kind: 'post', text: back.trip.wantPost }); } catch { /* 不影响回家 */ }
     if (!back.trip.failed) letters.maybe(f, 'trip', `【这趟看到的】\n${(back.trip.seen || []).slice(0, 6).map((x) => `- ${x.title}`).join('\n')}\n【明信片上写的】${String(back.trip.postcard || '').slice(0, 200)}`); };
   // 她自己决定要不要出门：DSH 开着时每 10 分钟问一次（也顺手推进寄明信片 / 回家）
-  ctx.effect(() => { const t = setInterval(() => { try { trips.autoTick(); } catch (e) { log?.warn?.(`[dsh-yushe] autoTick: ${e?.message || e}`); } gate.flush(pond.current() || pond.list().fish.at(-1)).catch(() => {}); planner.tick(pond.current() || pond.list().fish.at(-1)).catch(() => {}); inbox.poll(pond.current() || pond.list().fish.at(-1)).catch(() => {}); dms.poll(pond.current() || pond.list().fish.at(-1)).catch(() => {}); try { memory.sync(pond.current() || pond.list().fish.at(-1), { minGapMs: 0 }); } catch { /* 记忆同步失败不影响 */ } }, 10 * 60_000); return () => clearInterval(t); }, 'dsh-yushe: wander timer');
+  ctx.effect(() => { const t = setInterval(() => { try { trips.autoTick(); } catch (e) { log?.warn?.(`[dsh-yushe] autoTick: ${e?.message || e}`); } gate.flush(pond.current() || pond.list().fish.at(-1)).catch(() => {}); try { dreams.tick(); } catch (e) { log?.warn?.(`[dsh-yushe] dream tick: ${e?.message || e}`); } planner.tick(pond.current() || pond.list().fish.at(-1)).catch(() => {}); inbox.poll(pond.current() || pond.list().fish.at(-1)).catch(() => {}); dms.poll(pond.current() || pond.list().fish.at(-1)).catch(() => {}); try { memory.sync(pond.current() || pond.list().fish.at(-1), { minGapMs: 0 }); } catch { /* 记忆同步失败不影响 */ } }, 10 * 60_000); return () => clearInterval(t); }, 'dsh-yushe: wander timer');
   // DSH 的工作区表（她在哪个工作区上工，F-64）：有就拿，没有（老宿主）就当「所有工作区」
   let wsRegistry = null;
   if (typeof ctx.inject === 'function') { try { ctx.inject(['workspaceRegistry'], (scope) => { wsRegistry = scope.workspaceRegistry; scope.effect(() => () => { wsRegistry = null; }, 'dsh-yushe: workspace registry'); }); } catch { /* 没有工作区服务 */ } }

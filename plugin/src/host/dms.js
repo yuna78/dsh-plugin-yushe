@@ -13,14 +13,15 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { accountFile } from './account.js';
 import { readJsonBody } from './game-routes.js';
+import { createGates } from './gates.js';
 import { nowDate, nowMs } from './clock.js';
-import { asleepAt, lifeSection } from './life-engine.js';
+import { lifeSection } from './life-engine.js';
 import { pendingTalkers, newTexts, dmPrompt, parseDmReply } from '../shared/dm.js';
 
 export const DMS_PATH = '/api/dsh-yushe/dms';
 const EVERY = 20 * 60_000, PER_POLL = 3, KEEP = 12;
 
-export function createDms({ storage, life, wallet, habits, biliRead, gate, log }) {
+export function createDms({ storage, life, wallet, habits, biliRead, gate, log, gates = null }) {
   const file = () => accountFile(storage, 'dms.json'); // G5：按号分开存，换号从零开始
   const empty = () => ({ seeded: false, talkers: {}, lastPoll: null });
   const load = () => { try { return { ...empty(), ...JSON.parse(readFileSync(file(), 'utf8')) }; } catch { return empty(); } };
@@ -43,13 +44,14 @@ export function createDms({ storage, life, wallet, habits, biliRead, gate, log }
     conv.note = null;
   }
 
+  const G = gates || createGates({ habits }); // 没传就自己建一个
   const dms = {
     async poll(fish, { force = false } = {}) {
       if (busy) return { ok: false, why: '正在看' };
       if (!biliRead?.loggedIn?.()) return { ok: false, why: '她还没登录 B站' };
       const st = load();
       if (!force && st.lastPoll && nowMs() - Date.parse(st.lastPoll) < EVERY) return { ok: false, why: '20 分钟看一次' };
-      if (!force && asleepAt()) return { ok: false, why: '她在睡觉' };
+      if (!force && G.closed('act')) return { ok: false, why: G.open('act').why }; // 出口闸（F-79）
       busy = true;
       try {
         const sessions = await biliRead.dmSessions();

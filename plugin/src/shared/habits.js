@@ -29,6 +29,10 @@ export const HABIT_FIELDS = {
   restBias: { label: '回家歇多久的倍率', type: 'num', min: 0.5, max: 2, step: 0.1, def: 1, chat: true, group: 'out' },
   itemsPerTrip: { label: '每趟记几条见闻', type: 'int', min: 1, max: 5, def: 2, chat: true, group: 'out' },
   lean: { label: '更爱看什么', type: 'enum', values: ['news', 'both', 'bili'], names: { news: '新闻多一点', both: '都看', bili: 'B站多一点' }, def: 'both', chat: true, group: 'out' },
+  // 梦游（F-79，docs/设计/11-梦游.md）：睡觉时段里她自己读一轮 B站，只读、不出门。默认开，聊天里能关
+  dreamEnabled: { label: '睡觉时让她梦游', type: 'bool', def: true, chat: true, group: 'out' },
+  dreamPerNight: { label: '一晚最多梦游几次', type: 'int', min: 0, max: 2, def: 1, chat: true, group: 'out' },
+  dreamBudget: { label: '梦游一次最多花多少零花钱', type: 'int', min: 30000, max: 200000, def: 30000, chat: true, group: 'out' },
 
   // —— 细配置：读多深 ——
   readBudget: { label: '每天读 B站次数', type: 'int', min: 50, max: 1000, def: 300, chat: true, group: 'read' },
@@ -214,7 +218,7 @@ export function describeHabits(h, { fields = HABIT_FIELDS, knobs = KNOBS } = {})
     x.autoOut ? (x.tripsPerDay ? `她会自己出门，一天最多 ${x.tripsPerDay} 次` : '她会自己出门，次数不限，出不出去看她的性格和心情') : '她不会自己出门（只在被问到时出门）',
     `每趟记 ${x.itemsPerTrip} 条见闻`,
     HABIT_FIELDS.lean.names[x.lean],
-    `${x.quietFrom}–${x.quietTo} 安静（不出门、不写信）`,
+    `${x.quietFrom}–${x.quietTo} 安静（不打扰：不出门、不写信、不说话；读 B站不算打扰）`,
     x.speakMode === 'auto' ? `在 B站自己说话，最快每 ${HABIT_FIELDS.speakEvery.names[x.speakEvery]} 一条（每天最多评论 ${x.commentsPerDay}、动态 ${x.postsPerDay}）` : `在 B站说话要先给爸妈批准（每天最多评论 ${x.commentsPerDay}、动态 ${x.postsPerDay}）`,
     x.dmsPerDay ? `陌生人私信每天最多回 ${x.dmsPerDay} 条` : '不回陌生人私信',
     x.parentMid ? '爸妈专线开着（爸妈用 B站私信找她，她马上回）' : '爸妈专线没开',

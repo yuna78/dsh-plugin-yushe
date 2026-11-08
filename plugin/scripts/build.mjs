@@ -24,6 +24,7 @@ const host = {
   entryPoints: [join(root, 'src/host/index.js')],
   outfile: join(root, 'lib/index.js'),
   bundle: true,
+  preserveSymlinks: true, // worktree 里 node_modules 可能是软链：别把真实绝对路径烘进产物
   platform: 'node',
   format: 'esm',
   target: 'node20',
@@ -38,6 +39,7 @@ const client = {
   entryPoints: [join(root, 'src/client/index.js')],
   outfile: join(root, 'lib/client.js'),
   bundle: true,
+  preserveSymlinks: true, // worktree 里 node_modules 可能是软链：别把真实绝对路径烘进产物
   platform: 'browser',
   format: 'iife',
   globalName: '__dshYushe',
@@ -67,6 +69,7 @@ const game = {
   entryPoints: [join(root, 'src/game/main.js')],
   outfile: join(root, 'game/game.js'),
   bundle: true,
+  preserveSymlinks: true, // worktree 里 node_modules 可能是软链：别把真实绝对路径烘进产物
   platform: 'browser',
   format: 'esm',
   target: 'es2022',

@@ -215,8 +215,8 @@ export function registerLifeSection(ctx, pond, life, personaOrder, work = null, 
       if (work && !work.inUserSession(context)) return '';
       let text = '';
       try { text = lifeSection(f, life.state(f)); } catch { text = ''; }
-      // F-76：她记得的事（主会话是跟爸妈说话，家里和 B站的都能想起来；工作内容本来就不进记忆）
-      try { const m = memory?.section?.(f, { scope: 'all' }); if (m) text = text ? `${text}\n${m}` : m; } catch { /* 记忆坏了不影响近况 */ }
+      // F-76：她记得的事（主会话是跟爸妈说话，家里和 B站的都能想起来；工作内容本来就不进记忆；一期-2 A：quotes:false 不带别人原话）
+      try { const m = memory?.section?.(f, { scope: 'all', quotes: false }); if (m) text = text ? `${text}\n${m}` : m; } catch { /* 记忆坏了不影响近况 */ }
       return text;
     },
     interpolate: false,
