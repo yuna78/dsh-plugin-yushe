@@ -103,7 +103,15 @@ const HOMETOWN = {
   write: ['江南古镇一座石桥下面', '一家旧书店的窗台缸', '某位作家书房里的砚台旁'],
   debate: ['大学辩论社活动室的鱼缸', '法院门口的喷泉池', '菜市场两家吵了十年架的摊位中间'],
   slack: ['公园里没人管的荷花池', '一家倒闭了又重开的猫咖', '午睡时间的幼儿园水族角'],
+  angel: ['美术学院画室窗台上的玻璃缸', '一家花店门口的睡莲盆', '设计工作室里摆着色卡的造景缸'],
+  shark: ['港口集装箱码头边的海水', '一家创业孵化器大堂的大鱼缸', '马拉松终点旁边的喷泉池'],
+  seahorse: ['外婆家收拾得一尘不染的客厅鱼缸', '社区服务站的小水箱', '一家老字号酒店前台的鱼缸'],
+  angler: ['24 小时自习室角落的夜灯鱼缸', '深海馆最暗的那一格展缸', '一家只在夜里开门的小酒馆吧台'],
+  butterfly: ['热带鱼市场最热闹的那一排', '大学社团招新摊位旁的鱼缸', '一家网红奶茶店的落地窗缸'],
+  marlin: ['游泳馆隔壁的训练池', '一艘远洋渔船的水舱', '赛艇俱乐部码头下面的河湾'],
+  flounder: ['海边礁石下的一片细沙', '观鸟站窗台上的玻璃缸', '一家侦探事务所的前台鱼缸'],
 };
+const HOMETOWN_ANY = ['一个下雨天会冒泡泡的小池塘', '城市角落一家水族店的最里面一缸', '一所小学自然角的鱼缸']; // 新鱼种还没写专属故乡时兜底（不让领养卡住）
 const RARE_ORIGIN = ['据说是一颗流星掉进池塘时一起掉下来的', '在一封寄错地址的漂流瓶里被发现', '妈妈鱼说她是在彩虹出现那天孵出来的', '没人知道她从哪来，第一次出现时嘴里叼着一枚旧硬币'];
 const CHILDHOOD = [
   '小时候总趴在缸边看人类敲键盘，以为那是一种乐器',
@@ -150,7 +158,7 @@ export function backstory(seed, protoId, rarity, pts, salts = {}, overrides = {}
   const videos = [];
   for (let i = 0; videos.length < 2 && i < 10; i++) { const v = pick(VIDEO, seed, protoId, 'video', s('video'), i); if (!videos.includes(v)) videos.push(v); }
   const b = {
-    hometown: pick(HOMETOWN[protoId], seed, 'home', s('hometown')),
+    hometown: pick(HOMETOWN[protoId] || HOMETOWN_ANY, seed, 'home', s('hometown')),
     origin: high ? pick(RARE_ORIGIN, seed, 'origin', s('origin')) : '',
     childhood: pick(CHILDHOOD, seed, protoId, 'child', s('childhood')),
     hobby: hobbies.join('、'),

@@ -21,7 +21,7 @@ const L = await import(pathToFileURL(join(plugin, 'src/shared/life.js')).href);
 const RS = ['N', 'R', 'SR', 'SSR', 'UR'];
 let bad = 0;
 for (let i = 0; i < 2000; i++) {
-  const s = i.toString(16).padStart(16, '0'), pr = C.PROTO_IDS[i % 8], r = RS[i % 5];
+  const s = i.toString(16).padStart(16, '0'), pr = C.PROTO_IDS[i % C.PROTO_IDS.length], r = RS[i % 5];
   const p = L.allocate(s, pr, r), v = Object.values(p);
   if (v.reduce((a, b) => a + b, 0) !== 200 || Math.min(...v) < 10 || Math.max(...v) > 80) bad++;
   let q = L.adjust(p, 'brain', 25); q = L.adjust(q, 'spark', -40);
@@ -37,6 +37,7 @@ const st = L.backstory(seed, 'fun', 'SSR', pts);
 ok(L.STORY_FIELDS.every(([f]) => f === 'origin' || f === 'quirk' || st[f]), '身世必填项齐全');
 ok(st.origin && st.quirk, 'SSR 解锁来历和隐藏特质');
 ok(!L.backstory(seed, 'fun', 'N', pts).quirk, 'N 没有隐藏特质');
+{ const miss = []; for (const pr of C.PROTO_IDS) for (const r of RS) { try { const b = L.backstory('00000000000000ab', pr, r, L.allocate('00000000000000ab', pr, r)); if (!b.hometown || !b.childhood) miss.push(`${pr}/${r}`); } catch (e) { miss.push(`${pr}/${r}: ${e.message}`); } } ok(!miss.length, `每种鱼每个稀有度都能生成身世（捏性格页不卡住）${miss.length ? '：' + miss.slice(0, 3).join('；') : ''}`); }
 const tal = C.pickTalents(seed, 'fun', 0, 'SSR', 0);
 const txt = L.renderPersonaV2({ proto: 'fun', pts, story: st, parentCall: '爸爸', name: '小灯', self: '本鱼', tics: ['不许笑啦'], ban: ['politics', 'flame'], talents: [tal.main[0], tal.sub], date: '2026-11-07' });
 ok(txt.includes('你叫TA「爸爸」'), '人设里写了称呼');
