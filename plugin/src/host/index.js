@@ -37,6 +37,7 @@ import { createGate, registerGateRoutes } from './gate.js';
 import { createInbox, registerInboxRoutes } from './inbox.js';
 import { createDms, registerDmsRoutes } from './dms.js';
 import { createMemory, registerMemoryRoutes } from './memory.js';
+import { createSeenLog } from './seen-log.js'; // F-86：见闻流水账
 import { createOfficial, registerOfficialRoutes } from './official.js';
 import { createWorkSessions } from './work-sessions.js';
 import { createWorkspaces, registerWorkspaceRoutes } from './workspaces.js';
@@ -44,7 +45,7 @@ import { createWorkspaces, registerWorkspaceRoutes } from './workspaces.js';
 export const name = 'dsh-plugin-yushe'; // 包名；存档目录、路由前缀仍叫 dsh-yushe（老存档不丢）
 // 人设注入要用 systemPrompt（所有带 dsh-base 的 profile 都有）
 export const inject = ['systemPrompt'];
-export const VERSION = '0.37.0';
+export const VERSION = '0.38.0';
 export const STATUS_PATH = '/api/dsh-yushe/status';
 export const SAY_PATH = '/api/dsh-yushe/probe/say';
 export const ROAM_PATH = '/api/dsh-yushe/probe/roam';
@@ -127,13 +128,14 @@ export function apply(ctx) {
   const official = createOfficial({ storage: storageDir(), biliRead, biliWrite, life, pond, version: VERSION });
   const dms = createDms({ storage: storageDir(), life, wallet, habits, biliRead, gate, log, gates });
   const memory = createMemory({ storage: storageDir(), life, gate, inbox, dms, habits, log }); // F-76：从档案抄成会慢慢忘的记忆
-  const trips = createTrips({ life, wallet, pond, storage: storageDir(), log, habits, biliRead, gate, memory, gates });
-  const toolDeps = { pond, life, wallet, habits, trips, log, biliRead, biliWrite, inbox, dms, gate, acts, memory };
+  const seenLog = createSeenLog({ storage: storageDir(), log }); // F-86：看过的每一条都留底的流水账（和会慢慢忘的记忆分开）
+  const trips = createTrips({ life, wallet, pond, storage: storageDir(), log, habits, biliRead, gate, memory, gates, seenLog });
+  const toolDeps = { pond, life, wallet, habits, trips, log, biliRead, biliWrite, inbox, dms, gate, acts, memory, seenLog };
   registerYusheTools(ctx, toolDeps);
   // 任务 51：出门 = 她自己调工具（同一张工具表的「出门」出口，带读账给 G2 证据检查）；宿主模型拿不到就走 headless 老路
   trips.useLoop({ tools: (ledger) => yusheToolDefs({ ...toolDeps, ledger }, { from: 'trip' }), model: () => hostModel(ctx) });
   // F-79 梦游：睡觉时段里她自己读一轮 B站（只读工具、不出门、不留对外痕迹）
-  const dreams = createDreams({ life, wallet, pond, habits, biliRead, memory, gates, log, tools: () => yusheToolDefs(toolDeps, { from: 'trip', kinds: ['read'] }).filter((t) => !['bili_dms', 'bili_inbox'].includes(t.name)), model: () => hostModel(ctx) });
+  const dreams = createDreams({ life, wallet, pond, habits, biliRead, memory, gates, log, tools: () => yusheToolDefs(toolDeps, { from: 'trip', kinds: ['read'] }).filter((t) => !['bili_dms', 'bili_inbox'].includes(t.name)), model: () => hostModel(ctx), seenLog });
   // 回家了：给爸妈写封信（出门回来这个由头）
   life.onTripBack = (f, back) => {
     // 回家：这趟想发的评论 / 动态交给闸门，过了就寄到信箱等爸妈批准（M5b）
@@ -170,7 +172,8 @@ export function apply(ctx) {
 
     registerGameRoutes({ ctx, scope, pond, storage: storageDir(), isLoopbackRequest, writeJson, life, wallet, workspaces });
     registerWorkspaceRoutes({ scope, pond, workspaces, isLoopbackRequest, writeJson });
-    registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, gate, inbox, dms, memory, storage: storageDir(), isLoopbackRequest, writeJson });
+    // F-86 见闻-2：房间聊天工具化——把 room 出口的只读 / 回忆工具和见闻流水账交给聊天路由
+    registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, gate, inbox, dms, memory, storage: storageDir(), isLoopbackRequest, writeJson, chatTools: () => yusheToolDefs(toolDeps, { from: 'room' }), seenLog });
     registerMemoryRoutes({ scope, pond, memory, isLoopbackRequest, writeJson });
     registerRoomRoutes({ ctx, scope, pond, life, wallet, letters, trips, planner, storage: storageDir(), isLoopbackRequest, writeJson });
     registerBagRoutes({ scope, pond, life, isLoopbackRequest, writeJson });

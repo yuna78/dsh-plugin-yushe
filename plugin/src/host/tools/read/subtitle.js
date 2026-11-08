@@ -6,6 +6,7 @@ export default defineTool({
   name: 'bili_subtitle',
   kind: 'read',
   external: true,
+  expose: { main: true, trip: true, room: true }, // F-86：房间追问细节可以回去读字幕
   description: '读一个 B站视频的字幕（AI 字幕或 UP 主上传的），看视频里到底说了什么。给 BV 号，多 P 的给 page。字幕太长会截断（有字数上限）；没有字幕会直接说没有——那就别说自己知道视频内容。只读。',
   params: { bvid: { type: 'string', description: 'BV 号', required: true }, page: { type: 'integer', description: '第几 P（默认 1）' } },
   endpoints: [{ host: 'api', method: 'GET', path: '/x/web-interface/view' }, { host: 'api', method: 'GET', path: '/x/player/wbi/v2', wbi: true, login: true }],

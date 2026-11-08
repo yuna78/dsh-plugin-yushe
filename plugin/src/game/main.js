@@ -703,7 +703,7 @@ async function refreshClock() {
   try { const s = await api('/status'); $('clockChip').hidden = !s.clock?.skewed; if (s.clock?.skewed) $('clockText').textContent = new Date(s.clock.now).toTimeString().slice(0, 5); } catch { /* 没有就算了 */ }
 }
 refreshClock();
-async function streamTo(path, body, onText) {
+async function streamTo(path, body, onText, onStatus = null) {
   const r = await fetch(`${API}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) });
   const reader = r.body.getReader(), dec = new TextDecoder();
   let buf = '', text = '', final = null;
@@ -715,6 +715,7 @@ async function streamTo(path, body, onText) {
     while ((i = buf.indexOf('\n')) >= 0) {
       const m = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
       if (m.type === 'delta') { text += m.text; onText(text); }
+      else if (m.type === 'tool') onStatus?.(m.text || '');
       else if (m.type === 'done') final = m;
       else if (m.type === 'error') throw new Error(m.error);
     }
@@ -757,7 +758,8 @@ async function sendChat() {
   const chat = [...(LIFE?.chat || []), { role: 'user', text }];
   renderMsgs([...chat, { role: 'fish', text: '…' }]);
   try {
-    const r = await streamTo('/chat', { text }, (t) => renderMsgs([...chat, { role: 'fish', text: t }]));
+    let said = false;
+    const r = await streamTo('/chat', { text }, (t) => { said = true; renderMsgs([...chat, { role: 'fish', text: t }]); }, (s) => { if (!said) renderMsgs([...chat, { role: 'fish', text: `（${s}）` }]); });
     LIFE = { ...LIFE, chat: [...chat, { role: 'fish', text: r.text }] };
     renderMsgs(LIFE.chat);
     setSpeaker(f.name, ART(f.proto)); $('line').textContent = r.text;
@@ -879,7 +881,7 @@ async function roomStream(path, body, think = false) {
   bubbleThinking(true);
   let first = true;
   try {
-    const r = await streamTo(path, body, (t) => { if (first) { first = false; bubbleThinking(false); } bubbleLive(t, think); });
+    const r = await streamTo(path, body, (t) => { if (first) { first = false; bubbleThinking(false); } bubbleLive(t, think); }, (s) => { if (first) { bubbleThinking(false); bubbleLive(`（${s}）`, true); } }); // F-86：她在调工具时显示在干嘛，开口后就不再盖住她的话
     bubbleThinking(false);
     refreshWallet();
     if (r.ai === false && r.text) bubbleSay(r.text); else bubbleTimer = setTimeout(() => $('bubble').classList.remove('on'), Math.max(8000, (r.text || '').length * 220));

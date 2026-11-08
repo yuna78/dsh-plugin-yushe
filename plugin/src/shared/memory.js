@@ -335,7 +335,7 @@ export function timeRange(query, now) {
 const QUOTED_KINDS = new Set(['got-reply', 'dm-in']);
 const shownEpisode = (ep, quotes) => (!quotes && QUOTED_KINDS.has(ep.kind) ? { ...ep, text: ep.gist } : ep);
 
-export function recall(mem, { query = '', scope = 'all', limit = 5, chars = 600, now, baseDays = 30, kinds = null, quotes = true } = {}) {
+export function recall(mem, { query = '', scope = 'all', limit = 5, chars = 600, now, baseDays = 30, kinds = null, excludeKinds = null, quotes = true } = {}) {
   const tr = timeRange(query, now); // 有时间词：只在那几天里找，剩下的话照常切词
   const restQ = tr ? tr.rest : query;
   const q = [...tokens(restQ)].filter((w) => !STOP.has(w));
@@ -344,6 +344,7 @@ export function recall(mem, { query = '', scope = 'all', limit = 5, chars = 600,
   for (const ep of mem.episodes || []) {
     if (scope === 'public' && ep.scope !== 'public') continue;
     if (kinds && !kinds.includes(ep.kind)) continue;
+    if (excludeKinds?.length && excludeKinds.includes(ep.kind)) continue; // F-86 见闻-2：这几类不叫回来（问「看了啥」时不复读她自己的聊天话）
     if (tr && (ms(ep.at) < tr.from || ms(ep.at) >= tr.to)) continue;
     const st = stageOf(ep, now, baseDays);
     if (st === 'forgotten') continue;

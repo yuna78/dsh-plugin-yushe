@@ -14,6 +14,7 @@
  */
 import { runToolLoop, dreamSystem, collectCatalog, parseDream } from './trip-loop.js';
 import { dreamDue, dreamWordsOk, dreamTemplate, DREAM_BUDGET_MIN } from '../shared/dream.js';
+import { entriesFrom } from '../shared/seen.js';
 import { personaFor } from '../shared/growth.js';
 import { moodTone } from '../shared/mood.js';
 import { nowMs } from './clock.js';
@@ -22,9 +23,15 @@ import { dayOf, snapshot } from './life-engine.js';
 export const DREAM_TOOL_CALLS = 6;   // 浅档：读六次就够做梦了
 export const DREAM_MAX_TRIES = 2;    // 一晚最多试两次（第一次失败允许再试一次，别整夜重试）
 
-export function createDreams({ life, wallet, pond, habits, biliRead, memory = null, gates = null, log, tools = null, model = null }) {
+export function createDreams({ life, wallet, pond, habits, biliRead, memory = null, gates = null, log, tools = null, model = null, seenLog = null }) {
   let busy = false;
   const fishNow = () => pond.current() || pond.list().fish.at(-1) || null;
+  // F-86：梦里刷到的每一条也进流水账（写失败只记日志，不影响梦本身）
+  const logSeen = (f, catalog, noted) => {
+    if (!seenLog || !catalog?.size) return;
+    try { seenLog.add(f, entriesFrom({ catalog, ledger: {}, acts: {}, noted, at: new Date(nowMs()).toISOString() })); }
+    catch (e) { log?.warn?.(`[dsh-yushe] 见闻流水账没写上（梦）：${String(e?.message || e).slice(0, 120)}`); }
+  };
   // 一晚一次：events 会被 MAX_EVENTS 裁掉，所以同时看 lastDreamDay（写梦时落的那一格）
   const dreamsOn = (s, day) => Math.max((s.events || []).filter((e) => e.day === day && e.kind === 'dream').length, s.lastDreamDay === day ? 1 : 0);
   const triesOn = (s, day) => (s.dreamTries?.day === day ? Number(s.dreamTries.n) || 0 : 0);
@@ -113,6 +120,7 @@ export function createDreams({ life, wallet, pond, habits, biliRead, memory = nu
         ]);
       } catch (e) {
         try { life.dreamEnd(f); } catch { /* 忽略 */ }
+        logSeen(f, catalog, []); // 循环中断也把刷到的留下（F-86：拿到 catalog 就记）
         log?.warn?.(`[dsh-yushe] 梦游没成：${String(e?.message || e).slice(0, 140)}`);
         return null;
       }
@@ -120,6 +128,7 @@ export function createDreams({ life, wallet, pond, habits, biliRead, memory = nu
       catch (e) { log?.warn?.(`[dsh-yushe] 梦游的钱没记上：${String(e?.message || e).slice(0, 80)}`); } // 花了就是花了，至少留一条日志
       const okReads = r.calls.filter((c) => c.ok).length;
       const rep = parseDream(r.text, catalog);
+      logSeen(f, catalog, rep.seen); // F-86：不管写不写梦，这趟刷到的都在流水账里
       if (!okReads) { try { life.dreamEnd(f); } catch { /* 忽略 */ } log?.info?.(`[dsh-yushe] 梦游：一次也没读成（${r.stoppedBy}），不写梦`); return null; }
       if (!rep.parsed) { try { life.dreamEnd(f); } catch { /* 忽略 */ } log?.info?.(`[dsh-yushe] 梦游：模型没交 JSON（${r.stoppedBy}），不写梦`); return null; }
       const pool = rep.seen.length ? rep.seen : [...catalog.values()];

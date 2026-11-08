@@ -2598,6 +2598,235 @@ section('发版');
   ok(JSON.parse(read('package.json')).name === 'dsh-plugin-yushe' && /name:\s*dsh-plugin-yushe/.test(read('cordis.patch.yml')), '包名和 cordis.patch.yml 里的插件名都是 dsh-plugin-yushe');
 }
 
+/* ===== F-86 见闻-1 验收（总指挥写好并锁定；实现方不许改这一块，只能让它通过）===== */
+section('见闻流水账：看过的每一条都留底，能按词 / 天 / 深度翻、能翻页（F-86 见闻-1）');
+{
+  const SN = await import(pathToFileURL(join(plugin, 'src/shared/seen.js')).href);
+  const SLH = await import(pathToFileURL(join(plugin, 'src/host/seen-log.js')).href);
+  const NOW = (() => { const d = new Date(); d.setHours(21, 0, 0, 0); return d.getTime(); })(); const H = 3600e3, DAYMS = 24 * H;
+  const dayStr = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  const isoAt = (ms) => new Date(ms).toISOString();
+  const bv = (i) => `BV1${String(i).padStart(9, '0')}`;
+  const url = (i) => `https://www.bilibili.com/video/${bv(i)}`;
+  // 一趟：300 条刷到；第 280 条是「量子猫咪」，排得很后面
+  const catalog = new Map();
+  for (let i = 0; i < 300; i++) catalog.set(bv(i), { title: i === 280 ? '量子猫咪的一天' : `普通视频第${i}条`, url: url(i), source: 'B站', tag: i % 3 ? '科技' : '生活', up: i === 7 ? 'UP甲' : `UP${i % 10}`, mid: String(1000 + i), via: i === 5 ? 'detail' : 'list' });
+  catalog.set('https://www.ithome.com/0/1.htm', { title: '新手机发布', url: 'https://www.ithome.com/0/1.htm', source: 'IT之家', tag: '数码', via: 'news' });
+  const ledger = { [bv(1)]: ['meta', 'detail', 'subtitle'], [bv(2)]: ['meta', 'comments'], [bv(3)]: ['meta', 'detail'] };
+  const acts = { [bv(4)]: ['bili_like'] };
+  const noted = [{ url: url(6), why: '太好笑了' }];
+  const es = SN.entriesFrom({ catalog, ledger, acts, noted, at: isoAt(NOW - 2 * H) });
+  const byUrl = (u) => es.find((e) => e.url === u);
+  ok(Array.isArray(SN.DEPTHS) && SN.DEPTHS.join() === 'list,detail,deep,acted,noted', '见闻-1 S0：读多深从浅到深 list / detail / deep / acted / noted');
+  ok(es.length === 301 && byUrl(url(0)).depth === 'list' && byUrl(url(5)).depth === 'detail' && byUrl(url(3)).depth === 'detail' && byUrl(url(1)).depth === 'deep' && byUrl(url(2)).depth === 'deep' && byUrl(url(4)).depth === 'acted' && byUrl(url(6)).depth === 'noted' && byUrl(url(6)).why === '太好笑了', '见闻-1 S1：catalog 每一条都变成一行；深度按读账 / 互动 / 游记算');
+  ok(byUrl('https://www.ithome.com/0/1.htm')?.source === 'IT之家' && byUrl(url(7)).up === 'UP甲' && byUrl(url(0)).title === '普通视频第0条', '见闻-1 S1b：新闻也留；标题 / UP / 来源都在');
+  // 合并：同一天同一链接只一行、取最深；不同天各一行；30 天前的扔掉
+  let log = SN.emptySeenLog();
+  log = SN.mergeSeen(log, es, { now: NOW });
+  log = SN.mergeSeen(log, [{ at: isoAt(NOW - H), title: '普通视频第0条', url: url(0), source: 'B站', depth: 'acted' }, { at: isoAt(NOW - H), title: '普通视频第6条', url: url(6), source: 'B站', depth: 'list' }], { now: NOW });
+  log = SN.mergeSeen(log, [{ at: isoAt(NOW - DAYMS), title: '昨天的狗狗', url: url(900), source: 'B站', tag: '动物圈', depth: 'detail' }, { at: isoAt(NOW - DAYMS), title: '普通视频第0条', url: url(0), source: 'B站', depth: 'list' }], { now: NOW });
+  log = SN.mergeSeen(log, [{ at: isoAt(NOW - 31 * DAYMS), title: '很久以前', url: url(901), source: 'B站', depth: 'noted' }], { now: NOW });
+  const today0 = log.items.filter((x) => x.url === url(0));
+  ok(today0.length === 2 && today0.some((x) => x.depth === 'acted') && log.items.filter((x) => x.url === url(6)).length === 1 && log.items.find((x) => x.url === url(6)).depth === 'noted' && log.items.find((x) => x.url === url(6)).why === '太好笑了', '见闻-1 S2：同一天同一链接只一行、取最深、感想不丢；不同天各一行');
+  ok(!log.items.some((x) => x.url === url(901)) && log.items.length === 303, '见闻-1 S3：默认留 30 天，更早的扔掉');
+  const cap = SN.mergeSeen(SN.emptySeenLog(), Array.from({ length: 30 }, (_, i) => ({ at: isoAt(NOW - H + i), title: `t${i}`, url: url(2000 + i), source: 'B站', depth: i === 0 ? 'noted' : 'list' })), { now: NOW, perDay: 10 });
+  ok(cap.items.length === 10 && cap.items.some((x) => x.url === url(2000)), '见闻-1 S3b：每天有上限，满了先丢最浅的（记进游记的留着）');
+  // 翻：关键词找到排得很后面的那条
+  const q1 = SN.querySeen(log, { query: '猫咪', now: NOW });
+  ok(q1.total === 1 && q1.items[0].title === '量子猫咪的一天' && q1.items[0].url === url(280) && q1.items[0].depthText, '见闻-1 S4：关键词找得到排在第 280 条的那条（不靠固定前几条）');
+  ok(SN.querySeen(log, { query: 'UP甲', now: NOW }).items.some((x) => x.url === url(7)) && SN.querySeen(log, { query: '数码', now: NOW }).items[0]?.source === 'IT之家', '见闻-1 S4b：UP 主、分区也能搜');
+  // 翻页：今天的 301 条全能翻到，不重不漏
+  const p1 = SN.querySeen(log, { query: '今天', now: NOW });
+  const seenUrls = new Set(); let off = 0, pages = 0, last;
+  do { last = SN.querySeen(log, { query: '今天', now: NOW, offset: off, limit: 50 }); last.items.forEach((x) => seenUrls.add(x.url)); off += last.items.length; pages += 1; } while (last.more && pages < 20);
+  ok(p1.total === 301 && p1.items.length === 20 && p1.more === true && p1.offset === 0, '见闻-1 S5：「今天」301 条，默认一页 20，告诉她还有');
+  ok(seenUrls.size === 301 && pages === 7 && !last.more, '见闻-1 S5b：翻页（每页最多 50）能把 301 条全翻到，不重不漏');
+  ok(SN.querySeen(log, { query: '今天', now: NOW, limit: 999 }).items.length === 50, '见闻-1 S5c：一页最多 50');
+  ok(p1.items[0].depth === 'noted' && p1.items.slice(0, 6).every((x) => x.depth !== 'list'), '见闻-1 S5d：不带关键词时读得深的排前面');
+  ok(SN.querySeen(log, { query: '今天 视频', now: NOW }).total === 301, '见闻-1 S5e：「视频」「新闻」这种泛泛的词不当筛选条件');
+  const y = SN.querySeen(log, { query: '昨天', now: NOW });
+  ok(y.total === 2 && y.items.every((x) => x.day === dayStr(NOW - DAYMS)), '见闻-1 S6：时间词「昨天」只翻昨天');
+  const deep = SN.querySeen(log, { query: '今天', minDepth: 'deep', now: NOW });
+  ok(deep.total === 5 && deep.items.every((x) => ['deep', 'acted', 'noted'].includes(x.depth)), '见闻-1 S7：minDepth 只要读得够深的');
+  const st = SN.seenStats(log, { query: '今天', now: NOW });
+  ok(st.total === 301 && st.byDepth.list === 294 && st.byDepth.noted === 1 && st.topTags[0]?.tag === '科技' && Array.isArray(st.topUps), '见闻-1 S8：统计：多少条、各深度多少、最多的分区 / UP');
+  const ov = SN.seenOverview(log, { now: NOW });
+  ok(typeof ov === 'string' && ov.includes('301') && ov.includes('普通视频第6条') && ov.length <= 500 && SN.seenOverview(SN.emptySeenLog(), { now: NOW }) === '', '见闻-1 S9：今天概览有数、有读得最深的几条，≤500 字；没有就空串');
+  // 宿主：存盘、分鱼
+  const sdir = mkdtempSync(join(tmpdir(), 'yushe-seen-'));
+  const fA = { id: 'seenA' }, fB = { id: 'seenB' };
+  const sl1 = SLH.createSeenLog({ storage: sdir });
+  sl1.add(fA, es);
+  const sl2 = SLH.createSeenLog({ storage: sdir });
+  ok(sl2.query(fA, { query: '猫咪' }).total === 1 && sl2.query(fB, {}).total === 0 && sl2.stats(fA, { query: '今天' }).total >= 0 && typeof sl2.overview(fA) === 'string', '见闻-1 H1：存进 storage、换个实例还在；每条鱼各一本');
+  // 出门接线：工具出门回来，这趟看过的都进流水账
+  const TRP = await import(pathToFileURL(join(plugin, 'src/host/trips.js')).href);
+  const HBs = await import(pathToFileURL(join(plugin, 'src/shared/habits.js')).href);
+  const fakeLlmS = (script) => { let n = 0; return { async *stream() { const turn = script[Math.min(n++, script.length - 1)]; for (const b of turn.blocks) yield { type: 'block-end', index: 0, block: b }; yield { type: 'usage', usage: { totalTokens: 500 } }; yield { type: 'finish', reason: { kind: turn.finish } }; } }; };
+  const tcS = (id, name, args) => ({ type: 'tool-call', id, name, arguments: JSON.stringify(args) });
+  const hotS = { name: 'bili_hot', kind: 'read', description: 'x', parameters: { type: 'object', properties: {} }, execute: async () => ({ ok: true, videos: [{ bvid: 'BV1sssssssss', title: '深海探险', up: 'UP海', tname: '纪录片' }, { bvid: 'BV1ttttttttt', title: '包饺子', up: 'UP厨' }, { bvid: 'BV1uuuuuuuuu', title: '没点开的', up: 'UP路' }] }) };
+  const tdir = mkdtempSync(join(tmpdir(), 'yushe-seentrip-'));
+  const TL = LE.createLife(tdir); const tf = { id: 'seentrip', name: '小试', parentCall: '妈妈', personaText: '我是小鱼', createdAt: new Date().toISOString() }; TL.state(tf);
+  const slT = SLH.createSeenLog({ storage: tdir });
+  const tripsS = TRP.createTrips({ life: TL, wallet: { view: () => ({ unlimited: true, broke: false }), say: async () => ({ text: '我出门啦' }), chargeTokens: () => {} }, pond: { current: () => tf, list: () => ({ fish: [tf] }) }, storage: tdir, habits: { get: () => ({ ...HBs.defaultHabits(), tripToolCalls: 5 }) }, biliRead: null, gate: null, seenLog: slT });
+  tripsS.useLoop({ tools: () => [hotS], model: () => ({ llm: fakeLlmS([{ blocks: [tcS('c1', 'bili_hot', {})], finish: 'tool-calls' }, { blocks: [{ type: 'text', text: '{"postcard":"逛完啦","seen":[{"bvid":"BV1ttttttttt","why":"想学"}]}' }], finish: 'stop' }]), provider: 'p', model: 'm' }) });
+  tripsS.start(tf, 'asked');
+  for (let i = 0; i < 60 && TL.state(tf).trip?.state === 'roaming'; i++) await new Promise((r) => setTimeout(r, 20));
+  const tq = slT.query(tf, { query: '今天' });
+  ok(tq.total === 3 && tq.items.find((x) => x.title === '包饺子')?.depth === 'noted' && tq.items.find((x) => x.title === '没点开的')?.depth === 'list', '见闻-1 H2：工具出门回来，这趟刷到的 3 条全进流水账（游记里的算 noted，没点开的算 list）');
+  // 梦游接线
+  const DRM = await import(pathToFileURL(join(plugin, 'src/host/dreams.js')).href);
+  const ddir = mkdtempSync(join(tmpdir(), 'yushe-seendream-'));
+  const DL = LE.createLife(ddir); const df = { id: 'seendream', createdAt: '2026-11-07T08:00:00', parentCall: '妈妈', pts: { brain: 40, tongue: 40, belly: 40, heart: 40, spark: 40 }, story: {}, personaText: '我是小鱼' }; DL.state(df, Date.parse('2026-11-07T23:00:00'));
+  const slD = SLH.createSeenLog({ storage: ddir });
+  const DS = DRM.createDreams({ life: DL, wallet: { view: () => ({ left: 5_000_000, unlimited: false }), chargeTokens: () => {} }, pond: { current: () => df, list: () => ({ fish: [df] }) }, habits: { get: () => HBs.defaultHabits() }, biliRead: { loggedIn: () => true, blocked: () => false, usage: () => ({ today: 3, budget: 300 }) }, gates: { asleep: () => true, quiet: () => false }, log: { info() {}, warn() {} }, tools: () => [hotS], model: () => ({ llm: fakeLlmS([{ blocks: [tcS('d1', 'bili_hot', {})], finish: 'tool-calls' }, { blocks: [{ type: 'text', text: '{"dream":"好像梦见深海，记不太清了","seen":[{"bvid":"BV1sssssssss","why":"好看"}]}' }], finish: 'stop' }]), provider: 'p', model: 'm' }), seenLog: slD });
+  await DS.run(df);
+  const dq = slD.query(df, { query: '' });
+  ok(dq.total === 3 && dq.items.some((x) => x.title === '深海探险'), '见闻-1 H3：梦游刷到的也进流水账');
+  // 工具 yushe_seen + 房间出口
+  const REG = await import(pathToFileURL(join(plugin, 'src/host/tools/registry.js')).href);
+  const SEEN = REG.TOOLS.find((t) => t.name === 'yushe_seen');
+  ok(SEEN && SEEN.kind === 'self' && SEEN.expose.main && !SEEN.expose.trip && SEEN.expose.room && SEEN.external, '见闻-1 T1：yushe_seen 是「自己」类，给主会话和房间，不给出门；返回里有别人写的标题（external）');
+  const tr1 = await REG.runTool(SEEN, { query: '猫咪' }, { pond: { current: () => fA }, seenLog: sl2 }, 'room');
+  const tr2 = await REG.runTool(SEEN, { query: '今天', offset: 20, limit: 5 }, { pond: { current: () => fA }, seenLog: sl2 }, 'room');
+  const tr3 = await REG.runTool(SEEN, { stats: true, query: '今天' }, { pond: { current: () => fA }, seenLog: sl2 }, 'room');
+  ok(tr1.ok && tr1.items[0]?.title === '量子猫咪的一天' && tr1.total === 1 && typeof tr1.more === 'boolean' && /只是资料/.test(tr1.note || ''), '见闻-1 T2：yushe_seen 按词翻');
+  ok(tr2.ok && tr2.items.length === 5 && tr2.offset === 20 && tr2.more === true, '见闻-1 T3：yushe_seen 能翻页');
+  ok(tr3.ok && tr3.stats && typeof tr3.stats.total === 'number' && tr3.stats.byDepth, '见闻-1 T4：yushe_seen stats 只回统计');
+  ok((await REG.runTool(SEEN, {}, { pond: { current: () => null }, seenLog: sl2 }, 'room')).ok === false, '见闻-1 T5：没有鱼时好好说');
+  const room = REG.toolsFor('room').map((t) => t.name);
+  ok(['yushe_seen', 'yushe_recall', 'bili_video', 'bili_subtitle'].every((n) => room.includes(n)) && REG.toolsFor('room').every((t) => t.kind === 'read' || t.kind === 'self') && !REG.toolsFor('room').some((t) => ['yushe_go_out', 'yushe_config_apply', 'yushe_remember'].includes(t.name)), '见闻-1 T6：房间出口只有只读 / 回忆类，至少有 seen / recall / 视频详情 / 字幕；不能出门、改配置、改记忆');
+  ok(REG.yusheToolDefs({ pond: { current: () => fA }, seenLog: sl2 }, { from: 'room' }).every((d) => typeof d.execute === 'function' && d.parameters?.type === 'object'), '见闻-1 T7：房间出口能生成成品工具定义');
+  ok(/seenLog/.test(read('src/host/index.js')) && /createSeenLog/.test(read('src/host/index.js')), '见闻-1 W1：index.js 建好流水账、交给出门 / 梦游 / 工具');
+}
+/* ===== F-86 见闻-1 验收 结束 ===== */
+{ // 总指挥验收补：连写的中文关键词（模型不一定会用空格分词）
+  const SN2 = await import(pathToFileURL(join(plugin, 'src/shared/seen.js')).href);
+  const n2 = Date.now(); const at2 = new Date(n2 - 3600e3).toISOString();
+  const lg = SN2.mergeSeen(SN2.emptySeenLog(), [{ at: at2, title: '量子猫咪的一天', url: 'https://a/1', depth: 'list' }, { at: at2, title: '有趣的实验', url: 'https://a/2', depth: 'list' }], { now: n2 });
+  ok(SN2.querySeen(lg, { query: '猫咪视频', now: n2 }).total === 1 && SN2.querySeen(lg, { query: '有趣', now: n2 }).total === 1 && SN2.querySeen(lg, { query: '今天看了什么视频', now: n2 }).total === 2, '见闻-1 验收补：连写的「猫咪视频」去掉泛泛词再找；单字助词不拆坏「有趣」');
+}
+
+/* ===== F-86 见闻-2 验收（总指挥写好并锁定；实现方不许改这一块，只能让它通过）===== */
+section('房间聊天：她能按爸妈的话自己调工具翻，先翻再答（F-86 见闻-2）');
+{
+  const { Readable } = await import('node:stream');
+  const TLP2 = await import(pathToFileURL(join(plugin, 'src/host/trip-loop.js')).href);
+  const WL = await import(pathToFileURL(join(plugin, 'src/host/wallet.js')).href);
+  const LR2 = await import(pathToFileURL(join(plugin, 'src/host/life-routes.js')).href);
+  const MM2 = await import(pathToFileURL(join(plugin, 'src/shared/memory.js')).href);
+  const tcC = (id, name, args) => ({ type: 'tool-call', id, name, arguments: JSON.stringify(args) });
+  // 假模型：每轮先吐 text-delta（流式），再给 block-end
+  const streamLlm = (script) => { const seen = []; return { seen, async *stream(opts) { seen.push(opts); const turn = script[Math.min(seen.length - 1, script.length - 1)]; for (const b of turn.blocks) { if (b.type === 'text') for (const piece of [b.text.slice(0, 3), b.text.slice(3)]) if (piece) yield { type: 'text-delta', text: piece }; yield { type: 'block-end', index: 0, block: b }; } yield { type: 'usage', usage: { totalTokens: 700 } }; yield { type: 'finish', reason: { kind: turn.finish } }; } }; };
+  const seenTool = { name: 'yushe_seen', description: 'x', parameters: { type: 'object', properties: {} }, execute: async () => ({ ok: true, total: 1, items: [{ title: '量子猫咪的一天', up: 'UP甲' }] }) };
+  // C1 循环能流式
+  const deltas = [];
+  const l1 = streamLlm([{ blocks: [{ type: 'text', text: '我翻翻看～' }, tcC('a', 'yushe_seen', { query: '猫' })], finish: 'tool-calls' }, { blocks: [{ type: 'text', text: '看了《量子猫咪的一天》！' }], finish: 'stop' }]);
+  const r1 = await TLP2.runToolLoop({ llm: l1, provider: 'p', model: 'm', system: '', prompt: 'P', tools: [seenTool], maxCalls: 4, onDelta: (t) => deltas.push(t) });
+  ok(deltas.join('') === '我翻翻看～看了《量子猫咪的一天》！' && r1.said === '我翻翻看～看了《量子猫咪的一天》！' && r1.text === '看了《量子猫咪的一天》！' && r1.calls.length === 1, '见闻-2 C1：工具循环每轮的字都流式推出去；said 是所有轮说的话，text 照旧是最后一轮');
+  // C2 wallet.loop：宿主模型 + 工具、记账、花光了照样拦
+  const wdir = mkdtempSync(join(tmpdir(), 'yushe-wloop-'));
+  const l2 = streamLlm([{ blocks: [tcC('b', 'yushe_seen', {})], finish: 'tool-calls' }, { blocks: [{ type: 'text', text: '翻到啦' }], finish: 'stop' }]);
+  const ctxW = { get: (n) => (n === 'llm' ? l2 : n === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'p', model: 'm' }) } : null) };
+  const W = WL.createWallet(ctxW, wdir);
+  const d2 = [];
+  const w1 = await W.loop('chat', { prompt: '你好', tools: [seenTool], maxCalls: 4, onDelta: (t) => d2.push(t) });
+  ok(w1.text === '翻到啦' && d2.join('') === '翻到啦' && w1.calls.length === 1 && l2.seen[0].tools?.[0]?.name === 'yushe_seen', '见闻-2 C2：wallet.loop 用宿主模型跑工具循环，字流式出来');
+  ok(W.view().byKind.some((k) => k.kind === 'chat' && k.tokens === 1400), '见闻-2 C2b：这一句花的 token（每轮累加）记进零花钱「聊天」');
+  const Wnone = WL.createWallet({ get: () => null }, mkdtempSync(join(tmpdir(), 'yushe-wloop2-')));
+  let noLoopErr = null; try { await Wnone.loop('chat', { prompt: 'x', tools: [seenTool] }); } catch (e) { noLoopErr = e; }
+  ok(noLoopErr && noLoopErr.noLoop === true && !noLoopErr.broke, '见闻-2 C2c：宿主模型拿不到 → 抛 noLoop（路由好退回老路）');
+  const Wbroke = WL.createWallet(ctxW, mkdtempSync(join(tmpdir(), 'yushe-wloop3-')));
+  Wbroke.configure({ mode: 'jar', jar: 0 });
+  let brokeErr = null; try { await Wbroke.loop('chat', { prompt: 'x', tools: [seenTool] }); } catch (e) { brokeErr = e; }
+  ok(brokeErr?.broke === true, '见闻-2 C2d：零花钱花光了照样抛 BrokeError');
+  // C3 记忆：问「看了啥」时不召回聊天类经历（不复读自己的含糊话）
+  const em = MM2.emptyMemory(); const nowE = Date.now();
+  em.episodes.push(MM2.makeEpisode(em, { at: new Date(nowE - 3600e3).toISOString(), kind: 'chat', text: '妈妈说：「今天看了什么视频」，本鱼回：「看了几条，挺模糊的」' }));
+  em.episodes.push(MM2.makeEpisode(em, { at: new Date(nowE - 7200e3).toISOString(), kind: 'seen', text: '在 B站看了《量子猫咪的一天》' }));
+  const all = MM2.recall(em, { query: '今天看了什么视频', now: nowE });
+  const noChat = MM2.recall(em, { query: '今天看了什么视频', now: nowE, excludeKinds: ['chat'] });
+  ok(all.some((x) => x.kind === 'chat') && noChat.length >= 1 && !noChat.some((x) => x.kind === 'chat'), '见闻-2 C3：recall 支持 excludeKinds，排掉聊天类');
+  ok(/excludeKinds/.test(read('src/host/memory.js')), '见闻-2 C3b：host memory.section 把 excludeKinds 传给 recall');
+  ok(LR2.asksAboutSeen('说说你今天都看了什么视频') && LR2.asksAboutSeen('昨天刷到啥好玩的新闻了') && LR2.asksAboutSeen('你最近在B站看到什么') && !LR2.asksAboutSeen('今天开心吗') && !LR2.asksAboutSeen('我爱你'), '见闻-2 C3c：asksAboutSeen 认得「看了啥 / 刷到啥 / 看到什么」，不误伤家常话');
+  // C4 新提示词：先翻再答
+  const tp = LR2.chatToolsPrompt({ persona: '我是小鱼', lifeText: '【你的近况】在家。', sleeping: false, call: '妈妈', moodText: '你心情很好。', memoryText: '', history: [], kb: '', text: '今天看了什么视频', overview: '【今天的见闻】今天刷到 301 条' });
+  ok(tp.includes('我是小鱼') && tp.includes('今天刷到 301 条') && tp.includes('yushe_seen') && tp.includes('翻页') && /没翻到/.test(tp) && !tp.includes('不要编造具体的事实、数字、链接') && tp.includes('妈妈：今天看了什么视频'), '见闻-2 C4：工具版提示词带今天概览、教她先用 yushe_seen 翻（可翻页）、没翻到才说没印象；不再一句「不要编造」吓住她');
+  ok(existsSync(join(plugin, 'src/prompts/chat-tools.md')) && read('src/prompts/chat.md').includes('不要编造具体的事实、数字、链接'), '见闻-2 C4b：新提示词放 prompts/chat-tools.md；老的 chat.md 不动（退回老路时用）');
+  // C5 聊天路由接线
+  const routes = {};
+  const scopeF = { effect: (fn) => fn(), webServer: { register: (r) => { routes[r.path] = r.handler; } } };
+  const cdir = mkdtempSync(join(tmpdir(), 'yushe-chat86-'));
+  const CL = LE.createLife(cdir); const cf = { id: 'chat86', name: '小试', parentCall: '妈妈', personaText: '我是小鱼', createdAt: new Date().toISOString() }; CL.state(cf);
+  const secCalls = [];
+  const memF = { section: (f, o) => { secCalls.push(o); return '【这句话让你想起的事】\n- 喂了零食'; } };
+  const mkWallet = (mode) => { const w = { calls: [], view: () => ({ unlimited: true, broke: false }), busy: null, chargeTokens() {} };
+    w.say = async (kind, prompt, onDelta) => { w.calls.push({ fn: 'say', kind, prompt }); onDelta?.('老路回话'); return { text: '老路回话' }; };
+    if (mode !== 'noloopfn') w.loop = async (kind, o) => { w.calls.push({ fn: 'loop', kind, ...o }); if (mode === 'noLoop') { const e = new Error('没有宿主模型'); e.noLoop = true; throw e; } if (mode === 'broke') { const e = new Error('零花钱花光了'); e.broke = true; throw e; } o.onDelta?.('我翻了翻，'); o.onDelta?.('看了《量子猫咪的一天》'); return { text: '我翻了翻，看了《量子猫咪的一天》', calls: [{ name: 'yushe_seen', ok: true }], tokens: 100 }; };
+    return w; };
+  const runChat = async (wallet, text, extra = {}) => {
+    for (const k of Object.keys(routes)) delete routes[k];
+    LR2.registerLifeRoutes({ ctx: {}, scope: scopeF, pond: { current: () => cf, list: () => ({ fish: [cf] }) }, life: CL, wallet, letters: null, gate: null, inbox: null, dms: null, memory: memF, storage: cdir, isLoopbackRequest: () => true, writeJson: () => {}, chatTools: () => [seenTool, { ...seenTool, name: 'yushe_recall' }], seenLog: { overview: () => '【今天的见闻】今天刷到 301 条' }, ...extra });
+    const req = Readable.from([Buffer.from(JSON.stringify({ text }))]); req.method = 'POST';
+    const out = []; const res = { statusCode: 0, setHeader() {}, write: (s) => out.push(String(s)), end: () => {} };
+    await routes[LR2.CHAT_PATH](req, res);
+    return out.join('').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  };
+  secCalls.length = 0;
+  const wA = mkWallet('ok');
+  const evA = await runChat(wA, '说说你今天都看了什么视频');
+  const lc = wA.calls.find((c) => c.fn === 'loop');
+  ok(lc && lc.kind === 'chat' && lc.maxCalls === 4 && lc.tools.map((t) => t.name).includes('yushe_seen') && lc.prompt.includes('今天刷到 301 条') && lc.prompt.includes('yushe_seen') && !lc.prompt.includes('不要编造具体的事实、数字、链接'), '见闻-2 C5：房间聊天走 wallet.loop，带房间工具、每句最多 4 次、提示词有今天概览');
+  ok(evA.filter((e) => e.type === 'delta').map((e) => e.text).join('').includes('量子猫咪') && evA.at(-1)?.type === 'done' && /量子猫咪/.test(evA.at(-1).text) && (CL.state(cf).chat || []).at(-1)?.text.includes('量子猫咪'), '见闻-2 C5b：字流式推给页面，最后 done；她的话记进聊天');
+  ok(secCalls.some((o) => (o.excludeKinds || []).includes('chat')), '见闻-2 C5c：问「看了啥」时记忆召回排掉聊天类');
+  secCalls.length = 0;
+  await runChat(mkWallet('ok'), '今天开心吗');
+  ok(secCalls.length && !secCalls.some((o) => (o.excludeKinds || []).includes('chat')), '见闻-2 C5d：家常话照旧召回聊天记忆');
+  const wB = mkWallet('noLoop'); const evB = await runChat(wB, '说说你今天都看了什么视频');
+  ok(wB.calls.some((c) => c.fn === 'say' && c.prompt.includes('不要编造具体的事实、数字、链接')) && evB.at(-1)?.type === 'done', '见闻-2 C6：宿主模型 / 工具用不了 → 退回老的 wallet.say + 老提示词');
+  const wC = mkWallet('noloopfn'); await runChat(wC, '你好');
+  ok(wC.calls.length === 1 && wC.calls[0].fn === 'say', '见闻-2 C6b：wallet 没有 loop 也能聊（老路）');
+  const wD = mkWallet('ok'); await runChat(wD, '你好', { chatTools: null });
+  ok(wD.calls.length === 1 && wD.calls[0].fn === 'say', '见闻-2 C6c：没给房间工具 → 老路');
+  const wE = mkWallet('broke'); const evE = await runChat(wE, '你好');
+  ok(evE.at(-1)?.type === 'done' && evE.at(-1).broke === true && !wE.calls.some((c) => c.fn === 'say'), '见闻-2 C7：花光了照旧回规则台词，不再去花钱走老路');
+  const idx = read('src/host/index.js');
+  ok(/from:\s*'room'/.test(idx) && /registerLifeRoutes\([\s\S]{0,800}chatTools/.test(idx) && /registerLifeRoutes\([\s\S]{0,800}seenLog/.test(idx), '见闻-2 W1：index.js 把房间工具（from room）和流水账交给聊天路由');
+}
+/* ===== F-86 见闻-2 验收 结束 ===== */
+{ // 总指挥验收补（见闻-2）：退回老路的几种情况、次数用完的话、最后一个信号作数
+  const { Readable } = await import('node:stream');
+  const LR3 = await import(pathToFileURL(join(plugin, 'src/host/life-routes.js')).href);
+  const TLP3 = await import(pathToFileURL(join(plugin, 'src/host/trip-loop.js')).href);
+  ok(LR3.asksAboutSeen('你最近b站看到什么') && LR3.asksAboutSeen('今天看了些什么呀') && !LR3.asksAboutSeen('晚饭吃什么'), '见闻-2 验收补：小写 b站、「看了些什么」也算问见闻；「吃什么」不算');
+  const l = { n: 0, async *stream() { this.n += 1; yield { type: 'block-end', index: 0, block: { type: 'tool-call', id: `x${this.n}`, name: 't', arguments: '{}' } }; yield { type: 'finish', reason: { kind: 'tool-calls' } }; } };
+  const seenMsgs = []; const tool = { name: 't', description: 'x', parameters: { type: 'object', properties: {} }, execute: async () => ({ ok: true }) };
+  await TLP3.runToolLoop({ llm: l, provider: 'p', model: 'm', system: '', prompt: 'p', tools: [tool], maxCalls: 1, maxTurns: 3, overNote: '按已经翻到的回答', onCall: () => {} });
+  ok(read('src/host/wallet.js').includes('overNote') && !/overNote:\s*'[^']*JSON/.test(read('src/host/wallet.js')), '见闻-2 验收补：房间聊天次数用完的提示不是「只输出 JSON」');
+  const routes = {}; const scopeF = { effect: (fn) => fn(), webServer: { register: (r) => { routes[r.path] = r.handler; } } };
+  const cdir = mkdtempSync(join(tmpdir(), 'yushe-chat86b-'));
+  const CL = LE.createLife(cdir); const cf = { id: 'chat86b', name: '小试', parentCall: '妈妈', personaText: '我是小鱼', createdAt: new Date().toISOString() }; CL.state(cf);
+  const run = async (loopImpl, text = '你今天看了什么视频') => {
+    const calls = []; const w = { view: () => ({ unlimited: true, broke: false }), busy: null, chargeTokens() {}, say: async (k, p, d) => { calls.push('say'); d?.('老路回话'); return { text: '老路回话' }; }, loop: async (k, o) => { calls.push('loop'); return loopImpl(o); } };
+    for (const k of Object.keys(routes)) delete routes[k];
+    LR3.registerLifeRoutes({ ctx: {}, scope: scopeF, pond: { current: () => cf, list: () => ({ fish: [cf] }) }, life: CL, wallet: w, letters: null, gate: null, inbox: null, dms: null, memory: null, storage: cdir, isLoopbackRequest: () => true, writeJson: () => {}, chatTools: () => [tool], seenLog: null });
+    const req = Readable.from([Buffer.from(JSON.stringify({ text }))]); req.method = 'POST';
+    const out = []; await routes[LR3.CHAT_PATH](req, { setHeader() {}, write: (s) => out.push(String(s)), end() {} });
+    return { calls, ev: out.join('').split('\n').filter(Boolean).map((x) => JSON.parse(x)) };
+  };
+  const a1 = await run(async () => { throw new Error('模型不支持工具'); });
+  ok(a1.calls.join() === 'loop,say' && a1.ev.at(-1).type === 'done' && a1.ev.at(-1).text === '老路回话', '见闻-2 验收补：一个字没说就出错（比如模型不支持工具）→ 退回老路');
+  const a2 = await run(async () => ({ text: '<sig>{"affection":1}</sig>', calls: [] }));
+  ok(a2.calls.join() === 'loop,say' && a2.ev.at(-1).text === '老路回话', '见闻-2 验收补：只调了工具、一句没说 → 退回老路');
+  const a3 = await run(async (o) => { o.onDelta('翻到一半'); throw new Error('断了'); });
+  ok(a3.calls.join() === 'loop' && a3.ev.at(-1).type === 'error', '见闻-2 验收补：已经说了一半才出错 → 报错，不再接一段老路的话');
+  const a4 = await run(async () => ({ text: '我翻翻<sig>{"hurt":2}</sig>找到了！<sig>{"affection":2,"topics":["猫"]}</sig>', calls: [] }), '你好呀');
+  const a5 = await run(async (o) => { o.beforeCall?.('bili_subtitle', {}); o.onDelta('讲的是猫'); return { text: '讲的是猫', calls: [{ name: 'bili_subtitle', ok: true }], tokens: 321 }; });
+  ok(a5.ev[0]?.type === 'tool' && /视频/.test(a5.ev[0].text) && a5.ev.at(-1).tokens === 321 && a5.ev.at(-1).toolCalls === 1, '见闻-2 用户审查补：调工具时先推一行状态（页面不只是「…」）；done 带这一句花了多少');
+  ok(read('src/game/main.js').includes("m.type === 'tool'") && read('src/prompts/chat-tools.md').includes('别报统计数字'), '见闻-2 用户审查补：页面认 tool 状态；提示词不让她报统计数字');
+  ok(a4.ev.at(-1).type === 'done' && a4.ev.at(-1).text === '我翻翻找到了！' && !(a4.ev.at(-1).moodDelta < 0), '见闻-2 验收补：一句话分几轮时只认最后一个信号块');
+}
+
 /* ---------- 4. 脱敏 ---------- */
 section('脱敏（plugin/ tools/）');
 const walk = (d) => readdirSync(d).flatMap((n) => { const p = join(d, n); return statSync(p).isDirectory() ? (n === 'node_modules' ? [] : walk(p)) : [p]; });

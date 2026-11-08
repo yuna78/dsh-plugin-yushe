@@ -59,6 +59,29 @@ export function chatPrompt({ persona, lifeText, sleeping, call, moodText, memory
   });
 }
 
+/** 她在调工具时页面上显示的一行（F-86 用户审查：别让爸妈对着「…」以为卡住了）。 */
+export const TOOL_STATUS = { yushe_seen: '在翻今天的见闻…', yushe_recall: '在想以前的事…', bili_video: '回 B站看那条视频了…', bili_subtitle: '在看那条视频讲了啥…' };
+
+/** 问的是「你看过 / 刷到 / 看到什么」吗（F-86 见闻-2）：是 → 聊天先用工具翻流水账；「今天开心吗」「我爱你」这类家常话不算。 */
+const SEEN_RE = /(?:看|刷|逛)(?:了|到|过)?.{0,4}(?:什么|啥)|(?:视频|新闻|B\s*站|见闻)/i;
+export function asksAboutSeen(text) {
+  return SEEN_RE.test(String(text || ''));
+}
+
+/** 房间聊天的工具版提示词（本体在 prompts/chat-tools.md，F-86 见闻-2）：多一个 overview（今天的见闻概览，空就整段不加）。 */
+export function chatToolsPrompt({ persona, lifeText, sleeping, call, moodText, memoryText = '', history = [], kb = '', text, overview = '', sig = SIG_INSTRUCTION }) {
+  const extraBlock = [
+    memoryText ? `\n${memoryText}\n` : '',
+    history.length ? `\n刚才的对话：\n${history.join('\n')}\n` : '',
+    kb ? `\n${fill(PROMPTS['chat-kb'], { call })}\n${kb}\n` : '',
+  ].join('');
+  return dropLines(fill(PROMPTS['chat-tools'], {
+    persona: persona || '', lifeText: lifeText || '', call, text, moodText, sig, extraBlock,
+    overview: overview || DROP, // 今日见闻概览有自己的段（chat-tools.md 的 {{overview}}）；空就整行删
+    nowLine: fill(PROMPTS[sleeping ? 'chat-sleep' : 'chat-home'], { call }),
+  }));
+}
+
 /** 零花钱花光时的日记：规则把今天的事串成流水账（ai: false）。 */
 export function ruleDiary(fish, s, day, life) {
   const ev = life.eventsOf(s, day).map((e) => e.text).slice(-6);
@@ -81,7 +104,7 @@ export async function writeDiary({ wallet, life, memory = null }, fish, day) {
   }
 }
 
-export function registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, gate, inbox, dms, memory = null, storage, isLoopbackRequest, writeJson }) {
+export function registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, gate, inbox, dms, memory = null, storage, isLoopbackRequest, writeJson, chatTools = null, seenLog = null }) {
   const guard = (req, res, method) => {
     if (!isLoopbackRequest(req)) { writeJson(res, 403, { ok: false, error: 'loopback requests only' }); return false; }
     if (method && req.method !== method) { writeJson(res, 405, { ok: false, error: 'method not allowed' }); return false; }
@@ -141,15 +164,19 @@ export function registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, ga
     life.pushChat(f, 'user', text);
     const s = life.record(f, 'chat', `和${f.parentCall}聊天：「${text.slice(0, 30)}」`, { mood: 3, visit: true });
     const snap = snapshot(s);
+    // F-86 见闻-2：有 wallet.loop + 房间工具 → 聊天走工具循环（先翻流水账再答）；从上面拿的就是「能不能起循环」
+    const roomTools = (() => { try { if (typeof wallet?.loop !== 'function') return null; const defs = typeof chatTools === 'function' ? chatTools() : null; return Array.isArray(defs) && defs.length ? defs : null; } catch { return null; } })();
     // F-76：爸妈这句话让她想起的事（本地召回，不花 token）；问到鱼社怎么玩才带说明书（F-42，平常聊天不带，省 token）
-    const memoryText = (() => { try { return memory?.section?.(f, { query: text, scope: 'all', people: 0, title: '【这句话让你想起的事】' }) || ''; } catch { return ''; } })();
-    const prompt = chatPrompt({ persona: f.personaText, lifeText: lifeSection(f, s), sleeping: snap.where === 'sleep', call: f.parentCall, moodText: moodTone(snap.mood, f.parentCall).text, memoryText, history, kb: asksAboutGame(text) ? kbText() : '', text });
-    try {
-      // 信号行 <sig>…</sig> 不给人看：流式过滤，最后解析成心情变化（AI 听懂，规则记账）
-      const filt = sigFilter();
-      const r = await wallet.say('chat', prompt, (t) => { const out = filt.push(t); if (out) send({ type: 'delta', text: out }); }, 60_000);
+    // F-86 见闻-2：问「看了啥」时排掉聊天类经历，不复读她自己的含糊话
+    const askSeen = asksAboutSeen(text);
+    const memoryText = (() => { try { return memory?.section?.(f, { query: text, scope: 'all', people: 0, title: '【这句话让你想起的事】', ...(askSeen ? { excludeKinds: ['chat'] } : {}) }) || ''; } catch { return ''; } })();
+    const sayArgs = { persona: f.personaText, lifeText: lifeSection(f, s), sleeping: snap.where === 'sleep', call: f.parentCall, moodText: moodTone(snap.mood, f.parentCall).text, memoryText, history, kb: asksAboutGame(text) ? kbText() : '', text };
+    /** 说完共用的收尾：剥信号、记聊天、记心情、长成长、给页面 done（老路和工具路一样）。 */
+    const finishChat = (r, filt) => {
       const rest = filt.end(); if (rest) send({ type: 'delta', text: rest });
-      const { clean, sig } = parseSignals(r.text);
+      // 工具路一句话可能分好几轮：只认最后一个信号块（前面轮里的丢掉，parseSignals 只取第一个）
+      const sigs = String(r.text || '').match(/<sig>[\s\S]*?<\/sig>/gi) || [];
+      const { clean, sig } = parseSignals(sigs.length > 1 ? String(r.text).replace(/<sig>[\s\S]*?<\/sig>/gi, '') + sigs.at(-1) : r.text);
       life.pushChat(f, 'fish', clean);
       const before = snapshot(life.state(f)).mood;
       const ap = applySignals(sig, { mood: before, call: f.parentCall, dayGain: life.moodGainToday(life.state(f)) });
@@ -167,12 +194,43 @@ export function registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, ga
       } catch { /* 成长记账失败不影响聊天 */ }
       const after = snapshot(life.state(f));
       try { letters?.onMood(f, before, after.mood); } catch { /* 不影响 */ }
-      send({ type: 'done', text: clean, moodDelta: ap.delta, ...after });
+      send({ type: 'done', text: clean, moodDelta: ap.delta, ...(r.tokens ? { tokens: r.tokens, toolCalls: (r.calls || []).length } : {}), ...after }); // tokens：这一句花了多少（用户审查：钱花在哪要看得见）
+    };
+    const brokeLine = () => {
+      const line = snap.where === 'sleep' ? '……呼……（零花钱花光了，睡得更香了）' : `${f.parentCall}，零花钱花光啦，本鱼先躺平～去右上角的设置里给我放点零花钱嘛。`;
+      life.pushChat(f, 'fish', line);
+      send({ type: 'done', text: line, ai: false, broke: true, ...snapshot(life.state(f)) });
+    };
+    try {
+      if (roomTools) {
+        // 工具路：今天的见闻概览拿不到就当空；字照旧过 sigFilter 再推给页面
+        const overview = (() => { try { return seenLog?.overview?.(f) || ''; } catch { return ''; } })();
+        const filt = sigFilter();
+        let r = null, streamed = false;
+        try {
+          r = await wallet.loop('chat', {
+            prompt: chatToolsPrompt({ ...sayArgs, overview }),
+            tools: roomTools, maxCalls: 4,
+            onDelta: (t) => { const out = filt.push(t); if (out) { streamed = true; send({ type: 'delta', text: out }); } }, // 信号行 <sig>…</sig> 不给人看：照旧流式过滤
+            beforeCall: (name) => send({ type: 'tool', name, text: TOOL_STATUS[name] || '在翻东西…' }),
+            timeoutMs: 90_000,
+          });
+        } catch (e) {
+          filt.end(); // 这一轮报废：扣着的字丢掉，别连到后面的老路回话上
+          if (e?.broke) { brokeLine(); return res.end(); }
+          if (e?.noLoop || !streamed) { /* 宿主模型 / 工具用不了，或一个字没说就出错（比如模型不支持工具）：退回老路 */ }
+          else { send({ type: 'error', error: `她没听清：${String(e?.message || e)}` }); return res.end(); }
+        }
+        if (r && parseSignals(r.text).clean) { finishChat(r, filt); return res.end(); }
+        if (r) filt.end(); // 只调了工具、一句没说（超时 / 次数用完）：当没成，退回老路
+      }
+      // 老路：chatPrompt + wallet.say（和搬家前一字不差）
+      const filt = sigFilter();
+      const r = await wallet.say('chat', chatPrompt(sayArgs), (t) => { const out = filt.push(t); if (out) send({ type: 'delta', text: out }); }, 60_000);
+      finishChat(r, filt);
     } catch (e) {
       if (e?.broke) {
-        const line = snap.where === 'sleep' ? '……呼……（零花钱花光了，睡得更香了）' : `${f.parentCall}，零花钱花光啦，本鱼先躺平～去右上角的设置里给我放点零花钱嘛。`;
-        life.pushChat(f, 'fish', line);
-        send({ type: 'done', text: line, ai: false, broke: true, ...snapshot(life.state(f)) });
+        brokeLine();
       } else send({ type: 'error', error: `她没听清：${String(e?.message || e)}` });
     }
     res.end();

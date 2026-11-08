@@ -3,7 +3,7 @@
  *
  *   name        工具名（小写 + 下划线，全表唯一）
  *   kind        read | act | speak | self
- *   expose      { main, trip }：DSH 主会话 / 她自己的出门循环 谁能用
+ *   expose      { main, trip, room }：DSH 主会话 / 她自己的出门循环 / 房间聊天 谁能用（room 只放只读 / 回忆类，F-86）
  *   description 给模型看的说明（中文、不含 emoji）
  *   params      { 参数名: { type, description, enum?, required?, items? } } → 自动变成严格的 JSON Schema
  *   tripParams  出门循环里用的参数（不给就同 params）；说话工具主会话只收意图、出门直接写 text

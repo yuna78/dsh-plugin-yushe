@@ -110,14 +110,15 @@ export function tripSystem({ persona, moodText = '', interests = [], ups = [], f
 
 /**
  * 跑循环。llm = { stream(opts) }（宿主的 llm 服务，测试时给假的）；tools = [{ name, description, parameters, execute(args) }]。
- * 返回 { text, calls: [{ name, ok }], usage: { totalTokens }, turns, stoppedBy }。
+ * 返回 { text, said, calls: [{ name, ok }], usage: { totalTokens }, turns, stoppedBy }。
+ * F-86 见闻-2：可选 onDelta(text)——模型每来一段 text-delta 就调一次（所有轮都推，包括调工具之前那句）；said = 所有轮的话按顺序连起来。
  */
-export async function runToolLoop({ llm, provider, model, system, prompt, tools, maxCalls = 12, maxTurns = null, timeoutMs = 4 * 60_000, maxTokens = null, onCall = null }) {
+export async function runToolLoop({ llm, provider, model, system, prompt, tools, maxCalls = 12, maxTurns = null, timeoutMs = 4 * 60_000, maxTokens = null, onCall = null, onDelta = null, beforeCall = null, overNote = '这趟的工具额度用完了，该回家写游记了（只输出 JSON）' }) {
   const schemas = tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
   const byName = new Map(tools.map((t) => [t.name, t]));
   const messages = [{ role: 'user', content: [{ type: 'text', text: prompt }] }];
   const calls = [];
-  let totalTokens = 0, text = '', stoppedBy = 'stop';
+  let totalTokens = 0, text = '', said = '', stoppedBy = 'stop';
   const turnsMax = maxTurns ?? maxCalls + 3;
   const deadline = Date.now() + timeoutMs;
   for (let turn = 0; turn < turnsMax; turn++) {
@@ -127,6 +128,7 @@ export async function runToolLoop({ llm, provider, model, system, prompt, tools,
     try {
       for await (const ch of llm.stream({ provider, model, system, messages, tools: schemas, signal: controller.signal })) { // 额度用完也照样给工具表（历史里有工具调用），工具会回「额度用完」
         if (ch?.type === 'block-end' && ch.block) blocks.push(ch.block);
+        else if (ch?.type === 'text-delta') onDelta?.(ch.text || ''); // F-86 见闻-2：字一边来一边推
         else if (ch?.type === 'usage') totalTokens += Number(ch.usage?.totalTokens ?? ((ch.usage?.inputTokens || 0) + (ch.usage?.outputTokens || 0))) || 0;
         else if (ch?.type === 'finish') { finish = ch.reason; replayState = ch.replayState; break; }
       }
@@ -136,16 +138,17 @@ export async function runToolLoop({ llm, provider, model, system, prompt, tools,
     messages.push({ id: randomUUID(), role: 'assistant', content: blocks, source: { kind: 'model', provider, model, ...(replayState !== undefined ? { replayState } : {}) } });
     const toolCalls = blocks.filter((b) => b.type === 'tool-call');
     text = blocks.filter((b) => b.type === 'text').map((b) => b.text).join('');
+    said += text; // said = 所有轮的话按顺序连起来（不靠 delta，block-end 的才作数）
     if (finish.kind !== 'tool-calls' || !toolCalls.length) { stoppedBy = finish.kind; break; }
     for (const tc of toolCalls) {
       let result;
-      if (calls.length >= maxCalls) result = { ok: false, error: '这趟的工具额度用完了，该回家写游记了（只输出 JSON）' };
+      if (calls.length >= maxCalls) result = { ok: false, error: overNote }; // 出门 / 梦游用默认那句；房间聊天传自己的（别让她在聊天里吐 JSON）
       else {
         const tool = byName.get(tc.name);
         let args = {}; try { args = tc.arguments ? JSON.parse(tc.arguments) : {}; } catch { args = null; }
         if (!tool) result = { ok: false, error: `没有 ${tc.name} 这个工具` };
         else if (args === null) result = { ok: false, error: '参数不是合法 JSON' };
-        else { result = await tool.execute(args); calls.push({ name: tc.name, ok: result?.ok !== false }); onCall?.(tc.name, args, result); }
+        else { try { beforeCall?.(tc.name, args); } catch { /* 显示失败不影响调工具 */ } result = await tool.execute(args); calls.push({ name: tc.name, ok: result?.ok !== false }); onCall?.(tc.name, args, result); }
       }
       let body = ''; try { body = JSON.stringify(result).slice(0, 6000); } catch { body = '{"ok":false}'; }
       messages.push({ id: randomUUID(), role: 'tool', source: { kind: 'tool', callId: tc.id }, toolCallId: tc.id, content: [{ type: 'text', text: body }], isError: result?.ok === false });
@@ -153,5 +156,5 @@ export async function runToolLoop({ llm, provider, model, system, prompt, tools,
     if (maxTokens && totalTokens > maxTokens) { stoppedBy = 'budget'; break; } // F-79：梦游单次 token 上限（钱不能只靠「开跑前余额」兜）
     if (turn === turnsMax - 1) stoppedBy = 'turns';
   }
-  return { text, calls, usage: { totalTokens }, stoppedBy };
+  return { text, said, calls, usage: { totalTokens }, stoppedBy };
 }

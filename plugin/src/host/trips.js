@@ -12,6 +12,7 @@ import { runToolLoop, tripSystem, collectCatalog, parseReport } from './trip-loo
 import { createLedger } from '../shared/evidence.js';
 import { personaFor, dislikeList } from '../shared/growth.js';
 import { acceptNotes, readList, dislikedFrom, recentNoteUrls } from '../shared/notes.js';
+import { entriesFrom } from '../shared/seen.js';
 import { moodTone } from '../shared/mood.js';
 import { nowMs, nowDate } from './clock.js';
 import { dayOf, snapshot, asleepAt, lifeSection } from './life-engine.js';
@@ -41,7 +42,7 @@ export function notePrompt({ persona, lifeText, gearName = '', call }) {
   });
 }
 
-export function createTrips({ life, wallet, pond, storage, log, habits, biliRead, gate, memory = null, gates = null }) {
+export function createTrips({ life, wallet, pond, storage, log, habits, biliRead, gate, memory = null, gates = null, seenLog = null }) {
   let loop = null; // { tools(ledger) → 出门用的工具成品, model() → { llm, provider, model } }
   const G = gates || createGates({ habits }); // 没传就自己建一个：行为跟旧的 asleepAt + 安静时段一致
   const noteLine = (f, gear) => `${f.parentCall}，我出去逛逛${gear ? `，带上了${souvenirById(gear)?.name}` : ''}，看到有意思的贴进笔记本，路上给你寄明信片～别担心！`;
@@ -138,6 +139,12 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
     const jobId = canLoop ? trackJob({ who: { name: f.name, call: f.parentCall }, mode: 'tools' }) : roamOld();
     if (canLoop) {
       const ledger = createLedger(), catalog = new Map(), acts = {}; // acts：她这趟对哪个视频真做了什么（照片打动分用）
+      // F-86：这趟看过的每一条都进流水账（写失败只记日志，不影响回家）
+      const logSeen = (entries, why) => {
+        if (!seenLog) return;
+        try { seenLog.add(f, entriesFrom({ catalog, ledger: ledger.dump(), acts, ...entries })); }
+        catch (e) { log?.warn?.(`[dsh-yushe] 见闻流水账没写上（${why}）：${String(e?.message || e).slice(0, 120)}`); }
+      };
       const ACT_TOOLS = new Set(['bili_like', 'bili_collect', 'bili_comment', 'bili_reply']);
       const noteAct = (name, args, r) => { const bv = String(args?.bvid || '').match(/^BV[0-9A-Za-z]{10}$/)?.[0]; if (bv && ACT_TOOLS.has(name) && r && r.ok !== false && !args?.undo) (acts[bv] ||= []).push(name); };
       const tools = loop.tools(ledger).map((t) => ({ ...t, execute: async (args) => { const r = await t.execute(args); collectCatalog(catalog, r); noteAct(t.name, args, r); return r; } }));
@@ -167,6 +174,7 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
           const notes = rep.parsed ? acceptNotes({ seen: rep.seen, ledger: dump, catalog, cap: hb.notesPerTrip || 6, recent: recentNoteUrls(life.state(f).journal, nowMs()) }) : null; // 没交游记 → null：不贴便利贴，照旧用看过的前几条（设计 5.2）；交了但一张没贴 → []
           const read = readList({ catalog, ledger: dump, acts, verdict: rep.verdict });
           const dislikes = dislikedFrom({ read: read.read, notes: notes || [] });
+          logSeen({ noted: [...rep.seen, ...(notes || [])], at: new Date(nowMs()).toISOString() }, '回家'); // F-86：游记 seen + 便利贴算 noted
           log?.info?.(`[dsh-yushe] 工具出门：调了 ${r.calls.length} 次工具（${[...new Set(r.calls.map((c) => c.name))].join('、')}），看过 ${catalog.size} 条，游记 ${rep.seen.length} 条${rep.dropped.length ? `，丢掉编的 ${rep.dropped.length} 条` : ''}，${r.usage.totalTokens} tokens`);
           endJob(jobId, { result: { tools: r.calls, seen } });
           life.setTrip(f, { toolCalls: r.calls.map((c) => c.name).slice(0, 40) });
@@ -175,7 +183,7 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
         .catch((e) => {
           log?.warn?.(`[dsh-yushe] 工具出门出错：${String(e?.message || e).slice(0, 120)}${calls ? '' : '，退回老路'}`);
           endJob(jobId, { state: 'error', error: String(e?.message || e).slice(0, 200) });
-          if (!calls) { const old = roamOld(); life.setOut(f, old); } else finish({ seen: [...catalog.values()].slice(0, 4).map((c) => ({ ...c, verified: true, why: '' })), postcard: '', notes: null, read: readList({ catalog, ledger: ledger.dump(), acts }) });
+          if (!calls) { const old = roamOld(); life.setOut(f, old); } else { logSeen({ noted: [], at: new Date(nowMs()).toISOString() }, '出错回家'); finish({ seen: [...catalog.values()].slice(0, 4).map((c) => ({ ...c, verified: true, why: '' })), postcard: '', notes: null, read: readList({ catalog, ledger: ledger.dump(), acts }) }); }
         });
     }
       life.setOut(f, jobId);

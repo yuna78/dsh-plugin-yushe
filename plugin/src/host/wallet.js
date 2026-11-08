@@ -13,7 +13,8 @@
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { hostSay, logProbe } from './probe.js';
+import { hostSay, hostModel, logProbe } from './probe.js';
+import { runToolLoop } from './trip-loop.js';
 import { readJsonBody } from './game-routes.js';
 import { nowDate } from './clock.js';
 import { normalizeAllowance, walletView, charge, configure, usageTokens } from '../shared/allowance.js';
@@ -50,6 +51,21 @@ export function createWallet(ctx, storage) {
         wallet.chargeTokens(kind, tokens);
         logProbe(storage, { kind, ms: r.ms, usage: r.usage, tokens });
         return { ...r, tokens };
+      } finally { busyNow.set(kind, Math.max(0, (busyNow.get(kind) || 1) - 1)); }
+    },
+    /** F-86 见闻-2：花一条带工具的（房间聊天）：用宿主模型 + tools 跑 runToolLoop，照 say 记账。宿主模型拿不到抛 noLoop（调用方退回老路），花光了照旧 BrokeError。 */
+    async loop(kind, { prompt, system = '', tools = [], maxCalls = 4, onDelta = null, beforeCall = null, timeoutMs = 90_000 } = {}) {
+      if (wallet.view().broke) throw new BrokeError();
+      const { llm, provider, model } = hostModel(ctx);
+      if (!llm || !provider || !model) { const e = new Error(llm ? 'DSH 里还没有选择默认模型' : '宿主模型服务 llm 拿不到'); e.noLoop = true; throw e; }
+      busyNow.set(kind, (busyNow.get(kind) || 0) + 1);
+      try {
+        const t0 = Date.now();
+        const r = await runToolLoop({ llm, provider, model, system, prompt, tools, maxCalls, timeoutMs, onDelta, beforeCall, overNote: '这句话能翻的次数用完了，别再调工具，按已经翻到的直接回答。' });
+        const tokens = usageTokens(r.usage, prompt.length + (r.said?.length || r.text?.length || 0));
+        wallet.chargeTokens(kind, tokens); // 每轮的 totalTokens 已在循环里累总，一次记进去
+        logProbe(storage, { kind, ms: Date.now() - t0, usage: { totalTokens: r.usage?.totalTokens }, tokens, calls: r.calls.length });
+        return { text: String(r.said || r.text || '').trim(), tokens, calls: r.calls, provider, model };
       } finally { busyNow.set(kind, Math.max(0, (busyNow.get(kind) || 1) - 1)); }
     },
   };

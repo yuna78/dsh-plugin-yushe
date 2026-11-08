@@ -6,6 +6,7 @@ export default defineTool({
   name: 'bili_video',
   kind: 'read',
   external: true,
+  expose: { main: true, trip: true, room: true }, // F-86：房间追问「那条到底讲了啥」可以回去重看详情
   description: '看一个 B站视频的详情：标题、简介、UP 主、分区、标签、时长、分 P、播放 / 点赞 / 收藏 / 评论数，附前 3 条热门评论。给 BV 号。只读；读到的是标题和简介，不等于看过视频内容（想知道视频里说了什么用 bili_subtitle）。',
   params: { bvid: { type: 'string', description: 'BV 号，比如 BV1xx411c7mD', required: true } },
   endpoints: [{ host: 'api', method: 'GET', path: '/x/web-interface/view' }, { host: 'api', method: 'GET', path: '/x/tag/archive/tags' }, { host: 'api', method: 'GET', path: '/x/v2/reply/main' }],

@@ -183,9 +183,9 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
       return m.episodes.filter((e) => ['comment', 'reply'].includes(e.kind) && e.keys?.bvid && stageOf(e, now, days()) === 'clear').slice(-n).map((e) => e.keys.bvid);
     },
     /** 给模型的一段。scope 'public' 用在对外说话的地方；quotes=false（主会话）时别人的原话只给概括。 */
-    section(fish, { query = '', scope = 'all', limit = recallN(), people = 3, beliefs = 5, title, tail, quotes = true } = {}) {
+    section(fish, { query = '', scope = 'all', limit = recallN(), people = 3, beliefs = 5, title, tail, quotes = true, excludeKinds = null } = {}) {
       try {
-        const items = memory.recall(fish, { query, scope, limit, quotes });
+        const items = memory.recall(fish, { query, scope, limit, quotes, excludeKinds });
         const ppl = people ? memory.people(fish, { limit: people, parents: false }) : [];
         const m = load(fish);
         const bl = beliefs ? beliefsFor(m, { scope, limit: beliefs }) : []; // 只给想明白了的（二期：暂定的先不注入）
