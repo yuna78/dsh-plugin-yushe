@@ -168,7 +168,7 @@ export function registerRoomRoutes({ ctx, scope, pond, life, wallet, letters, tr
     if (!imageApiReady(storage)) return writeJson(res, 200, { ok: false, error: '还没配好生图 API（地址和 key 都要填）' });
     const gear = life.bag(f).gear;
     try {
-      const { id } = await generatePhoto(storage, photoPrompt({ proto: f.proto, tags: Object.keys(life.state(f).growth?.interests || {}), gear }));
+      const { id } = await generatePhoto(storage, photoPrompt({ proto: f.proto, frame: 'stepin', gear }));
       life.addPhoto(f, { at: nowDate().toISOString(), photo: id, caption: '试拍一张', trip: 'test' });
       writeJson(res, 200, { ok: true, id, url: `${PHOTO_PREFIX}${id}` });
     } catch (e) { writeJson(res, 200, { ok: false, error: String(e?.message || e).slice(0, 160) }); }

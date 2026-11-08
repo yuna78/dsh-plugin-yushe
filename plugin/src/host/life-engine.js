@@ -112,14 +112,16 @@ export function tickTrip(fish, s, now) {
   }
   if (now < (tr.returnAt || 0)) return null;
   // 回家
-  if (tr.postcard) s.journal = [...(s.journal || []), { at: new Date(tr.returnAt).toISOString(), text: tr.postcard, seen: (tr.seen || []).slice(0, 6), trip: tr.id, final: true }].slice(-200);
-  // 照片（配了生图 API 才有）：回家时放进相册
-  if (tr.photoId) s.album = [...(s.album || []), { at: new Date(tr.returnAt).toISOString(), photo: tr.photoId, caption: String(tr.postcard || tr.note || '').split(/[。！!？?\n]/)[0].slice(0, 60), trip: tr.id }].slice(-100);
+  // 照片（F-74）：每张挂着拍的是哪条见闻；见闻里那条带上照片 id（缩略图），没拍成的记一行「她想拍下」
+  const photos = [...(tr.photos || []), ...(tr.photoId ? [{ photo: tr.photoId, caption: String(tr.postcard || tr.note || '').split(/[。！!？?\n]/)[0].slice(0, 60), trip: tr.id }] : [])];
+  const seenOut = (tr.seen || []).slice(0, 6).map((x) => { const p = photos.find((ph) => ph.ref?.url === x.url); return p ? { ...x, photo: p.photo } : x; });
+  if (tr.postcard || tr.wantPhoto) s.journal = [...(s.journal || []), { at: new Date(tr.returnAt).toISOString(), text: tr.postcard || '', seen: seenOut, trip: tr.id, final: true, ...(tr.wantPhoto && !photos.length ? { wantPhoto: tr.wantPhoto } : {}) }].slice(-200);
+  for (const p of photos) s.album = [...(s.album || []), { at: new Date(tr.returnAt).toISOString(), ...p }].slice(-100);
   const got = tr.souvenirs || [];
   s.bag = addToBag(s.bag, got);
   const names = got.map((id) => souvenirById(id)?.name).filter(Boolean);
   const day = dayOf(new Date(now));
-  s.events = [...(s.events || []), { at: new Date(tr.returnAt).toISOString(), day, kind: 'back', text: tr.failed ? '出门转了一圈，没带回什么就回家了' : `逛完回家了，记下 ${(tr.cards || []).length + (tr.postcard ? 1 : 0)} 条见闻${tr.photoId ? '、拍了一张照片' : ''}${names.length ? `，带回了${names.join('、')}` : ''}` }].slice(-MAX_EVENTS);
+  s.events = [...(s.events || []), { at: new Date(tr.returnAt).toISOString(), day, kind: 'back', text: tr.failed ? '出门转了一圈，没带回什么就回家了' : `逛完回家了，记下 ${(tr.cards || []).length + (tr.postcard ? 1 : 0)} 条见闻${photos.length ? `、拍了${photos[0].ref?.title ? `一张《${photos[0].ref.title}》的照片` : '一张照片'}${photos.length > 1 ? `等 ${photos.length} 张` : ''}` : ''}${names.length ? `，带回了${names.join('、')}` : ''}` }].slice(-MAX_EVENTS);
   if (!tr.failed) { s.mood = clamp(s.mood + 5); s.energy = clampF(s.energy - 8); }
   if (s.growth && !tr.failed) {
     s.growth = gainXp(s.growth, 'back', { ageDays: Math.floor((now - (s.bornAt || now)) / 86400e3), at: new Date(now).toISOString() });
@@ -200,7 +202,13 @@ export function createLife(dir) {
     },
     eventsOf: (s, day) => (s.events || []).filter((e) => e.day === day),
     /** 照片晚到（这一趟已经回家了）：直接放进相册。 */
-    addPhoto(fish, entry) { const s = load(fish); s.album = [...(s.album || []), entry].slice(-100); save(s); return s.album; },
+    addPhoto(fish, entry) {
+      const s = load(fish);
+      s.album = [...(s.album || []), entry].slice(-100);
+      // 见闻里那趟的总结也挂上缩略图（F-74）
+      if (entry.ref?.url && entry.trip) s.journal = (s.journal || []).map((j) => (j.final && j.trip === entry.trip ? { ...j, seen: (j.seen || []).map((x) => (x.url === entry.ref.url && !x.photo ? { ...x, photo: entry.photo } : x)), wantPhoto: undefined } : j));
+      save(s); return s.album;
+    },
     addPostcard(fish, card) {
       const s = load(fish);
       s.album = [...(s.album || []), card].slice(-100);

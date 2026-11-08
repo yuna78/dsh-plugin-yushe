@@ -12,7 +12,7 @@
 export const DEFAULT_JAR = 5_000_000;
 export const DEFAULT_DAILY = 300_000;
 export const MODES = ['jar', 'daily', 'free'];
-export const KIND_LABEL = { chat: '聊天', greet: '打招呼', news: '念新闻', diary: '日记', roam: '出门', first: '破壳第一句', probe: '探针', letter: '写信', note: '字条', plan: '日程', dm: '回私信', speak: '在 B站说话', reflect: '睡前反思' };
+export const KIND_LABEL = { chat: '聊天', greet: '打招呼', news: '念新闻', diary: '日记', roam: '出门', first: '破壳第一句', probe: '探针', letter: '写信', note: '字条', plan: '日程', dm: '回私信', speak: '在 B站说话', reflect: '睡前反思', photo: '拍照' };
 
 const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 

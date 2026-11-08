@@ -21,6 +21,7 @@ export const KINDS = {
   mood: { imp: 3, scope: 'home' },
   diary: { imp: 3, scope: 'home' },
   postcard: { imp: 3, scope: 'public' },
+  photo: { imp: 3, scope: 'public' }, // F-74：被打动到拍下来的那一刻，记得比看过的视频久
   comment: { imp: 3, scope: 'public' },
   reply: { imp: 3, scope: 'public' },
   post: { imp: 3, scope: 'public' },

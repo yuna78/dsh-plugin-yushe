@@ -50,6 +50,10 @@ export function archiveItems({ fish, life = {}, footprints = [], inbox = [], dms
       out.push({ key: `s:${bvid || x.url}`, at: j.at, kind: 'seen', text: `${bvid ? '在 B站看了' : `在${short(x.source, 10) || '网上'}看到`}《${short(x.title, 50)}》${!j.final && j.text ? `，${short(j.text, 40)}` : ''}`, url: x.url, keys: { bvid, tag: x.tag, who: x.up, mid: x.mid } });
     }
   }
+  for (const p of life.album || []) if (p.photo && p.at && p.ref?.title) {
+    const bvid = String(p.ref.url || '').match(/BV[0-9A-Za-z]{10}/)?.[0];
+    out.push({ key: `p:${p.photo}`, at: p.at, kind: 'photo', text: `看《${short(p.ref.title, 40)}》时被打动，拍了一张照片${p.moment ? `：${short(p.moment, 50)}` : ''}`, url: p.ref.url || undefined, keys: { bvid } });
+  }
   for (const f of footprints) {
     const kind = FOOT_KINDS[f.kind];
     if (!kind || !f.at) continue;

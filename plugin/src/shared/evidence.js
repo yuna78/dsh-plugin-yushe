@@ -19,6 +19,7 @@ export function createLedger() {
       if (tool === 'bili_subtitle' && result.has) add(bvid, 'subtitle');
       else if (tool === 'bili_danmaku') add(bvid, 'danmaku');
       else if (tool === 'bili_comments' || tool === 'bili_comment_thread') add(bvid, 'comments');
+      else if (tool === 'bili_video' && bvid) { add(bvid, 'meta'); add(bvid, 'detail'); } // 点进详情（F-74：照片打动分要分清「扫过标题」和「点进去了」）
       else if (bvid) add(bvid, 'meta');
       for (const v of [...(result.videos || []), ...(result.items || []).map((x) => x.video).filter(Boolean)]) add(v.bvid, 'meta');
     },

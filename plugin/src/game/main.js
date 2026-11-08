@@ -1000,7 +1000,7 @@ $('diaryWrite2').addEventListener('click', async () => {
 let APP = 'album';
 // 右上角各入口的页面（F-45 / F-46 / F-47）：不再有手机那排二级入口，点哪个就是哪一页
 const BOOK_TITLE = { letters: '信箱', album: '相册', journal: '见闻', bag: '背包' };
-let MAIL = { list: [], i: 0, unread: new Set() }, PHOTOS = { list: [], i: -1 };
+let MAIL = { list: [], i: 0, unread: new Set() }, PHOTOS = { list: [], i: -1 }, PHOTO_JUMP = null; // PHOTO_JUMP：从见闻缩略图点进来，直接翻到那张
 const navBtns = (i, n, prev, next) => `<div class="lnav"><button class="gb plain sm" data-nav="prev" ${i <= 0 ? 'disabled' : ''}><i class="tri l"></i>${prev}</button><span>${n ? `第 ${i + 1} / ${n}` : ''}</span><button class="gb plain sm" data-nav="next" ${i >= n - 1 ? 'disabled' : ''}>${next}<i class="tri"></i></button></div>`;
 const draftLabel = (d) => d.kind === 'comment' ? `评论 · 在《${esc(d.target?.title || '')}》下面` : d.kind === 'dm' ? `私信 · 回 ${esc(d.target?.who || '网友')}` : '动态';
 // 私信 + 爸妈专线（任务 46）：一段段对话，对方的话只展示
@@ -1038,7 +1038,10 @@ function renderLetter() {
 }
 function renderPhotoView() {
   const { list, i } = PHOTOS, ph = list[i];
-  $('phoneBody').innerHTML = `<div class="pview"><div class="pbig"><img src="${esc(ph.url)}" alt=""></div><div class="pcap">${esc(ph.caption || '')}<br><small style="color:var(--mute)">${esc(ph.at.slice(0, 10))} ${esc(hhmm(ph.at))}</small></div>${navBtns(i, list.length, '上一张', '下一张')}<div style="text-align:center;margin-top:8px"><button class="gb plain sm" data-grid>回到相册</button></div></div>`;
+  // F-74：照片挂着拍的是哪条见闻（点开就是那条），角标是取景法
+  const FRAME = { screen: '隔着屏幕', object: '变成东西', stepin: '走进去' };
+  const src = ph.ref?.title ? `<div class="psrc">拍于《${esc(ph.ref.title)}》${/^https?:\/\//.test(ph.ref.url || '') ? ` · <a href="${esc(ph.ref.url)}" target="_blank" rel="noreferrer">${/bilibili\.com/.test(ph.ref.url) ? '在 B站看' : '去看看'}</a>` : ''}${FRAME[ph.frame] ? ` <span class="pframe">${FRAME[ph.frame]}</span>` : ''}</div>` : '';
+  $('phoneBody').innerHTML = `<div class="pview"><div class="pbig"><img src="${esc(ph.url)}" alt=""></div><div class="pcap">${esc(ph.caption || '')}<br><small style="color:var(--mute)">${esc(ph.at.slice(0, 10))} ${esc(hhmm(ph.at))}</small>${src}</div>${navBtns(i, list.length, '上一张', '下一张')}<div style="text-align:center;margin-top:8px"><button class="gb plain sm" data-grid>回到相册</button></div></div>`;
 }
 async function renderPhone() {
   $('bookTitle').textContent = BOOK_TITLE[APP] || '';
@@ -1078,7 +1081,9 @@ async function renderPhone() {
       }
       body.innerHTML = `${r.configured ? '' : '<div class="cfgnote" style="margin-bottom:10px">生图 API 没配好，新的照片拍不了。<button class="gb plain sm" data-gocfg>去设置</button></div>'}<div class="pgrid">${PHOTOS.list.map((ph, k) => `<div class="ptile" data-ph="${k}"><img src="${esc(ph.url)}" alt="" loading="lazy"><span>${esc(ph.at.slice(5, 10))} ${esc(ph.caption || '')}</span></div>`).join('')}</div>`;
     };
-    grid();
+    const jump = PHOTO_JUMP; PHOTO_JUMP = null;
+    const at = jump ? PHOTOS.list.findIndex((p) => p.photo === jump) : -1;
+    if (at >= 0) { PHOTOS.i = at; renderPhotoView(); } else grid();
     body.onclick = (e) => {
       if (e.target.closest('[data-gocfg]')) { $('phoneM').classList.remove('on'); openCfg(); loadImgApi(); return; }
       const tile = e.target.closest('[data-ph]'); if (tile) { PHOTOS.i = Number(tile.dataset.ph); renderPhotoView(); return; }
@@ -1090,7 +1095,8 @@ async function renderPhone() {
     const [r, fp, ib] = await Promise.all([api('/journal'), api('/footprints').catch(() => ({ items: [] })), api('/inbox').catch(() => ({ foot: {} }))]);
     const fst = (id) => { const st = ib?.foot?.[id]; return st ? ` · ${[st.likes ? `${st.likes} 个赞` : '', st.replies ? `${st.replies} 条回复` : ''].filter(Boolean).join('、')}` : ''; };
     const foot = (fp.items || []).length ? `<div class="drafts"><h4>${ICON('sprout')} 她在 B站留下的足迹</h4>${fp.items.map((x) => `<div class="jentry"><b>${esc(({ comment: '评论', reply: '回复评论', dyncomment: '评论动态', post: '动态', like: '点赞', unlike: '取消点赞', comment_like: '给评论点赞', collect: '收藏', follow: '关注', unfollow: '取关' })[x.kind] || (x.kind === 'dm' ? `私信 · 回 ${x.target?.who || '网友'}` : '动态'))} · ${esc(x.at.slice(0, 10))} ${esc(hhmm(x.at))}${x.uncertain ? ' · 不确定有没有发出去' : ''}${fst(x.id)}</b><p>${esc(x.text)}</p>${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noreferrer">在 B站看</a>` : ''}${x.target?.title ? ` <small style="color:var(--mute)">《${esc(x.target.title)}》</small>` : ''}</div>`).join('')}</div>` : '';
-    body.innerHTML = foot + ((r.entries || []).length ? r.entries.map((c) => `<div class="jentry ${c.final ? 'final' : ''}"><b>${ICON(c.final ? 'postcard' : 'magnifier')} ${esc(c.at.slice(0, 10))} ${esc(hhmm(c.at))}${c.final ? ' · 这一趟的总结' : ''}</b><p>${esc(c.text)}</p>${(c.seen || []).map((s) => `<div>· <a href="${esc(s.url)}" target="_blank" rel="noreferrer">${esc(s.title)}</a>${s.source ? ` <small style="color:var(--mute)">${esc(s.source)}</small>` : ''}</div>`).join('')}</div>`).join('') : `<div class="needcfg">${ICON('magnifier')}<div>还没有见闻。<br>她出门逛的时候，看到有意思的会记下来。</div></div>`);
+    body.innerHTML = foot + ((r.entries || []).length ? r.entries.map((c) => `<div class="jentry ${c.final ? 'final' : ''}"><b>${ICON(c.final ? 'postcard' : 'magnifier')} ${esc(c.at.slice(0, 10))} ${esc(hhmm(c.at))}${c.final ? ' · 这一趟的总结' : ''}</b>${c.text ? `<p>${esc(c.text)}</p>` : ''}${(c.seen || []).map((s) => `<div>· <a href="${esc(s.url)}" target="_blank" rel="noreferrer">${esc(s.title)}</a>${s.source ? ` <small style="color:var(--mute)">${esc(s.source)}</small>` : ''}${s.photo && /^[a-z0-9-]{4,40}$/.test(s.photo) ? ` <img class="jthumb" data-jph="${esc(s.photo)}" src="/api/dsh-yushe/photo/${esc(s.photo)}" alt="她拍的照片" title="她拍的照片">` : ''}</div>`).join('')}${c.wantPhoto?.moment ? `<div class="jwish">${ICON('camera')} 她想拍下：${esc(c.wantPhoto.moment)}</div>` : ''}</div>`).join('') : `<div class="needcfg">${ICON('magnifier')}<div>还没有见闻。<br>她出门逛的时候，看到有意思的会记下来。</div></div>`);
+    body.onclick = (e) => { const t = e.target.closest('[data-jph]'); if (t) { PHOTO_JUMP = t.dataset.jph; openApp('album'); } };
   } else if (APP === 'bag') {
     const b = await api('/bag');
     const gearRow = `<div class="gearslot"><b>出门带上</b>${b.gear ? `<span class="gi">${ICON(b.gear)}${esc(b.items.find((x) => x.id === b.gear)?.name || '')}</span><button class="gb plain sm" data-unequip>拿出来</button>` : '<span class="gempty">（空着。装备放进来，下一趟会有用）</span>'}</div>`;
