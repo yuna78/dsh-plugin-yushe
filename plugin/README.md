@@ -74,17 +74,15 @@ DeepSeek Harness（DSH）插件 · 可视化引导、一键配置，<br>孵一�
 
 接生员「鱼见未来本鱼」带你走一遍：选你是爸爸还是妈妈 → 给宝宝挑一个家 → 挑她上工的工作区 → 撒谷子、开鱼卵 → 捏性格 → 起名 → 破壳，她的第一句话由模型现写。
 
-| | |
-|:---:|:---:|
 | <img src="https://raw.githubusercontent.com/yuna78/dsh-plugin-yushe/main/docs/screenshots/midwife.webp" alt="接生员"> 接生员鱼见未来本鱼 | <img src="https://raw.githubusercontent.com/yuna78/dsh-plugin-yushe/main/docs/screenshots/adopt-home.webp" alt="挑一个家"> 10 间房，挑一个温暖的家 |
+|:---:|:---:|
 | <img src="https://raw.githubusercontent.com/yuna78/dsh-plugin-yushe/main/docs/screenshots/adopt-reveal.webp" alt="开鱼卵"> 开鱼卵：N / R / SR / SSR / UR | <img src="https://raw.githubusercontent.com/yuna78/dsh-plugin-yushe/main/docs/screenshots/adopt-pick.webp" alt="挑一颗"> 三颗卵挑一颗，再挑她最拿手的习惯 |
 | <img src="https://raw.githubusercontent.com/yuna78/dsh-plugin-yushe/main/docs/screenshots/adopt-forge.webp" alt="捏性格"> 200 点五维 + 身世，性格由你来捏 | <img src="https://raw.githubusercontent.com/yuna78/dsh-plugin-yushe/main/docs/screenshots/adopt-name.webp" alt="起名"> 起名、自称、口头禅、不聊的话题 |
 
 ## 她的日常
 
-| | |
-|:---:|:---:|
 | <img src="https://raw.githubusercontent.com/yuna78/dsh-plugin-yushe/main/docs/screenshots/schedule.webp" alt="日程"> **她自己的打算**：每天醒来按性格、爱好、精力想今天干嘛；23:30 写日记 | <img src="https://raw.githubusercontent.com/yuna78/dsh-plugin-yushe/main/docs/screenshots/growth.webp" alt="成长"> **会长大**：五维、性格类型、爱好、关注的 UP 主都会变，每次变化都有原因 |
+|:---:|:---:|
 | <img src="https://raw.githubusercontent.com/yuna78/dsh-plugin-yushe/main/docs/screenshots/dex.webp" alt="图鉴"> **图鉴**：15 种鱼，再领养一条接着收集 | <img src="https://raw.githubusercontent.com/yuna78/dsh-plugin-yushe/main/docs/screenshots/bag.webp" alt="背包"> **背包**：出门捡回来的小东西，装备带上下一趟有用 |
 
 还有：心情和精力（会累、会困、会闹别扭）、给你写信、出门寄明信片、生图 API 配好后拍照片放进相册、小贴士和说明书……
