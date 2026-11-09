@@ -66,7 +66,8 @@ export function createGate({ storage, life, habits, biliRead, biliWrite, log, ga
     save('drafts.json', list);
     if ((d.status === 'sent' || d.status === 'uncertain') && !parent) save('footprints.json', [...load('footprints.json', []), { id: d.id, kind: d.kind, text, at: d.sentAt, url: r.url || null, target: d.target || null, uncertain: d.status === 'uncertain' }].slice(-500));
     if (fish && d.status === 'sent') {
-      if (d.kind === 'dm') life.record(fish, 'dm-sent', parent ? `回了${fish.parentCall}的 B站私信：「${text.slice(0, 30)}」` : `在 B站回了 ${d.target?.who || '网友'} 的私信`, { mood: parent ? 4 : 2 });
+      // 回爸妈的私信记成 dm-sent-parent（对爸妈的被爱），回网友的还是 dm-sent（心情-一期-2 I，docs/设计/16-心情.md）
+      if (d.kind === 'dm') life.record(fish, parent ? 'dm-sent-parent' : 'dm-sent', parent ? `回了${fish.parentCall}的 B站私信：「${text.slice(0, 30)}」` : `在 B站回了 ${d.target?.who || '网友'} 的私信`, { mood: parent ? 4 : 2 });
       else life.record(fish, 'posted', `在 B站发了一条${K[d.kind]?.name || '话'}：「${text.slice(0, 30)}」`, { mood: 5 });
     }
     return { ok: d.status === 'sent', status: d.status, url: r.url || null, error: d.status === 'sent' ? null : r.reason };

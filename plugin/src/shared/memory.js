@@ -17,6 +17,9 @@ export const MAX_PEOPLE = 120;
 const IMP_MULT = [0.15, 0.3, 0.6, 1, 1.8, 4];
 const REINFORCE_MAX = 5;
 
+/* 四期-2 E：最多同时钉住多少条（妈妈 11-09 拍板 20 条）；宿主端 mf 按它拦，这里只是这一个数。 */
+export const MAX_PINNED = 20;
+
 /** 种类 → 重要性 + 范围（规则定，不让模型打分）。 */
 export const KINDS = {
   born: { imp: 5, scope: 'home' },
@@ -145,7 +148,7 @@ export function defangSelf(text) {
 
 /* 改动日志：谁动了记忆一目了然（页面 / 出事回查用），最多 200 条，超了丢最老的。 */
 export const MAX_LOG = 200;
-const LOG_OPS = new Set(['add', 'forget', 'reflect', 'tell', 'untell', 'confirm', 'supersede', 'retire', 'weekly', 'chapter']); // 三期：写下周记 / 章节也记；二期：认识升生效 / 被取代 / 放下也记
+const LOG_OPS = new Set(['add', 'forget', 'reflect', 'tell', 'untell', 'confirm', 'supersede', 'retire', 'weekly', 'chapter', 'mute', 'unmute', 'pin', 'unpin', 'fix', 'drop']); // 三期：写下周记 / 章节也记；二期：认识升生效 / 被取代 / 放下也记；四期-2：爸妈说「不再提 / 记牢」也记；四期-3：爸妈说「你记错了 / 忘了吧」也记
 /** 追加一条日志（改 mem）。entry = { at?, op, n?, text? }；op 不认识就不记。 */
 export function logOp(mem, entry) {
   if (!entry || !LOG_OPS.has(entry.op)) return;
@@ -219,8 +222,9 @@ export function retention(ep, now, baseDays = 30) {
   return Math.pow(0.5, age / halfLife(ep, baseDays));
 }
 const stageOfR = (r) => (r >= 0.5 ? 0 : r >= 0.25 ? 1 : r >= 0.1 ? 2 : 3);
-/** 阶段：按留存算，但不会好过到过的最差阶段（floor）。 */
+/** 阶段：按留存算，但不会好过到过的最差阶段（floor）。钉住的经历（四期-2 E）永远清晰。 */
 export function stageOf(ep, now, baseDays = 30) {
+  if (ep && ep.pinned) return 'clear';
   return STAGES[Math.max(ep.floor || 0, stageOfR(retention(ep, now, baseDays)))];
 }
 
@@ -234,11 +238,12 @@ export function degrade(ep, stage) {
   return out;
 }
 
-/** 推进遗忘：擦细节、删掉忘了的、超出上限丢留存最低的。返回 { mem, forgot, faded }。 */
+/** 推进遗忘：擦细节、删掉忘了的、超出上限丢留存最低的。返回 { mem, forgot, faded }。钉住的（四期-2 E）不擦、不删、不因上限丢。 */
 export function settleMemory(mem, now, baseDays = 30) {
   let forgot = 0, faded = 0;
   const eps = [];
   for (const ep of mem.episodes || []) {
+    if (ep.pinned) { eps.push(ep); continue; } // 钉住的照原样留着
     const st = stageOf(ep, now, baseDays);
     if (st === 'forgotten') { forgot += 1; continue; }
     const d = degrade(ep, st);
@@ -246,7 +251,8 @@ export function settleMemory(mem, now, baseDays = 30) {
     eps.push(d);
   }
   if (eps.length > MAX_EPISODES) {
-    const keep = new Set(eps.map((e) => [e, retention(e, now, baseDays)]).sort((a, b) => b[1] - a[1]).slice(0, MAX_EPISODES).map(([e]) => e.id));
+    // 排序先钉住后留存，超上限时钉住的排在前面永远留（测试 E：钉住的不因上限丢）
+    const keep = new Set(eps.map((e) => [e, retention(e, now, baseDays)]).sort((a, b) => (Number(Boolean(b[0].pinned)) - Number(Boolean(a[0].pinned))) || b[1] - a[1]).slice(0, MAX_EPISODES).map(([e]) => e.id));
     forgot += eps.length - keep.size;
     mem.episodes = eps.filter((e) => keep.has(e.id));
   } else mem.episodes = eps;
@@ -349,6 +355,7 @@ export function recall(mem, { query = '', scope = 'all', limit = 5, chars = 600,
     if (scope === 'public' && ep.scope !== 'public') continue;
     if (kinds && !kinds.includes(ep.kind)) continue;
     if (excludeKinds?.length && excludeKinds.includes(ep.kind)) continue; // F-86 见闻-2：这几类不叫回来（问「看了啥」时不复读她自己的聊天话）
+    if (ep.muted) continue; // 四期-2 D：爸妈说「不再提」的不叫回来
     if (tr && (ms(ep.at) < tr.from || ms(ep.at) >= tr.to)) continue;
     const st = stageOf(ep, now, baseDays);
     if (st === 'forgotten') continue;
@@ -478,7 +485,7 @@ const REFLECT_SKIP = new Set(['feed', 'news', 'like', 'comment_like', 'collect',
 
 /** 反思的素材：还没忘的经历（最近 + 重要的），最多 n 条。用的是已经擦过细节的样子，忘掉的不会回来。 */
 export function reflectCandidates(mem, { now, baseDays = 30, n = 30 } = {}) {
-  const live = (mem.episodes || []).filter((e) => !REFLECT_SKIP.has(e.kind) && stageOf(e, now, baseDays) !== 'forgotten');
+  const live = (mem.episodes || []).filter((e) => !REFLECT_SKIP.has(e.kind) && !e.muted && stageOf(e, now, baseDays) !== 'forgotten'); // 不再提的（四期-2 D）也不给反思挑（四期-2 补 R1）
   const recent = live.filter((e) => now - ms(e.at) < 7 * DAY).slice(-20);
   const important = live.filter((e) => !recent.includes(e)).sort((a, b) => (b.imp - a.imp) || (ms(b.at) - ms(a.at))).slice(0, n - recent.length);
   return [...important, ...recent].sort((a, b) => ms(a.at) - ms(b.at)).slice(-n);
@@ -536,7 +543,7 @@ const evidenceOk = (mem, b, now, baseDays = 30) => {
  */
 export const MAX_BELIEF_HISTORY = 60;
 function retireOverCap(mem, at) {
-  const live = (mem.beliefs || []).filter(alive);
+  const live = (mem.beliefs || []).filter((b) => alive(b) && !b.pinned && (b.source || 'reflect') !== 'parent'); // 四期-2 E：钉住的不参与上限收退役（它自己不算，也不挤别人）；四期-3：爸妈纠的也不（reviewer 11-09）
   if (live.length <= MAX_BELIEFS) return 0;
   const act = live.filter((b) => (b.status || '生效') === '生效'); // 只从想明白了的里挑；还在想的留给 7 天自然收尾（总指挥验收）
   const rank = (b) => (b.n || 1) * 10 + ms(b.lastAt) / DAY / 30; // 和一期同一把尺：想到次数多的、最近想到的留下
@@ -633,7 +640,7 @@ export function settleBeliefs(mem, { now, baseDays = 30, at, day } = {}) {
     if (b.status !== '暂定') continue;
     if (localDay(b.at) === today) continue; // 今天刚想到的先不办：至少要过一夜
     if (!evidenceOk(mem, b, now, baseDays)) { // 站不住：超过 7 天还没升 → 放下（退役，留档）
-      if (nowT - ms(b.at) > 7 * DAY) {
+      if (!b.pinned && nowT - ms(b.at) > 7 * DAY) { // 钉住的（四期-2 E）不因没站住退役，一直挂着想
         b.status = '退役'; b.endedAt = when;
         addChange(mem, { kind: '没站住', before: b.text, scope: b.scope || 'home', at: when });
         logOp(mem, { op: 'retire', at: when, text: b.text });
@@ -653,7 +660,8 @@ export function settleBeliefs(mem, { now, baseDays = 30, at, day } = {}) {
     } else addChange(mem, { kind: '站住了', before: b.text, scope: b.scope || 'home', at: when });
   }
   for (const b of mem.beliefs) { // 生效 → 退役：依据全忘了，还一个多月没再想到
-    if (b.status !== '生效' || nowT - ms(b.lastAt) <= 30 * DAY || citedEpisodes(mem, b, now, baseDays).length) continue;
+    if (b.status !== '生效' || b.pinned || nowT - ms(b.lastAt) <= 30 * DAY || citedEpisodes(mem, b, now, baseDays).length) continue; // 钉住的（四期-2 E）依据全忘也不退役
+    if ((b.source || 'reflect') === 'parent') continue; // 四期-3 I：爸妈纠的说法（source 'parent'）本来就没有依据，也不因「依据全忘」退役——爸妈说对了就是对了（settleBeliefs 照现行规则它会被退役，必须豁免）
     b.status = '退役'; b.endedAt = when;
     res.retired.push(b.text);
     addChange(mem, { kind: '不再这么想', before: b.text, ...(b.why ? { why: String(b.why).slice(0, 20) } : {}), scope: b.scope || 'home', at: when });
@@ -668,6 +676,7 @@ export function settleBeliefs(mem, { now, baseDays = 30, at, day } = {}) {
 export function beliefsFor(mem, { scope = 'all', limit = 5 } = {}) {
   return (mem.beliefs || [])
     .filter(alive)
+    .filter((b) => !b.muted) // 四期-2 D：不再提的不进注入
     .filter((b) => (b.status || '生效') === '生效')
     .filter((b) => scope !== 'public' || b.scope === 'public')
     .slice().sort((a, b) => ((b.n || 1) - (a.n || 1)) || (ms(b.lastAt) - ms(a.lastAt))).slice(0, limit);
@@ -697,17 +706,19 @@ export function cleanTold(text) {
   return { ok: true, text: t };
 }
 
-/** 记一条（改 mem）。返回 { ok, item, merged? } 或 { ok: false, why }。 */
-export function tell(mem, text, { at, today }) {
+/** 记一条（改 mem）。返回 { ok, item, merged? } 或 { ok: false, why }。at = 记下那一刻；due 按这一刻算好存进那一条，以后不再重新解释（四期-1 C）。 */
+export function tell(mem, text, { at, today } = {}) {
   const c = cleanTold(text);
   if (!c.ok) return c;
   mem.told = Array.isArray(mem.told) ? mem.told : [];
+  const due = dueOf(c.text, typeof at === 'number' ? at : Date.parse(at) || 0); // 没日子的不硬放一个
   const same = mem.told.find((x) => sim(x.text, c.text) >= 0.6);
-  if (same) { same.text = c.text; same.at = at; return { ok: true, item: same, merged: true }; }
+  if (same) { same.text = c.text; same.at = at; if (due) same.due = due; else delete same.due; return { ok: true, item: same, merged: true }; } // 同一句话合并更新时 due 也重算
   if (mem.told.filter((x) => localDay(x.at) === today).length >= TOLD_PER_DAY) return { ok: false, why: `今天已经记了 ${TOLD_PER_DAY} 件了，明天再说` };
-  if (mem.told.length >= MAX_TOLD) return { ok: false, why: `已经记着 ${MAX_TOLD} 件了，先让她忘掉一件（forget）再记` };
+  const live = mem.told.filter((x) => { if (x.muted) return false; const a = toldDueAge(x, today); return a == null || a <= 7; }); // 过了 7 天以上的不算进上限（还在存档里、list 里能看到）；不再提的也不算（四期-2 D7）
+  if (live.length >= MAX_TOLD) return { ok: false, why: `已经记着 ${MAX_TOLD} 件了，先让她忘掉一件（forget）再记` };
   mem.seq = (mem.seq || 0) + 1;
-  const item = { id: `T${mem.seq.toString(36)}`, text: c.text, at };
+  const item = { id: `T${mem.seq.toString(36)}`, text: c.text, at, ...(due ? { due } : {}) };
   mem.told.push(item);
   return { ok: true, item };
 }
@@ -717,6 +728,135 @@ export function untell(mem, id) {
   const i = (mem.told || []).findIndex((x) => x.id === String(id));
   if (i < 0) return { ok: false, why: '没有这一条（先 list 看看编号）' };
   return { ok: true, item: mem.told.splice(i, 1)[0] };
+}
+
+/* ---------- 四期-3 · 爸妈说「你记错了 / 忘了吧」：规则算，模型只传话。两步走（起草 / 确认）见 src/host/memory.js 的起草单 ---------- */
+
+/** 四种能办的格子：what 给爸妈看的种类（起草单复述用）、log 写进改动日志的种类词（drop 只写种类，不写内容，J8）。 */
+const ITEM_KINDS = {
+  M: { what: '一件经历', log: '经历', arr: 'episodes' },
+  B: { what: '一条认识', log: '认识', arr: 'beliefs' },
+  T: { what: '爸妈让记的', log: '要记的', arr: 'told' },
+  W: { what: '一篇周记', log: '周记', arr: 'weeklies' },
+};
+
+/** 编号 → 那一条（四种格子通用）。返回 { ok, kind: ITEM_KINDS[pfx], item } 或 { ok: false, why }。 */
+export function findTarget(mem, id) {
+  const sid = String(id ?? '').trim();
+  const k = ITEM_KINDS[sid[0]];
+  if (!k) return { ok: false, why: '没有这一条（编号不对，先用 yushe_recall 按爸妈说的话找到编号）' };
+  const item = (Array.isArray(mem[k.arr]) ? mem[k.arr] : []).find((x) => x && x.id === sid);
+  if (!item) return { ok: false, why: '没有这一条（编号不对，先用 yushe_recall 按爸妈说的话找到编号）' };
+  return { ok: true, kind: k, item };
+}
+
+/**
+ * 四期-3 I：爸妈纠认识（改 mem）。旧的让位成「被取代」、记 supersededBy 和 endedAt；
+ * 新的一条就是爸妈说的：source 'parent'、当场生效（不用攒依据）、why 写「爸妈纠正过」，认识里的其他字段接着旧的来。
+ * changes 记「取代」并带 by: 'parent'（记清这是爸妈办的）。返回新的一条。
+ */
+export function fixBelief(mem, old, text, { at, call = '爸妈' } = {}) {
+  mem.seq = (mem.seq || 0) + 1;
+  const b = { id: `B${mem.seq.toString(36)}`, text, why: `${clean(call, 10) || '爸妈'}纠正过`, effect: '', about: old.about, scope: old.scope || 'home', source: 'parent', status: '生效', from: [], at, lastAt: at, n: 1, confirmedAt: at };
+  old.status = '被取代'; old.supersededBy = b.id; old.endedAt = at;
+  mem.beliefs = Array.isArray(mem.beliefs) ? mem.beliefs : [];
+  mem.beliefs.push(b);
+  addChange(mem, { kind: '取代', before: old.text, after: b.text, by: 'parent', scope: b.scope, at });
+  return b;
+}
+
+/** fix 的那条旧说法前 20 字（写进改动日志，爸妈在页面对得出是哪条，I4）。 */
+export const fixLogText = (kindLog, old) => `${kindLog}「${String(old ?? '').slice(0, 20)}」`;
+
+/**
+ * 四期-3 J：爸妈让忘掉的那条（改 mem，确认之后才调）。
+ *   M 经历从 episodes 删掉，去重记号（cursors.keys）留着，档案里的原件不会再被抄回来；
+ *   B 认识删掉时，changes 里写它原话（before / after）的也一起删，历史里不留着一条已经忘掉的；
+ *   T 爸妈让记的照 untell 删；W 周记从 weeklies 删。
+ * 档案（life 里的日记、笔记本、足迹…）一个字都不动。返回 { ok, kind, item }或 { ok: false, why }。
+ */
+export function dropItem(mem, id) {
+  const f = findTarget(mem, id);
+  if (!f.ok) return f;
+  const arr = Array.isArray(mem[f.kind.arr]) ? mem[f.kind.arr] : [];
+  const i = arr.indexOf(f.item);
+  arr.splice(i, 1);
+  mem[f.kind.arr] = arr;
+  if (f.kind.arr === 'beliefs') { // 删认识时把提它原话的 changes 清掉（J6）
+    const t = f.item.text;
+    mem.changes = (mem.changes || []).filter((c) => c.before !== t && c.after !== t);
+  }
+  return { ok: true, kind: f.kind, item: f.item };
+}
+
+/** drop 的改动日志 text：只写种类、不写内容（J8：忘掉的就别在日志里留着）。 */
+export const dropLogText = (kind) => kind.log;
+
+/* ---------- 四期-1 C · 带日子的嘱咐：爸妈说「下周三我出差」，记下那一刻就算好是哪一天，以后不再按「现在」重新解释 ---------- */
+const WEEK_CN = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']; // 0 = 周一
+const weekdayOf = (ymd) => (new Date(ymdMs(ymd)).getDay() + 6) % 7;
+/** 一条嘱咐到期过了几天（本机自然日；0 = 就是今天，负 = 还没到）。没 due 或写法不对 → null。 */
+export function toldDueAge(x, today) {
+  if (!isYmd(x?.due) || !isYmd(today)) return null;
+  return Math.round((ymdMs(today) - ymdMs(x.due)) / DAY);
+}
+/** 这条嘱咐注进提示词的那行文字（爸妈让记的专有，memoryText 本身不动，预先把文字改好递给它）：
+ *  没日子 → 原样一字不差；due 是今天 → 括号里提醒她自然地问一句；还没到 → （MM-DD 周X）；过了 ≤ 7 天 → （MM-DD，已经过去了）；过了 > 7 天 → ''（不再注入，还在存档里）。 */
+export function toldLine(x, today) {
+  const t = String(x?.text ?? '');
+  const age = toldDueAge(x, today);
+  if (age == null) return t;
+  if (age > 7) return '';
+  if (age === 0) return `${t}（就是今天，跟爸妈说话时自然地提一句、问一句）`;
+  if (age < 0) return `${t}（${x.due.slice(5)} ${WEEK_CN[weekdayOf(x.due)]}）`;
+  return `${t}（${x.due.slice(5)}，已经过去了）`;
+}
+
+const DAY_IDX = { 一: 0, 二: 1, 三: 2, 四: 3, 五: 4, 六: 5, 日: 6, 天: 6 };
+const REL_DAYS = { 大后天: 3, 后天: 2, 明天: 1, 今晚: 0, 今天: 0, 今日: 0, 今早: 0 };
+/** 实际存在的日子（不认 2 月 30 日这种）→ 'YYYY-MM-DD'（本机时区）。 */
+const dueYmd = (y, mo, d) => { const t = new Date(y, mo - 1, d).getTime(); const c = new Date(t); return c.getFullYear() === y && c.getMonth() === mo - 1 && c.getDate() === d ? localDay(t) : undefined; };
+/** 带年份的完整日子：MM-DD 前面正好是这一年（YYYY- 或 YYYY年）就不重复认。 */
+const underYear = (s, i) => /(?:\d{4})(?:年|-|\/|\.)/.test(s.slice(Math.max(0, i - 5), i));
+/**
+ * 那句话里说的是哪一天 → 'YYYY-MM-DD' 或 null（本机日期）。只认将来和今天；说的是过去的日子返回 null。
+ * 认：今天 / 今晚、明天、后天、大后天、N天后（阿拉伯或一到十）、下/这/本周X（周 / 星期 / 礼拜）、M月D日 / M月D号 / M-D（今年已过 → 明年那天）、YYYY-MM-DD / YYYY年M月D日（过去的返回 null）。
+ * 一句话里有多个说法时取第一个出现的。
+ */
+export function dueOf(text, now) {
+  const s = String(text ?? '').replace(/[０-９]/g, (c) => String(c.charCodeAt(0) - 0xff10)); // 全角数字当半角（reviewer 11-09）
+  if (!s) return null;
+  const t0 = now instanceof Date ? now.getTime() : typeof now === 'number' ? now : ms(now);
+  if (!Number.isFinite(t0) || !t0) return null;
+  const d0 = new Date(t0); d0.setHours(0, 0, 0, 0);
+  const base = d0.getTime(), todayYmd = localDay(base), wd = (d0.getDay() + 6) % 7; // 本机自然日；周一 = 0
+  const cands = [];
+  const take = (re, mk) => { for (const m of s.matchAll(re)) { const day = mk(m); if (day !== undefined) cands.push({ i: m.index, n: m[0].length, day }); } };
+  take(/大后天|后天|明天|今晚|今天|今日|今早/g, (m) => { const n = REL_DAYS[m[0]]; return n === undefined ? undefined : localDay(base + n * DAY); }); // 今天 / 明天 / 后天 / 大后天
+  take(/(?<![\d-])([一两二三四五六七八九十\d]+)\s*天\s*(?:之|以)?后/g, /* 「10-20 天后」是个范围，不认（reviewer 11-09） */ (m) => { const n = CN_NUM[m[1]] ?? Number(m[1]); return n > 0 && n < 400 ? localDay(base + n * DAY) : undefined; }); // N 天后
+  take(/(?:([上这本下前])个?)?(?:周|星期|礼拜)([一二三四五六日天])/g, (m) => {
+    if (m[1] === '上' || m[1] === '前') return undefined; // 说了过去的那周：不是将来的日子，不认
+    const t = DAY_IDX[m[2]];
+    if (t === undefined) return undefined;
+    if (m[1] === '下') return localDay(base + (7 - wd + t) * DAY); // 下周（周一起算）
+    return localDay(base + ((t - wd + 7) % 7) * DAY); // 本周那一天；已经过了 → 下周；今天就是 → 今天
+  });
+  take(/(?<!\d)(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?!\d)|(?<!\d)(\d{4})年(\d{1,2})月(\d{1,2})日/g, (m) => { // 带年份的完整日子；过去那张票也占住第一个位置（否则后面的 MM-DD 会把它错认成明年）
+    const y = +(m[1] ?? m[4]), mo = +(m[2] ?? m[5]), d = +(m[3] ?? m[6]);
+    const got = mo >= 1 && mo <= 12 && d >= 1 && d <= 31 ? dueYmd(y, mo, d) : undefined;
+    if (!got) return undefined;
+    return got <= todayYmd ? null : got;
+  });
+  take(/(?<!\d)(\d{1,2})月(\d{1,2})[日号](?!\d)|(?<!\d)(\d{1,2})-(\d{1,2})(?!\d)(?!\s*(?:个|件|次|条|本|间|天|小时|分钟|周|岁|人|块|元|斤|页|集|位|只|张))/g, (m) => { // 后面跟量词的「2-3 个」是数量不是日子（reviewer 11-09）
+    if (underYear(s, m.index)) return undefined; // 是某个带年份完整日子的后半截，不重复认
+    const mo = +(m[1] ?? m[3]), d = +(m[2] ?? m[4]);
+    const y = d0.getFullYear();
+    let got = mo >= 1 && mo <= 12 && d >= 1 && d <= 31 ? dueYmd(y, mo, d) : undefined;
+    if (got && got < todayYmd) got = dueYmd(y + 1, mo, d); // 今年已过 → 明年那天
+    return got;
+  });
+  cands.sort((a, b) => a.i - b.i || b.n - a.n); // 先按出现的位置，同处取认得更全的
+  return cands.length ? (cands[0].day ?? null) : null;
 }
 
 /* ---------- 三期 · 回忆录：周记、章节（docs/任务书/记忆-三期-规格.md）。规则算统计、挑哪周、验收、遗忘；模型只写字 ---------- */
@@ -735,7 +875,7 @@ export function weekOf(x) {
   return localDay(d.getTime());
 }
 const inDays = (at, from, to) => { const d = localDay(at); return Boolean(d) && d >= from && d <= to; };
-const weekEps = (mem, week) => (mem.episodes || []).filter((e) => e && inDays(e.at, week, addDays(week, 6)));
+const weekEps = (mem, week) => (mem.episodes || []).filter((e) => e && !e.muted && inDays(e.at, week, addDays(week, 6))); // 不再提的经历（四期-2 D）不进写周记 / 章节的材料和统计（四期-2 补 R6）
 const ownThing = (e) => e.kind !== 'diary' && !OTHER_KINDS.has(e.kind); // 她自己的事（日记另算；别人回她的不算）
 const lifeDiaries = (life, from, to) => (life?.diary || []).filter((d) => d && isYmd(d.day) && d.day >= from && d.day <= to);
 const topOf = (vals, n = 3) => { const c = new Map(); for (const v of vals) if (v) c.set(v, (c.get(v) || 0) + 1); return [...c.entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map(([k]) => k); }; // 同样多按先出现的
@@ -896,7 +1036,7 @@ export function mergeChapters(mem) {
 }
 /** 【这阵子】的两行：最近一篇还没忘的周记的 headline、最近一章的「title：headline」。 */
 export function recentLines(mem, { now, baseDays = 30 } = {}) {
-  const w = (mem.weeklies || []).filter((x) => weeklyStage(x, now, baseDays) !== 'forgotten').sort((a, b) => String(a.to).localeCompare(String(b.to))).at(-1);
+  const w = (mem.weeklies || []).filter((x) => !x.muted && weeklyStage(x, now, baseDays) !== 'forgotten').sort((a, b) => String(a.to).localeCompare(String(b.to))).at(-1); // muted：不进【这阵子】（四期-2 D）
   const c = (mem.chapters || []).slice().sort((a, b) => String(a.toMonth || a.month).localeCompare(String(b.toMonth || b.month))).at(-1);
   return [w ? w.headline : '', c ? `${c.title}：${c.headline}` : ''].filter(Boolean);
 }

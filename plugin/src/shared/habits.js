@@ -15,6 +15,9 @@ export const GROUPS = { out: '出门', read: '读多深', cap: '互动上限', t
 export const HABIT_FIELDS = {
   // —— 设置页上的（ui）——
   autoOut: { label: '她会自己出门', type: 'bool', def: true, ui: true, chat: true, group: 'out' },
+  // 睡觉窗口（F-90）：以前写死在 life-engine（00:00–07:30），可配置；跨午夜也认
+  sleepFrom: { label: '她几点睡', type: 'time', def: '00:00', ui: true, chat: true, group: 'home' },
+  sleepTo: { label: '她几点醒', type: 'time', def: '07:30', ui: true, chat: true, group: 'home' },
   quietFrom: { label: '安静时段开始', type: 'time', def: '22:00', ui: true, chat: true, group: 'home' },
   quietTo: { label: '安静时段结束', type: 'time', def: '09:00', ui: true, chat: true, group: 'home' },
   // 在 B站说话（F-51）：默认过了闸门规矩就自己发；「要我批准」只能爸妈在设置页改（她不能自己给自己放权）

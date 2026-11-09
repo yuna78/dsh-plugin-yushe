@@ -13,7 +13,8 @@ import { createLedger } from '../shared/evidence.js';
 import { personaFor, dislikeList } from '../shared/growth.js';
 import { acceptNotes, readList, dislikedFrom, recentNoteUrls } from '../shared/notes.js';
 import { entriesFrom } from '../shared/seen.js';
-import { moodTone } from '../shared/mood.js';
+// 出门是对外场合（心情-一期-3 A）：给模型的口气只带对 B站 / 外面的情绪（feelSection scene:'public'），家里的不进去
+import { temperOf, feelSection } from '../shared/feel.js';
 import { nowMs, nowDate } from './clock.js';
 import { dayOf, snapshot, asleepAt, lifeSection, TRIP_OUT_ENERGY } from './life-engine.js';
 import { NEWS_SOURCES } from './sources.js';
@@ -151,7 +152,7 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
       const g = s.growth || {};
       const system = tripSystem({
         persona: (() => { try { return personaFor(f, g) || f.personaText; } catch { return f.personaText; } })(),
-        moodText: moodTone(snapshot(s).mood, f.parentCall).text,
+        moodText: feelSection(s.feel, { call: f.parentCall, temper: temperOf(s.growth), scene: 'public' }),
         interests: Object.entries(g.interests || {}).sort((x, y) => y[1].heat - x[1].heat).slice(0, 5).map(([t]) => t),
         ups: Object.entries(g.ups || {}).filter(([, u]) => u.mid).sort((x, y) => y[1].n - x[1].n).slice(0, 3).map(([n, u]) => `${n}（mid ${u.mid}）`),
         favZones: hb.favZones || [], avoidWords: hb.avoidWords || [], maxCalls: hb.tripToolCalls || 12, caps: hb,

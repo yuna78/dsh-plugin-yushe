@@ -26,7 +26,11 @@ export function createHabits(storage, { caps = [] } = {}) {
     fields, knobs,
     get,
     /** 改一部分。only = 'ui'（设置页）/ 'chat'（工具）/ null（宿主内部）。 */
-    patch(p, { only = null } = {}) { const r = patchHabits(get(), p, { fields, only }); if (r.changed.length) write(r.habits); return r; },
+    patch(p, { only = null } = {}) {
+      const r = patchHabits(get(), p, { fields, only });
+      if (r.changed.length) { write(r.habits); try { habits.onChange?.(r.habits, r.changed); } catch { /* 通知失败不影响写 */ } }
+      return r;
+    },
     knobList: () => Object.entries(knobs).map(([key, k]) => ({ key, label: k.label, levels: k.levels, level: knobLevel(get(), key, knobs) })),
     /** 设置页拖档位。档位是「自定义」时要 force（页面先问过爸妈）。 */
     setKnob(key, level, { force = false } = {}) {

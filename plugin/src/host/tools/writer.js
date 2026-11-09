@@ -10,7 +10,8 @@
 import { checkDraft } from '../../shared/gate.js';
 import { evidenceCheck } from '../../shared/evidence.js';
 import { personaFor } from '../../shared/growth.js';
-import { moodTone } from '../../shared/mood.js';
+// 对外发声只带对 B站 / 外面的情绪（心情-一期-3 B）：「此刻的你」由 feelSection 场景给，家里的不进去
+import { temperOf, feelSection } from '../../shared/feel.js';
 // 空行小工具在 shared/prompt.js（搬家-2b 收拢）
 import { fill, DROP, dropLines } from '../../shared/prompt.js';
 import PROMPTS from '../../prompts/_all.js';
@@ -37,12 +38,17 @@ export function parseDraft(raw, max) {
   return t.slice(0, max);
 }
 
-/** 写正文的提示词（只有人设、心情、公开资料、意图）。 */
-export function draftPrompt({ fish, growth, mood = 60, what, material = [], intent, max, rules = [] }) {
+/**
+ * 写正文的提示词（只有人设、心情、公开资料、意图）。
+ * 心情-一期-3 B：oldMood 参数换成 feel（+temper）；「此刻的你」按对外场景给——
+ * 只有 s.feel 为空 / 没有外面的情绪时整段 DROP。没传 feel（老调用 / 老检查只传 mood）就当没有情绪，不抛。
+ */
+export function draftPrompt({ fish, growth, feel = null, temper = null, what, material = [], intent, max, rules = [] }) {
   const persona = (() => { try { return personaFor(fish, growth) || fish.personaText || ''; } catch { return fish.personaText || ''; } })();
+  const feelText = feelSection(feel, { call: fish.parentCall || '妈妈', temper: temper || undefined, scene: 'public' });
   return dropLines(fill(PROMPTS.draft, {
     persona: persona || DROP,
-    mood: moodTone(mood, fish.parentCall || '妈妈').text || DROP,
+    mood: feelText || DROP,
     what,
     material: material.filter(Boolean).map((m) => `- ${m}`).join('\n') || DROP,
     intent: intent ? `爸妈希望你说的方向：${intent}` : DROP,
@@ -64,7 +70,7 @@ export async function writeDraft(deps, { what, material, intent, max, rules = []
   const s = life?.state?.(fish) || {};
   let note = '';
   for (let round = 0; round < 2; round++) {
-    const prompt = draftPrompt({ fish, growth: s.growth, mood: s.mood, what, material, intent, max, rules: note ? [...rules, note] : rules });
+    const prompt = draftPrompt({ fish, growth: s.growth, feel: s.feel, temper: temperOf(s.growth), what, material, intent, max, rules: note ? [...rules, note] : rules });
     let raw = '';
     try { raw = (await wallet.say('speak', prompt, undefined, 45_000)).text; } catch (e) { return { ok: false, why: `没写出来：${String(e?.message || e).slice(0, 60)}` }; }
     const text = parseDraft(raw, max);

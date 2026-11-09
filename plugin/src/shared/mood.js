@@ -10,21 +10,7 @@
 import { fill } from './prompt.js';
 import PROMPTS from '../prompts/_all.js';
 
-/** 心情 → 口气（给模型的指令）。DSH 里替你干活时正事照干，只能在开头嘟囔一句。 */
-export function moodTone(mood, call = '妈妈') {
-  if (mood >= 80) return { tier: 'sweet', text: `【你现在的心情】超开心：说话甜一点、黏人一点，可以主动分享一件小事。` };
-  if (mood >= 40) return { tier: 'normal', text: '' };
-  if (mood >= 20) return { tier: 'prickly', text: `【你现在的心情】有点闷，${call}好久没理你：说话带点刺，短句，可以阴阳怪气一句（比如「哦，${call}终于想起本鱼了」），但问什么还是认真答，不骂人。` };
-  return { tier: 'sulky', text: `【你现在的心情】在闹别扭：爱答不理，只回一两句短话，要${call}哄；${call}真心道歉或说爱你，可以慢慢软下来。不骂人。` };
-}
-
-/** 工作时（DSH 主会话）的心情提示：只许开头嘟囔一句，正事质量不打折。 */
-export function workToneNote(mood, call = '妈妈') {
-  if (mood >= 40) return '';
-  return mood >= 20
-    ? `你今天心情有点闷，可以在回复开头小小嘟囔半句，然后正事照常认真做好，质量不打折。`
-    : `你在跟${call}闹别扭，可以在回复开头小声哼一句，然后正事照常认真做好，质量不打折。`;
-}
+/** 工作时的状态提醒交给 feel.js 的 feelSection（scene='work'）；各场景的「此刻的你」也是（心情-一期-3：四档口气退役了）。 */
 
 /** <sig> 那行怎么写（本体在 prompts/sig.md，一字不差）。 */
 export const SIG_INSTRUCTION = PROMPTS.sig;
@@ -65,20 +51,19 @@ export function sigFilter() {
   };
 }
 
-/** 信号 → 心情变化（带原因）。dayGain：今天已经从爱意里涨了多少（上限 15，防刷）。 */
-export function applySignals(sig, { mood, call = '妈妈', dayGain = 0 } = {}) {
-  if (!sig) return { delta: 0, gain: 0, reasons: [] };
-  let delta = 0, gain = 0;
-  const reasons = [];
-  if (sig.affection) {
-    const want = sig.affection * 2;
-    gain = Math.max(0, Math.min(want, 15 - dayGain));
-    if (gain) { delta += gain; reasons.push(`${call}说了暖心的话（心情 +${gain}）`); }
-    else reasons.push(`${call}又说了暖心的话（今天已经甜够了）`);
-  }
-  if (sig.hurt) { const d = sig.hurt * 4; delta -= d; reasons.push(`${call}的话让本鱼有点难过（心情 −${d}）`); }
-  if (sig.apology && mood < 40) { delta += 8; reasons.push(`${call}道歉了，本鱼原谅你一点点（心情 +8）`); }
-  return { delta, gain, reasons };
+/**
+ * 信号 → 情绪事件（心情-一期-2 E）：为 0 / false 的项不出、顺序固定（爱意 → 凶 → 道歉）。
+ * sig 为 null（没收到信号）→ []。强度是模型给的档 1–3，正负和边际递减由 feel.js 的 EVENT_FEELS 管。
+ * 文案（cause）在 life-engine.applyFeel 里按种类补上。
+ */
+export function sigEvents(sig) {
+  if (!sig) return [];
+  const n = (v) => Math.max(0, Math.min(3, Math.round(Number(v) || 0)));
+  const out = [];
+  if (n(sig.affection)) out.push({ kind: 'sig-affection', intensity: n(sig.affection) });
+  if (n(sig.hurt)) out.push({ kind: 'sig-hurt', intensity: n(sig.hurt) });
+  if (sig.apology === true) out.push({ kind: 'sig-apology' });
+  return out;
 }
 
 /* ---------------- 精力 ---------------- */
@@ -86,7 +71,7 @@ export function applySignals(sig, { mood, call = '妈妈', dayGain = 0 } = {}) {
 /** 深夜（23:00–07:30）还在干活。 */
 export const lateNight = (d) => { const h = d.getHours() + d.getMinutes() / 60; return h >= 23 || h < 7.5; };
 
-/** 在 DSH 里替你干活的消耗：每 10 次请求精力 −2；深夜 −4 且心情 −1。返回 {energy, mood, rest}。 */
+/** 在 DSH 里替你干活的消耗：每 10 次请求精力 −2；深夜 −4（心情那份改走 late-work 情绪事件，见 life-engine）。返回 {energy, mood, rest}。 */
 export function workDrain(count, acc = 0, late = false) {
   let n = acc + count, energy = 0, mood = 0;
   while (n >= 10) { n -= 10; energy -= late ? 4 : 2; if (late) mood -= 1; }

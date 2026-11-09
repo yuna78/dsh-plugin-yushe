@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { hostSay, hostModel, SAY_PROMPT, startRoam, roamStatus, logProbe } from './probe.js';
 import { createPond } from './pond.js';
 import { registerGameRoutes, registerPersona } from './game-routes.js';
-import { createLife, snapshot } from './life-engine.js';
+import { createLife, snapshot, setSleepWindow } from './life-engine.js';
 import { registerLifeRoutes, registerLifeSection } from './life-routes.js';
 import { registerRoomRoutes } from './room-routes.js';
 import { initClock, clockSkewed, nowDate } from './clock.js';
@@ -46,7 +46,7 @@ import { createWorkspaces, registerWorkspaceRoutes } from './workspaces.js';
 export const name = 'dsh-plugin-yushe'; // 包名；存档目录、路由前缀仍叫 dsh-yushe（老存档不丢）
 // 人设注入要用 systemPrompt（所有带 dsh-base 的 profile 都有）
 export const inject = ['systemPrompt'];
-export const VERSION = '0.43.0';
+export const VERSION = '0.45.0';
 export const STATUS_PATH = '/api/dsh-yushe/status';
 export const SAY_PATH = '/api/dsh-yushe/probe/say';
 export const ROAM_PATH = '/api/dsh-yushe/probe/roam';
@@ -116,6 +116,9 @@ export function apply(ctx) {
   const pond = createPond(storageDir());
   const life = createLife(storageDir());
   const habits = createHabits(storageDir(), { caps: capsOf() }); // 两层配置：工具声明的上限也并进细配置（F-59）
+  // F-90：睡觉窗口从设置里来（默认 00:00–07:30），改设置立刻生效
+  { const h0 = habits.get(); setSleepWindow({ from: h0.sleepFrom, to: h0.sleepTo });
+    habits.onChange = (h) => setSleepWindow({ from: h.sleepFrom, to: h.sleepTo }); }
   const gates = createGates({ habits }); // 出口闸（F-79）：六个出口各自一道，不再一个 asleepAt 问六遍
   // 接口白名单 = 宿主自己用的 + 工具表里声明的（F-59：加工具不用改 bili-read / bili-write）
   const biliRead = createBiliRead(storageDir(), fetch, { extraPaths: pathsOf('GET'), budget: () => habits.get().readBudget }); // 每天读多少次 = 细配置 readBudget

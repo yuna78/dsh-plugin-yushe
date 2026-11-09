@@ -26,9 +26,9 @@ export default defineTool({
         const q = String(a.query ?? '').slice(0, 60);
         const items = memory.recall(f, { query: q, scope: ctx.from === 'trip' ? 'public' : 'all', limit: n, chars: 1500 }); // 出门时只想得起 B站上的事
         if (q) memory.reinforce(f, items.map((x) => x.id)); // 主动想起来才加深
-        return items.map((x) => ({ text: x.text, clear: x.stage === 'clear', url: x.url }));
+        return items.map((x) => ({ id: x.id, text: x.text, clear: x.stage === 'clear', url: x.url })); // 四期-1 A：每条带编号（爸妈让她改 / 忘哪条时好对号）
       },
-      told: () => (memory ? memory.told(f).slice(-n).reverse() : []),
+      told: () => (memory ? memory.told(f).filter((x) => !x.muted).slice(-n).reverse() : []), // 不再提的不给翻回来（四期-2 补 R3）；yushe_remember 的 list 才照样列出带 muted
       beliefs: () => (memory ? memory.beliefs(f, { scope: trip ? 'public' : 'all', limit: n }) : []),
       weekly: () => (memory?.weeklies ? memory.weeklies(f, { limit: a.limit ? n : 4 }) : []), // 三期：出门不在 TRIP_WHAT 里，想不起来
       chapters: () => (memory?.chapters ? memory.chapters(f) : []),

@@ -126,6 +126,7 @@ export const EVENT_FEELS = {
   greet:           { up: 'loved', about: 'parent', n: 10 },
   news:            { up: 'loved', about: 'parent', n: 8 },   // 念新闻 / 讲给她听：陪着
   home:            { up: 'loved', about: 'parent', n: 8 },   // 爸妈在家的动静
+  'home-liked':    { up: 'joy', about: 'world', n: 3 },      // 在家刷到喜欢的（边际递减管住：一轮 +1，一天刷十几轮也在 +4 上下的量级，不会涨过头）
   told:            { up: 'loved', about: 'parent', n: 12 },  // 让她记住一件事：被信任
   'dm-parent':     { up: 'loved', about: 'parent', n: 12 },
   'dm-sent-parent':{ up: 'loved', about: 'parent', n: 10 },
@@ -168,16 +169,17 @@ const normalizeFeel = (feel) => ({
 });
 
 /**
- * 事件 → 情绪：feelEvent(feel, event, ctx) → { feel, changes, reconciled }。
+ * 事件 → 情绪：feelEvent(feel, event, ctx) → { feel, changes, reconciled, reunion }。
  *   event = { kind, cause, at, visit?（爸妈来了）, intensity?（sig-* 的档 1–3） }
  *   ctx = { temper, energy, call }
  *   changes = [{ kind, about, delta, cause }]，给宿主记进「今天」用。
+ *   reunion = 这次把「想念」换成了重逢的格外开心（宿主据此另记一条 mood 事件）。
  * 不认识的 kind 原样返回（changes: []）。不改传入的 feel。
  */
 export function feelEvent(inputFeel, event, ctx = {}) {
   const spec = event && event.kind != null ? EVENT_FEELS[event.kind] : undefined;
   const f = normalizeFeel(inputFeel);
-  if (!spec) return { feel: f, changes: [], reconciled: false };
+  if (!spec) return { feel: f, changes: [], reconciled: false, reunion: false };
 
   const atMs = tsOf(event.at) || f.lastAt;
   const temper = ctx.temper && typeof ctx.temper === 'object' ? ctx.temper : {};
@@ -187,6 +189,7 @@ export function feelEvent(inputFeel, event, ctx = {}) {
   const tired = Number.isFinite(energy) && energy < 30;   // 累了更容易烦
   const changes = [];
   let reconciled = false;
+  let reunion = false;
 
   /** 计一次事件的剂量：当日第 n 次 × 久别加成 ×（负面偏重 / 累了）× 性情反应幅度。 */
   const dose = (sign, kind, base) => {
@@ -225,6 +228,7 @@ export function feelEvent(inputFeel, event, ctx = {}) {
     f.emotions = f.emotions.filter((e) => e !== missEntry);
     add('joy', 'parent', joyAmount, clip(`${call}来了，一下子就不想念了`));
     missEntry = null;
+    reunion = true;
   }
 
   if (event.kind === 'sig-apology') {
@@ -266,7 +270,7 @@ export function feelEvent(inputFeel, event, ctx = {}) {
   f.emotions.sort((a, b) => b.intensity - a.intensity || (a.kind < b.kind ? -1 : 1));
   f.emotions = f.emotions.slice(0, MAX_EMOTIONS);
   if (atMs) f.lastAt = atMs;
-  return { feel: f, changes, reconciled };
+  return { feel: f, changes, reconciled, reunion };
 }
 
 /* ---------------- D. 时间流逝 ---------------- */
@@ -292,6 +296,8 @@ export function settleFeel(inputFeel, opts = {}) {
   const to = tsOf(opts.to) || 0;
   // 没传 lastVisitAt 就不涨想念（接线漏传时不能凭空想念）
   const lv = opts.lastVisitAt != null ? (tsOf(opts.lastVisitAt) || 0) : null;
+  /** 结算起点的强度：「强度 <10 删除」只对这一窗里真的掉下去的删（刚到手的小情绪不许被下一次小步结算吃掉）。 */
+  const wasIntensity = new Map(f.emotions.map((e) => [e, e.intensity]));
   let t = Math.max(tsOf(opts.from) || 0, to - SETTLE_MAX_MS);
   while (t > 0 && t < to) {
     const step = Math.min(HOUR_MS, to - t);
@@ -305,7 +311,7 @@ export function settleFeel(inputFeel, opts = {}) {
       if (sleeping) half = half / 2;             // 睡着的时候衰减加倍
       e.intensity = round2(e.intensity * Math.pow(2, -hrs / half));
     }
-    f.emotions = f.emotions.filter((e) => e.intensity >= 10);
+    // 「强度 <10 删除」在收尾做一次，且只删这一窗里衰减掉了的：按小时在 while 里做会把刚刚涨出来的想念（3 < 10）和小剂量情绪当场清掉，想念就永远涨不起来（一期-2 接线时修的 bug，详见实现记录）
     if (!sleeping && lv !== null && mid - lv >= MISS_AFTER_MS) {
       let miss = f.emotions.find((e) => e.kind === 'miss' && e.about === 'parent');
       if (!miss) { miss = { kind: 'miss', about: 'parent', intensity: 0, cause: '好一阵子没见到你了', at: '' }; f.emotions.push(miss); }
@@ -315,7 +321,8 @@ export function settleFeel(inputFeel, opts = {}) {
     f.valence = round2(baseline + (f.valence - baseline) * Math.pow(2, -hrs / VALENCE_HALF_H));
     t += step;
   }
-  // 各自衰减后次序可能翻过来、想念可能是第 4 个：重新按强度排、只留 3 个
+  // 衰小了的（本窗内低于起点、又跌破 10）淡出；想念慢慢涨的除外；排序、只留 3 个
+  f.emotions = f.emotions.filter((e) => e.intensity >= 10 || e.kind === 'miss' || !(e.intensity < (wasIntensity.get(e) ?? Infinity)));
   f.emotions.sort((a, b) => b.intensity - a.intensity || (a.kind < b.kind ? -1 : 1));
   f.emotions = f.emotions.slice(0, MAX_EMOTIONS);
   if (to > 0) f.lastAt = to;
@@ -341,14 +348,21 @@ export function moodOf(feel) {
 
 /* ---------------- F. 一个词 ---------------- */
 
-/** moodOf 的五档词 + 图标（和 life-engine.js 的 moodWord 保持一致；一期-2 接线时一并收拢）。 */
-const MOOD_WORD = (mood) => {
+/** moodOf 的五档词 + 图标（assets/icons/mood1–5.webp；导出给 life-engine 的 moodWord 转调，全仓就这一份词表）。 */
+export const MOOD_WORD = (mood) => {
   if (mood >= 80) return ['超开心', 'mood5'];
   if (mood >= 60) return ['开心', 'mood4'];
   if (mood >= 40) return ['还行', 'mood3'];
   if (mood >= 20) return ['有点闷', 'mood2'];
   return ['想你了', 'mood1'];
 };
+
+/** 一个情绪的说法（给页面的小标签）：≥ 50 用强的（「心里暖暖的」「好想念」），其他用轻的（「有点被暖到」）；不带数字。 */
+export function emotionWord(e) {
+  const w = FEEL_WORDS[e && e.kind];
+  if (!w) return (EMOTIONS[e && e.kind] || {}).name || '有点情绪';
+  return Number(e.intensity) >= 50 ? w.strong : w.mild;
+}
 
 /** 一个词：feelWord(feel) → [word, icon]。主导情绪够强就用情绪的说法；不然退回五档词（icon 照旧按档位）。 */
 export function feelWord(feel) {

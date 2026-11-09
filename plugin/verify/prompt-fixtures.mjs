@@ -29,7 +29,8 @@ export async function fixtures() {
   return {
     'tripSystem.full': () => TL.tripSystem({ persona: fish.personaText, moodText: '你心情不错。', interests: ['美食', '猫'], ups: ['某UP（mid 123）'], favZones: ['美食'], avoidWords: ['恐怖'], maxCalls: 12, caps: { likesPerDay: 15, commentsPerDay: 12, followsPerDay: 2 }, memoryText: '【你在 B站上的记忆】\n- 看过拉面', commented: ['BV1xx411c7aa'] }),
     'tripSystem.bare': () => TL.tripSystem({ persona: '', maxCalls: 6 }),
-    'draftPrompt.full': () => WR.draftPrompt({ fish, mood: 80, what: '给视频《深夜拉面摊》写一条评论', material: ['标题：深夜拉面摊', '简介：一碗面'], intent: '夸夸汤头', max: 80, rules: ['你认识小橘（熟人）。'] }),
+    // 心情一期-3：四档口气退役，草稿只带 B站 / 外面的情绪（家里的委屈不进）——输入改成 feel，golden 重抓这一项
+    'draftPrompt.full': () => WR.draftPrompt({ fish, feel: { v: 1, valence: 30, emotions: [{ kind: 'proud', intensity: 40, about: 'web', cause: '评论被网友点赞了', at: '' }, { kind: 'hurt', intensity: 50, about: 'parent', cause: '妈妈说本鱼写得不行', at: '' }], seen: {}, lastAt: 0 }, temper: { baseline: 0, reactivity: 1, recovery: 1, display: '含蓄' }, what: '给视频《深夜拉面摊》写一条评论', material: ['标题：深夜拉面摊', '简介：一碗面'], intent: '夸夸汤头', max: 80, rules: ['你认识小橘（熟人）。'] }),
     'draftPrompt.bare': () => WR.draftPrompt({ fish: bare, what: '回一条评论', max: 40 }),
     'SAY_PROMPT': () => PB.SAY_PROMPT,
     'ROAM_RULES': () => PB.ROAM_RULES,

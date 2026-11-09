@@ -46,8 +46,19 @@ export function createLetters({ life, wallet, pond, log, habits, gates = null })
       return false;
     },
   };
-  // 零花钱从「够」掉到「快没了」：给当前上工的鱼一个写信由头
-  wallet.onLow = () => letters.maybe(pond.current() || pond.list().fish.at(-1), 'money');
+  // 零花钱从「够」掉到「快没了」（心情-一期-3 C）：**先**给当前上工的鱼记一条 money-low 情绪事件
+  // （EVENT_FEELS.money-low → 担心，about self；一天一次，不重复记），再走写信由头——
+  // 担心和写不写信是两件事：写信的闸关着、同一种今天写过，这条情绪照样要记。
+  wallet.onLow = () => {
+    const fish = pond.current() || pond.list().fish.at(-1);
+    if (!fish) return false;
+    try {
+      const s = life.state(fish);
+      const day = dayOf(nowDate());
+      if (!(s.events || []).some((e) => e.kind === 'money-low' && e.day === day)) life.record(fish, 'money-low', '零花钱快花光了', {});
+    } catch (e) { log?.warn?.(`[dsh-yushe] money-low 没记上：${e?.message || e}`); }
+    return letters.maybe(fish, 'money');
+  };
   return letters;
 }
 

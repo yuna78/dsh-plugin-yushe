@@ -14,7 +14,8 @@ import { homeDue } from '../shared/home.js';
 import { readList, acceptNotes, recentNoteUrls } from '../shared/notes.js';
 import { entriesFrom } from '../shared/seen.js';
 import { personaFor, dislikeList } from '../shared/growth.js';
-import { moodTone } from '../shared/mood.js';
+// 在家刷也是对外场合（心情-一期-3 A）：口气只带对 B站 / 外面的情绪，家里的不进去
+import { temperOf, feelSection } from '../shared/feel.js';
 import { nowMs } from './clock.js';
 import { dayOf, snapshot } from './life-engine.js';
 
@@ -92,7 +93,7 @@ export function createHomes({ life, wallet, pond, habits, biliRead, memory = nul
       const g = s.growth || {};
       const system = homeSystem({
         persona: (() => { try { return personaFor(f, g) || f.personaText; } catch { return f.personaText; } })(),
-        moodText: moodTone(snapshot(s).mood, f.parentCall).text,
+        moodText: feelSection(s.feel, { call: f.parentCall, temper: temperOf(s.growth), scene: 'public' }),
         interests: Object.entries(g.interests || {}).sort((x, y) => y[1].heat - x[1].heat).slice(0, 5).map(([t]) => t),
         ups: Object.entries(g.ups || {}).filter(([, u]) => u.mid).sort((x, y) => y[1].n - x[1].n).slice(0, 3).map(([n]) => n),
         dislikes: (() => { try { return dislikeList(g); } catch { return []; } })(),

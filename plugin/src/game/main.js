@@ -598,7 +598,7 @@ async function refreshLife() {
   if (!LIFE?.fish) return;
   const L = LIFE;
   $('lifeBar').innerHTML = `<span>${ICON(ACT_ICON[L.activity] || 'house')} ${esc(L.activityText || L.whereText)}</span>`
-    + `<span>${ICON(L.moodIcon || 'mood3')} 心情 <i class="meter"><i style="width:${L.mood}%"></i></i></span>`
+    + `<span>${ICON(L.moodIcon || 'mood3')} ${esc(L.moodWord || '心情')} <i class="meter"><i style="width:${L.mood}%"></i></i></span>`
     + `<span>${ICON('bolt')} 精力 <i class="meter en"><i style="width:${L.energy}%"></i></i></span>`
     + (L.workToday ? `<span>${ICON('work')} 今天帮${esc(L.fish.parentCall)}干了 ${L.workToday} 次活</span>` : '');
   renderPresence(L);
@@ -929,9 +929,15 @@ document.querySelector('.quick').addEventListener('click', async (e) => {
   } finally { b.disabled = LIFE?.activity === 'out'; }
 });
 
-/** 「她」面板（F-24）：性格、近 7 天心情、五维（现在 vs 出生）、爱好（带升降和原因）、记住的 UP 主、成长日志。 */
+/** 「她」面板（F-24）：她现在、性格、近 7 天心情、五维（现在 vs 出生）、爱好（带升降和原因）、记住的 UP 主、成长日志。 */
 function herPanel(g, fish) {
   if (!g) return '<div class="empty">她还小，成长记录还没开始。</div>';
+  // 「她现在」（心情-一期-3 D）：数据在 /life 展开的 snapshot 里（LIFE.feel.emotions：程度词 + 情绪名 + 因为什么，不给数字 / 机制词）。
+  // 最多 3 个小标签，原因一行小字（esc 转义——cause 是宿主写的事件文字，照原样显示；她的标签不换行，窄屏整个标签排下去）。
+  const feels = LIFE?.feel?.emotions || [];
+  const cur = feels.length
+    ? feels.map((e) => `<span class="nowfeel"><b>${esc(e.word || ((e.level || '') + (e.name || '情绪')))}</b>${e.cause ? `<small>${esc(e.cause)}</small>` : ''}</span>`).join('')
+    : '<div class="empty">心情平稳</div>';
   const mood = g.moodDays.length ? `<div class="mood7wrap"><div class="mood7">${g.moodDays.map((m) => `<i style="height:${Math.max(6, m.mood)}%" title="${esc(m.day)} 心情 ${m.mood}"><span>${esc(m.day.slice(5))}</span></i>`).join('')}</div></div>` : '<div class="empty">还没攒够心情记录</div>';
   const capSingle = g.caps?.single ?? 100, capTotal = g.caps?.total ?? 200;
   const stats = g.stats.map((s) => `<div class="st2"><span>${esc(s.label)}</span><div class="bar3"><b style="width:${s.nowPct ?? s.now}%"></b><em style="left:${s.bornPct ?? s.born}%" title="出生时 ${s.born}"></em></div><span title="现在 ${s.now}，单维上限 ${capSingle}">${s.now}${s.now !== s.born ? (s.now > s.born ? UP_SVG : DN_SVG) : ''}</span></div>`).join('');
@@ -940,6 +946,7 @@ function herPanel(g, fish) {
   return `<div class="her">
     <h4>性格</h4><div class="ptype">${esc(g.type)}${g.prevType ? `<small>从「${esc(g.prevType)}」变过来的</small>` : ''}${lean ? `<small>最近更${esc(lean)}一些</small>` : ''}</div>
     ${g.outgoing ? `<h4>${ICON('door')} 爱不爱出门</h4><div class="ptype" style="font-size:17px">${esc(g.outgoing.label)}<small>${g.outgoing.why.length ? esc(g.outgoing.why.join('、')) + '；' : ''}性格变了，出门习惯也会跟着变</small></div>` : ''}
+    <h4>${ICON('mood4')} 她现在</h4>${cur}
     <h4>${ICON('heart')} 近 7 天心情</h4>${mood}
     <h4>${ICON('brain')} 五维 <small style="font:11px var(--body);color:var(--mute)">（虚线是出生时，合计 ${g.total}/${capTotal}）</small></h4>${stats}
     <h4>${ICON('sparkle')} 爱好</h4>${ints}
@@ -975,25 +982,65 @@ function memPanel(m) {
   // 认识只有四种口吻：想明白了的展开看；还在想的先不上计数（有的念头想几天就会放下，这很正常）
   const sure = (m.beliefs || []).filter((b) => b.state === '想明白了');
   const germ = (m.beliefs || []).filter((b) => b.state === '还在想');
-  const bl = sure.length ? sure.map((b) => `<details class="belief fold"><summary>${esc(b.text)}<i>${esc(b.about)}${b.times > 1 ? ` · 想到过 ${b.times} 次` : ''}${b.home ? ' · 家里的事，不对外说' : ''}</i></summary>${b.why || b.effect ? `<dl>${b.why ? `<dt>为什么</dt><dd>${esc(b.why)}</dd>` : ''}${b.effect ? `<dt>以后会怎样</dt><dd>${esc(b.effect)}</dd>` : ''}</dl>` : ''}</details>`).join('') : `<div class="empty" style="margin-top:6px">还没有。她每天写完日记会想一想，慢慢攒下对自己的认识。</div>`;
+  // 四期-2 G：钉住的标「记牢了」、不再提的标「不再提」——她办了什么，爸妈在页面一眼能对上（只显示，不加按钮）
+  const flagOf = (b) => (b.pinned || b.muted) ? `${b.pinned ? '记牢了' : ''}${b.pinned && b.muted ? ' · ' : ''}${b.muted ? '不再提' : ''}` : '';
+  const bl = sure.length ? sure.map((b) => { const flag = flagOf(b); return `<details class="belief fold"><summary>${esc(b.text)}<i>${esc(b.about)}${b.source === 'parent' ? ` · ${call}纠正过` : ''}${flag ? ` · ${esc(flag)}` : ''}${b.times > 1 ? ` · 想到过 ${b.times} 次` : ''}${b.home ? ' · 家里的事，不对外说' : ''}</i></summary>${b.why || b.effect ? `<dl>${b.why ? `<dt>为什么</dt><dd>${esc(b.why)}</dd>` : ''}${b.effect ? `<dt>以后会怎样</dt><dd>${esc(b.effect)}</dd>` : ''}</dl>` : ''}</details>`; }).join('') : `<div class="empty" style="margin-top:6px">还没有。她每天写完日记会想一想，慢慢攒下对自己的认识。</div>`;
   const germRow = germ.length ? `<div class="germ">还在想：${germ.map((b) => `<em>${esc(b.text)}</em>`).join('、')}</div><div class="empty" style="font-size:12px">有的念头想几天就会放下，这很正常</div>` : '';
   // 想法变了：最近 8 条，四种变化用不同的口吻说，别让人以为她坏了
   const chgRow = (c) => c.kind === '取代' ? `以前觉得 ${esc(c.before)}，现在觉得 ${esc(c.after)}` : c.kind === '站住了' ? `${esc(c.before)} —— 想了几天，她自己也认了` : c.kind === '没站住' ? `想过 ${esc(c.before)}，后来没再想下去` : `后来不这么觉得了：${esc(c.before)}${c.why ? `（因为${esc(c.why)}…）` : ''}`;
-  const chg = (m.changes || []).slice(0, 8).length ? `<div class="glog">${(m.changes || []).slice(0, 8).map((c) => `<div><i>${esc((c.at || '').slice(5, 10))}</i><span>${chgRow(c)}</span></div>`).join('')}</div>` : '';
+  const mmdd = (iso) => { const d = new Date(iso); return Number.isFinite(d.getTime()) ? `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : ''; }; // 本机日子，不拿 ISO 前几位（晚上的事别显示成第二天）
+  const chg = (m.changes || []).slice(0, 8).length ? `<div class="glog">${(m.changes || []).slice(0, 8).map((c) => `<div><i>${esc(mmdd(c.at))}</i><span>${chgRow(c)}</span></div>`).join('')}</div>` : '';
   const ppl = (m.people || []).filter((p) => p.tier !== '爸妈');
   const pp = ppl.length ? ppl.map((p) => `<span class="up">${esc(p.who)} · ${esc(p.tier)}${p.fuzzy ? '（记不清了）' : ''}</span>`).join('') : '<div class="empty" style="margin-top:6px">B站上还没认识谁</div>';
-  const rec = (m.recent || []).length ? m.recent.map((e) => `<div class="mrow st-${esc(e.stage)}"><i>${esc(e.stage)}</i><span>${esc(e.text)}</span></div>`).join('') : '<div class="empty" style="margin-top:6px">还没记下什么</div>';
+  const rec = (m.recent || []).length ? m.recent.map((e) => { const flag = flagOf(e); return `<div class="mrow st-${esc(e.stage)}"><i>${esc(e.stage)}</i><span>${esc(e.text)}${flag ? ` <b style="font-weight:600;color:var(--mute)">${esc(flag)}</b>` : ''}</span></div>`; }).join('') : '<div class="empty" style="margin-top:6px">还没记下什么</div>';
+  // 四期-2 F：改动记录（最近 20 条，白话一句；op 不认识的按「整理了一下」说）
+  const opWord = (l) => {
+    const t = l.text || '';
+    switch (l.op) {
+      case 'add': return `记下了 ${l.n || '几'} 件事`;
+      case 'forget': return `忘掉了 ${l.n || '几'} 件`;
+      case 'tell': return `说好了要记：${t}`;
+      case 'untell': return `忘掉了一件要记的：${t}`;
+      case 'mute': return `不再提${t}`;
+      case 'unmute': return `接着照旧提${t}`;
+      case 'pin': return `记牢了${t}`;
+      case 'unpin': return `不用记牢了，照旧慢慢忘：${t}`;
+      case 'fix': return `改了一处记错的：${t}`; // 四期-3 K：爸妈说「你记错了」办完记一笔
+      case 'drop': return `忘掉了一件${t}`; // 四期-3 K：一样两步走，日志里只有种类、没有原话（J8）
+      case 'confirm': return `想明白了：${t}`;
+      case 'supersede': return `想法变了：${t}`;
+      case 'retire': return `不再这么想了：${t}`;
+      case 'reflect': return `睡前想了想：${t}`;
+      case 'weekly': return `写了一篇周记：${t}`;
+      case 'chapter': return `写完一章回忆录：${t}`;
+      default: return '整理了一下';
+    }
+  };
+  const ops1 = (m.log || []).slice(0, 20);
+  const ops = ops1.length ? `<div class="glog">${ops1.map((l) => `<div><i>${esc(mmdd(l.at))}</i><span>${esc(opWord(l))}</span></div>`).join('')}</div>` : '<div class="empty" style="margin-top:6px">还没有办过什么</div>';
+  // 带日子的嘱咐（四期-1 C）：日子在后显示出来，是哪天她一望便知；过了的按「已经过去了」说
+  const toldWhen = (x) => {
+    if (!x.due) return '';
+    if (x.past) return '已经过去了';
+    const d = new Date(`${x.due}T12:00:00`); // 按中午算，躲开时区改日
+    const wk = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()];
+    const t = new Date();
+    const today = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+    return today === x.due ? '就是今天' : `${esc(x.due.slice(5))} ${esc(wk)}`;
+  };
   // 排法（妈妈 11-08 拍板）：统计条 → 她写的回忆录（置顶）→ 其余几块默认折起来，只显示「标题 · N 条」
   const open = memOpen();
   const chgN = (m.changes || []).slice(0, 8).length;
   return `<div class="her">
     <h4>${ICON('brain')} 她还记得多少 <small style="font:11px var(--body);color:var(--mute)">（记性：普通的事 ${m.days} 天忘一半）</small></h4>${stat}
     ${memoirHtml(m)}
-    ${(m.told || []).length ? memFold('told', 'bookmark', `${call}让她记住的`, m.told.length, m.told.map((x) => `<div class="belief">${esc(x.text)}<small>${esc((x.at || '').slice(0, 10))} · 只在家里说</small></div>`).join(''), open) : ''}
+    ${(m.told || []).length ? memFold('told', 'bookmark', `${call}让她记住的`, m.told.length, m.told.map((x) => { const flag = flagOf(x); const when = toldWhen(x); return `<div class="belief">${esc(x.text)}<small>${when ? `${when} · ` : ''}${flag ? `${esc(flag)} · ` : ''}只在家里说</small></div>`; }).join(''), open) : ''}
     ${memFold('beliefs', 'sparkle', '对自己的认识', sure.length, `${bl}${germRow}`, open)}
     ${chgN ? memFold('changes', 'sparkle', '想法变了', chgN, chg, open) : ''}
     ${memFold('people', 'heart', 'B站上认识的人', ppl.length, pp, open)}
     ${memFold('recent', 'book', '最近记得的事', (m.recent || []).length, `<div class="empty" style="font-size:12px">会慢慢变模糊；档案在「笔记本」「日记」里，一直都在</div>${rec}`, open)}
+    ${(m.log || []).length ? memFold('ops', 'pencil', '改动记录', Math.min(20, (m.log || []).length), ops, open) : ''}
+    <div class="empty" style="font-size:12px">想让她记牢、别再提、改掉记错的、忘掉一件事，直接跟她说就行；她办完会告诉你</div>
     <div class="empty" style="font-size:12px">${call}可以在设置里调「记性」：健忘 / 适中 / 好记性</div>
   </div>`;
 }

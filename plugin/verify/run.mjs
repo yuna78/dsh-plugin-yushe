@@ -296,7 +296,7 @@ ok(morning.slice(-7).every((e) => e >= 60), '模拟 30 天：每天睡一觉，�
 ok(lows === 0, '模拟 30 天：天天来看她，心情从不跌到闹别扭');
 let ignored = { mood: 72, energy: 82, lastTickAt: t0, lastVisitAt: t0 };
 ignored = LE.settle(ignored, t0 + 3 * 86400e3);
-ok(ignored.mood < 40, '模拟：三天不理她，心情跌到低落那档（会带刺）', `心情 ${ignored.mood}`);
+ok(ignored.mood >= 30 && (ignored.feel?.emotions || []).some((e) => e.kind === 'miss') && !(ignored.feel?.emotions || []).some((e) => e.kind === 'hurt'), '模拟：三天不理她，只是很想你，不再跌到带刺那档（心情一期-2 改）', `心情 ${ignored.mood}`);
 ok(read('src/game/index.html').includes('暂停营业') && read('src/game/main.js').includes('poseFor('), '房间按活动换画面（暂停营业牌 / 姿势）');
 ok(read('src/shared/core.js').includes("brain:{name:'智力'"), '五维的「鉴」显示为「智力」');
 ok(!/谷子 ∞|喂谷子|干活掉谷子/.test(read('src/game/index.html') + read('src/game/main.js')), '谷子不再是货币（撒谷子孵卵的仪式保留）');
@@ -337,9 +337,7 @@ ok(read('src/game/index.html').includes('id="cfgBiliLogin"'), '⚙️ 里能补�
 /* ---------- 3i. M4 心情脾气 / 精力 / 信箱 ---------- */
 section('M4：心情脾气 / 精力 / 信箱');
 const MD = await import(pathToFileURL(join(plugin, 'src/shared/mood.js')).href);
-ok(MD.moodTone(90).tier === 'sweet' && MD.moodTone(60).tier === 'normal' && MD.moodTone(30).tier === 'prickly' && MD.moodTone(10).tier === 'sulky', '心情分四档口气：甜 / 正常 / 带刺 / 闹别扭');
-ok(MD.moodTone(60).text === '' && MD.moodTone(30, '爸爸').text.includes('爸爸') && !/低于|40|规则/.test(MD.moodTone(30).text), '正常档不加戏；带刺档叫对称呼，不把规则说出来');
-ok(MD.workToneNote(30).includes('质量不打折') && MD.workToneNote(70) === '', 'DSH 里干活：心情差最多嘟囔一句，正事照干');
+// 心情一期-3：四档口气 moodTone 退役，口气由 feel.js 的「此刻的你」给（检查见心情一期-1 G、一期-3 A）
 const sgf = MD.sigFilter(); let shown = '';
 for (const d of ['好呀', '妈妈<', 'b>粗体</b>。', '\n<s', 'ig>{"affection":3,"hurt":0,"apology":false}</sig>']) shown += sgf.push(d);
 shown += sgf.end();
@@ -348,12 +346,13 @@ const ps = MD.parseSignals(sgf.text);
 ok(ps.sig?.affection === 3 && ps.clean === '好呀妈妈<b>粗体</b>。', '信号解析 + 剥掉标签');
 ok(MD.parseSignals('没有信号').sig === null && MD.parseSignals('坏的<sig>{oops}</sig>').sig === null, '没信号 / 坏信号就当没信号');
 ok(MD.parseSignals('<sig>{"affection":99,"hurt":-5}</sig>').sig.affection === 3 && MD.parseSignals('<sig>{"affection":99,"hurt":-5}</sig>').sig.hurt === 0, '信号数值夹在 0–3');
-let gain = 0, moodNow = 60;
-for (let i = 0; i < 20; i++) { const a = MD.applySignals({ affection: 3, hurt: 0, apology: false }, { mood: moodNow, dayGain: gain }); gain += a.gain; moodNow += a.delta; }
-ok(gain === 15, '一天说 20 遍「我爱你」：心情最多涨 15（防刷）', `涨了 ${gain}`);
-ok(MD.applySignals({ affection: 0, hurt: 2, apology: false }, { mood: 60 }).delta === -8, '凶她：心情 −8');
-ok(MD.applySignals({ affection: 0, hurt: 0, apology: true }, { mood: 30 }).delta === 8 && MD.applySignals({ affection: 0, hurt: 0, apology: true }, { mood: 70 }).delta === 0, '道歉只在她低落时管用');
-ok(MD.applySignals({ affection: 1, hurt: 0, apology: false }, { mood: 50 }).reasons[0].includes('+2'), '每次变化都带原因');
+{ // 心情一期-2 改：老的 applySignals 加减分退役，信号变成情绪事件；防刷靠边际递减
+  const FLs = await import(pathToFileURL(join(plugin, 'src/shared/feel.js')).href);
+  let fs = FLs.migrateFeel(60), first = 0, last = 0;
+  for (let i = 0; i < 20; i++) { const before = FLs.moodOf(fs); fs = FLs.feelEvent(fs, { kind: 'sig-affection', intensity: 3, cause: '妈妈说爱你', at: new Date(Date.parse('2026-11-09T10:00:00') + i * 60e3).toISOString() }, { temper: FLs.temperOf(null), energy: 70 }).feel; const g = FLs.moodOf(fs) - before; if (i === 0) first = g; last = g; }
+  ok(first > 0 && last <= Math.max(1, first / 5), '一天说 20 遍「我爱你」：第 20 遍涨的不到第 1 遍的五分之一（防刷）', `第一遍 +${first}，第二十遍 +${last}`);
+  ok((() => { try { return MD.sigEvents({ affection: 0, hurt: 2, apology: false })[0]?.kind === 'sig-hurt' && MD.sigEvents({ affection: 0, hurt: 0, apology: true })[0]?.kind === 'sig-apology'; } catch { return false; } })(), '凶她 / 道歉都变成情绪事件');
+}
 const wd1 = MD.workDrain(25, 0, false), wd2 = MD.workDrain(10, 0, true);
 ok(wd1.energy === -4 && wd1.rest === 5 && wd2.energy === -4 && wd2.mood === -1, '替你干活：每 10 次精力 −2；深夜 −4 且心情 −1');
 ok(MD.lateNight(new Date('2026-11-07T23:30:00')) && MD.lateNight(new Date('2026-11-07T03:00:00')) && !MD.lateNight(new Date('2026-11-07T15:00:00')), '深夜 = 23:00–07:30');
@@ -378,7 +377,7 @@ ok(!MD.shouldWrite('trip', { letters: L0, day: 'd', broke: true }), '零花钱�
 const lp = MD.letterPrompt({ fish: { personaText: 'P', parentCall: '妈妈' }, kind: 'money', lifeText: 'L', wallet: { left: 50000 } });
 ok(lp.includes('50000') && lp.includes('不要编造') && lp.includes('署你的名字'), '信的提示词：给事实（钱包）和由头，内容让模型发挥');
 const lrSrc = read('src/host/life-routes.js');
-ok(lrSrc.includes('sigFilter()') && lrSrc.includes('SIG_INSTRUCTION') && lrSrc.includes('moodTone(snap.mood'), '房间聊天：带心情口气、要信号、流式剥掉信号行');
+ok(lrSrc.includes('sigFilter()') && lrSrc.includes('SIG_INSTRUCTION') && lrSrc.includes('feelSection('), '房间聊天：带「此刻的你」、要信号、流式剥掉信号行（心情一期-2 改）');
 ok(read('src/host/letters.js').includes("wallet.say('letter'") && read('src/host/wallet.js').includes('wallet.onLow'), '写信走钱包记账；零花钱快没了触发写信');
 ok(read('src/game/index.html').includes('id="mailBtn"') && read('src/game/index.html').includes('data-act="nap"'), '右上角有信箱；房间有哄午睡');
 
@@ -459,7 +458,7 @@ const htmlSrc = read('src/game/index.html');
 const zOf = (sel) => { const m = htmlSrc.match(new RegExp(sel.replace(/[.#]/g, (c) => '\\' + c) + '\\{[^}]*z-index:(\\d+)')); return m ? Number(m[1]) : 0; };
 ok(zOf('#hud') > zOf('.s-home') && zOf('#hud') > zOf('.room') && zOf('#hud') < zOf('.modal') && zOf('#hud') < zOf('#cfg') && zOf('#hud') < zOf('#dex'), '右上角那排在画面之上、弹窗之下（之前被房间整层挡住，真鼠标点不到）', `hud ${zOf('#hud')} / modal ${zOf('.modal')}`);
 ok(/#ui #walletChip\{pointer-events:auto\}|#ui #walletChip[,{]/.test(htmlSrc) || htmlSrc.includes('#ui #walletChip{pointer-events:auto}'), '零花钱条能点（不是按钮，要单独开 pointer-events）');
-ok(read('src/host/life-engine.js').includes("'mood5'") && !read('src/host/life-engine.js').includes('moodEmoji'), '心情给图标名，不给 emoji');
+ok(read('src/shared/feel.js').includes("'mood5'") && !read('src/host/life-engine.js').includes('moodEmoji') && !read('src/shared/feel.js').includes('moodEmoji'), '心情给图标名，不给 emoji（心情一期-2 改：五档词表收进 feel.js）');
 
 /* ---------- 3l. 小贴士 + 知识库 ---------- */
 section('小贴士 + 系统知识库（F-42）');
@@ -983,7 +982,7 @@ ok((await DMX.poll(dmf)).why === '20 分钟看一次', '20 分钟最多看一次
 await DMX.poll(dmf, { force: true });
 await new Promise((r) => setTimeout(r, 60));
 ok(dm_sent.length === 2 && dm_sent[0].mid === '500' && dm_sent.some((s) => s.mid === '100') && !dm_sent.some((s) => s.mid === '600'), '爸妈先回；陌生人占每天上限（上限 1：路人甲回了，路人乙没回）');
-ok(dmRecs.some((r) => r.k === 'dm-parent' && r.txt.includes('宝贝今天乖不乖')) && dmRecs.some((r) => r.k === 'dm-sent' && r.txt.includes('回了妈妈的 B站私信')), '「今天」里记着妈妈发来的和她回的');
+ok(dmRecs.some((r) => r.k === 'dm-parent' && r.txt.includes('宝贝今天乖不乖')) && dmRecs.some((r) => r.k === 'dm-sent-parent' && r.txt.includes('回了妈妈的 B站私信')), '「今天」里记着妈妈发来的和她回的（心情一期-2 改：回爸妈记 dm-sent-parent）');
 ok(!GH2 || DG.footprints().every((f) => f.target?.mid !== '500') && DG.footprints().some((f) => f.kind === 'dm'), '爸妈专线不进足迹，陌生人的私信进足迹');
 const dm_dv = DMX.view();
 ok(dm_dv.unseen === 3 && dm_dv.convs.find((c) => c.mid === '500').parent && dm_dv.convs.find((c) => c.mid === '600').note?.includes('没发') && DMX.markSeen() === 3, '信箱里看得到对话（专线标出来、没回的写原因），打开标已读');
@@ -1784,7 +1783,13 @@ section('记忆：会慢慢忘的经历、认人、家里 / B站分级、召回'
   ok(rr1.ok && recs.includes('told') && (await RM.run({ list: true }, tdeps, { from: 'main' })).items[0].text === '爸爸喜欢吃辣', 'yushe_remember：记下、记进「今天」、list 看得到');
   ok(RM.expose.main === true && RM.expose.trip === false, 'yushe_remember 只在主会话能用（出门用不了）');
   ok(!tmem.section(fish, { scope: 'public' }).includes('吃辣') && tmem.section(fish, { scope: 'all' }).includes('吃辣'), '爸妈让记的只在家里说：出门、写评论那段里没有');
-  ok((await RM.run({ forget: rr1.id }, tdeps, { from: 'main' })).ok && tmem.told(fish).length === 0, 'yushe_remember forget：忘掉');
+  { // 记忆四期起「忘了吧」一律两步（妈妈 11-09 拍板，总指挥改）：forget 只起草，yushe_memory_drop 确认才删
+    const DRP = (await import(pathToFileURL(join(plugin, 'src/host/tools/self/memory-drop.js')).href)).default;
+    const draft = await RM.run({ forget: rr1.id }, tdeps, { from: 'main' });
+    const stillThere = tmem.told(fish).length === 1;
+    const done = await DRP.run({ target: rr1.id, proposalId: draft.proposalId, confirm: true }, tdeps, { from: 'main' });
+    ok(draft.ok && draft.proposalId && stillThere && done.ok && tmem.told(fish).length === 0, 'yushe_remember forget：先起草（还在），yushe_memory_drop 确认后才忘掉');
+  }
   ok((await RM.run({ text: '验证码 123456' }, tdeps, { from: 'main' })).ok === false, 'yushe_remember：像密码的直接拒绝');
 
   /* ===== 一期-2 验收（总规划先写好；实现方不许改这一块，只能让它通过）===== */
@@ -2132,6 +2137,17 @@ section('笔记本：便利贴、读过清单、不喜欢（F-82）');
   ok(r2.ok && r2.items.length === notes.length && r2.items.every((x) => x.tag !== '明信片'), '出门时也想得起笔记本（B站上的事），明信片不算便利贴');
   // 页面：入口改名、只看不改
   const html = read('src/game/index.html'), mainJs = read('src/game/main.js');
+  // F-90：睡觉窗口可配（默认 00:00–07:30），改设置立刻生效，跨午夜也认
+  {
+    const M = (hh) => { const d = new Date('2026-11-09T00:00:00'); d.setHours(hh, 0, 0, 0); return d; };
+    LE.setSleepWindow({ from: '00:00', to: '07:30' });
+    ok(LE.asleepAt(M(3)) === true && LE.asleepAt(M(8)) === false, '睡觉窗口默认 00:00–07:30：3 点在睡、8 点醒着');
+    LE.setSleepWindow({ from: '23:00', to: '07:00' });
+    ok(LE.asleepAt(M(23)) === true && LE.asleepAt(M(1)) === true && LE.asleepAt(M(12)) === false, '改到 23:00–07:00：跨午夜也认（23 点 / 1 点在睡，中午醒着）');
+    LE.setSleepWindow({ from: '乱写', to: undefined });
+    ok(LE.sleepWindow().from === 0 && LE.sleepWindow().to === 7.5, '设置里填了乱七八糟的值 → 回默认，不崩');
+    ok(HB.HABIT_FIELDS.sleepFrom && HB.HABIT_FIELDS.sleepTo && HB.HABIT_FIELDS.sleepFrom.ui, '设置页有「她几点睡 / 几点醒」两项');
+  }
   // F-89：信箱分 tab（全部 / 信 / B站 / 待发），「全部」按时间倒序混排
   ok(/MAIL_TABS = \['全部', '信', 'B站', '待发'\]/.test(mainJs) && /data-mtab/.test(mainJs)
      && /items.sort\(\(a, b\) => b\.at - a\.at\)/.test(mainJs), '信箱分 tab，「全部」按时间倒序');
@@ -3177,6 +3193,571 @@ section('记忆三期补：同一晚不重写、周一问这周、写日期不�
   ok(hitThis.every((x) => x.kind !== 'weekly' || x.text.includes('安静')), '三期补 4：周一问「这周」也走回忆录路由，不报错（这周还没有周记时只给经历）');
 }
 
+/* ===== 记忆四期-1 验收（tester 写、总指挥审过并锁定；实现方不许改这一块，只能让它通过）===== */
+section('记忆四期-1：编号、一起翻回忆、带日子的嘱咐');
+{
+  const MM = await import(pathToFileURL(join(plugin, 'src/shared/memory.js')).href);
+  const MH = await import(pathToFileURL(join(plugin, 'src/host/memory.js')).href);
+  const RC = (await import(pathToFileURL(join(plugin, 'src/host/tools/self/recall.js')).href)).default;
+  const RM = (await import(pathToFileURL(join(plugin, 'src/host/tools/self/remember.js')).href)).default;
+  const { mkdirSync, readFileSync: rf4, writeFileSync: wf4 } = await import('node:fs');
+  const DAY4 = 86400e3;
+  // 月份从 0 数：写 10 = 11 月
+  const NOW4 = new Date(2026, 10, 9, 10, 0); // 2026-11-09 周一 10:00，本机时区
+  const T4 = NOW4.getTime();
+  const iso4 = (t) => new Date(t).toISOString();
+  const emit4 = (dir, m) => { mkdirSync(join(dir, 'memory'), { recursive: true }); wf4(join(dir, 'memory', 'm.json'), JSON.stringify(m)); };
+  const peek4 = (dir) => JSON.parse(rf4(join(dir, 'memory', 'm.json'), 'utf8'));
+  const mk4 = (dir, clock) => MH.createMemory({ storage: dir, life: { state: () => ({}) }, gate: { footprints: () => [] }, inbox: { all: () => [] }, dms: { view: () => ({ convs: [] }) }, habits: { get: () => ({}) }, now: clock });
+  const deps4 = (mem, fishId = 'm') => ({ pond: { current: () => ({ id: fishId, parentCall: '妈妈' }) }, life: { state: () => ({}) }, memory: mem });
+
+  /* ---- A：回忆带编号 ---- */
+  const dirA = mkdtempSync(join(tmpdir(), 'yushe-p41a-'));
+  const mA = MM.emptyMemory();
+  const epA = MM.makeEpisode(mA, { at: iso4(T4 - DAY4), kind: 'mood', text: '妈妈夸本鱼画画好看' }); // 2026-11-08 周日 10:00
+  mA.episodes.push(epA);
+  mA.beliefs.push({ id: 'B1', text: '本鱼喜欢画水草缸', about: '喜好', scope: 'public', from: [epA.id], at: iso4(T4 - DAY4), lastAt: iso4(T4 - DAY4), n: 2, status: '生效' });
+  mA.told.push({ id: 'T1', text: '爸爸不吃香菜', at: iso4(T4) });
+  mA.weeklies.push({ id: 'W1', week: '2026-11-02', from: '2026-11-02', to: '2026-11-08', headline: '安静的一周', text: '这周看了一些画画视频，和妈妈聊了几次天，还写了两篇日记。', stats: { seen: 0, comments: 0, replies: 0, diaries: 0, topTags: [], topPeople: [] }, cites: [epA.id], floor: 0, at: iso4(T4 - DAY4) });
+  emit4(dirA, mA);
+  const memA = mk4(dirA, () => T4);
+  const fishA = { id: 'm', parentCall: '妈妈' };
+  const rA1 = await RC.run({ what: 'memory', query: '画画' }, deps4(memA), { from: 'main' });
+  ok(rA1.ok && rA1.items.length === 1 && String(rA1.items[0].id || '').startsWith('M'), '四期1 A1：yushe_recall what=memory 的每条带 M 开头的编号（现在返回里没有 id，是工具把 id 丢了）');
+  const rA2 = await RC.run({ what: 'beliefs' }, deps4(memA), { from: 'main' });
+  ok(rA2.ok && rA2.items.length === 1 && String(rA2.items[0].id || '').startsWith('B'), '四期1 A2：yushe_recall what=beliefs 的每条带 B 开头的编号');
+  const rA3 = await RC.run({ what: 'told' }, deps4(memA), { from: 'main' });
+  ok(rA3.ok && rA3.items.length === 1 && rA3.items[0].id === 'T1', '四期1 A3：yushe_recall what=told 的每条带 T 开头的编号（老行为本来就有，锁住别弄丢）');
+  const vA = memA.view(fishA);
+  ok(vA.recent.length === 1 && vA.recent.every((x) => String(x.id || '').startsWith('M')) && vA.beliefs.length === 1 && vA.beliefs.every((x) => String(x.id || '').startsWith('B')) && vA.told.length === 1 && vA.told.every((x) => String(x.id || '').startsWith('T')) && vA.weeklies.length === 1 && vA.weeklies.every((x) => String(x.id || '').startsWith('W')), '四期1 A4：memory.view() 的 recent / beliefs / told / weeklies 每条也带编号（页面不显示，只是数据里有）');
+
+  /* ---- B：一起翻回忆（加深有上限：7 天内最多 1 次）---- */
+  const dirB = mkdtempSync(join(tmpdir(), 'yushe-p41b-'));
+  const mB = MM.emptyMemory();
+  mB.episodes.push(MM.makeEpisode(mB, { at: iso4(T4 - DAY4), kind: 'mood', text: '妈妈夸本鱼画画好看' })); // 2026-11-08 周日
+  emit4(dirB, mB);
+  let clockB = T4;
+  const memB = mk4(dirB, () => clockB);
+  const fishB = { id: 'm', parentCall: '妈妈' };
+  const hitB = memB.recall(fishB, { query: '画画' })[0];
+  const at1 = memB.reinforce(fishB, [hitB.id]);
+  const raw1 = peek4(dirB).episodes.find((e) => e.id === hitB.id);
+  ok(at1 === 1 && raw1.reinforced === 1 && typeof raw1.reinforcedAt === 'string' && Number.isFinite(Date.parse(raw1.reinforcedAt)), '四期1 B1：第一次 reinforce → 返回 1、存档里 reinforced 加了 1、记下 reinforcedAt（ISO 时间）');
+  clockB = T4 + 3 * DAY4; // 2026-11-12 周四 10:00（才过 3 天）
+  const at2 = memB.reinforce(fishB, [hitB.id]);
+  const raw2 = peek4(dirB).episodes.find((e) => e.id === hitB.id);
+  ok(at2 === 0 && raw2.reinforced === 1 && raw2.reinforcedAt === raw1.reinforcedAt, '四期1 B2：同一条 3 天后再 reinforce → 返回 0、不计数、reinforcedAt 也不变（7 天内最多加深 1 次）');
+  clockB = T4 + 8 * DAY4; // 2026-11-17 周二 10:00（过了 8 天）
+  const at3 = memB.reinforce(fishB, [hitB.id]);
+  const raw3 = peek4(dirB).episodes.find((e) => e.id === hitB.id);
+  ok(at3 === 1 && raw3.reinforced === 2 && raw3.reinforcedAt !== raw1.reinforcedAt, '四期1 B3：8 天后再 reinforce → 又能加深（返回 1、reinforced 变 2、reinforcedAt 换成新的）');
+  const secB = memB.section(fishB, { query: '画画' });
+  const raw4 = peek4(dirB).episodes.find((e) => e.id === hitB.id);
+  ok(secB.includes('画画') && raw4.reinforced === 2 && raw4.reinforcedAt === raw3.reinforcedAt, '四期1 B4：section（带 query，每句聊天自动带的召回）不加深：句子照样给，reinforced 和 reinforcedAt 都没动（锁住现状）');
+  clockB = T4 + 16 * DAY4; // 2026-11-25 周三 10:00（离上次加深 8 天；总指挥锁定时修：原先只隔 1 天，按 7 天规则不该加深）
+  const rB5 = await RC.run({ what: 'memory', query: '画画' }, deps4(memB), { from: 'main' });
+  const raw5 = peek4(dirB).episodes.find((e) => e.id === hitB.id);
+  ok(rB5.ok && rB5.items.length === 1 && raw5.reinforced === 3, '四期1 B5：yushe_recall what=memory 带 query → 她主动想起来的那条加深了');
+  await RC.run({ what: 'memory' }, deps4(memB), { from: 'main' });
+  ok(peek4(dirB).episodes.find((e) => e.id === hitB.id).reinforced === 3, '四期1 B6：yushe_recall what=memory 不带 query → 不加深');
+
+  /* ---- C：带日子的嘱咐 ---- */
+  const due4 = (t) => (typeof MM.dueOf === 'function' ? MM.dueOf(t, NOW4) : undefined); // 函数没实现时给 undefined，别让 verify 崩
+  ok(typeof MM.dueOf === 'function' && due4('明天') === '2026-11-10' && due4('后天') === '2026-11-11' && due4('3天后') === '2026-11-12', '四期1 C1：dueOf 是导出的纯函数：「明天 / 后天 / 3天后」→ 2026-11-10 / 11-11 / 11-12；没日子的不硬编');
+  ok(due4('下周三') === '2026-11-18' && due4('周三') === '2026-11-11' && due4('周一') === '2026-11-09', '四期1 C2：今天是周一 11-09：「下周三」→ 11-18，「周三」→ 本周 11-11，「周一」→ 今天 11-09');
+  ok(due4('11月20日') === '2026-11-20' && due4('2026-12-01') === '2026-12-01' && due4('1月5号') === '2027-01-05', '四期1 C3：具体日子：「11月20日」→ 2026-11-20、「2026-12-01」→ 原样、「1月5号」今年已过 → 2027-01-05');
+  ok(due4('昨天') === null && due4('2026-10-01') === null && due4('我喜欢吃鱼') === null, '四期1 C4：只认将来和今天：昨天、2026-10-01、没日子的「我喜欢吃鱼」→ null');
+  ok(due4('明天和下周三') === '2026-11-10', '四期1 C5：一句话里有多个日子 → 取第一个出现的「明天」= 11-10');
+
+  const dirC = mkdtempSync(join(tmpdir(), 'yushe-p41c-'));
+  emit4(dirC, MM.emptyMemory());
+  let clockC = T4;
+  const memC = mk4(dirC, () => clockC);
+  const fishC = { id: 'm', parentCall: '妈妈' };
+  memC.tell(fishC, '爸爸不吃香菜'); // 1 条，没日子
+  memC.tell(fishC, '明天要交作业'); // 2026-11-10
+  memC.tell(fishC, '11月12日要取快递'); // 2026-11-12（周四）
+  memC.tell(fishC, '下周三我出差'); // 2026-11-18（周三）；当天最多 5 件，这 4 条不会撞上限
+  const toldC = () => peek4(dirC).told;
+  const dueOfText = (t) => toldC().find((x) => x.text === t)?.due;
+  clockC = new Date(2026, 10, 10, 10, 0).getTime(); // 2026-11-10 周二 10:00
+  ok(dueOfText('下周三我出差') === '2026-11-18' && dueOfText('明天要交作业') === '2026-11-10' && dueOfText('11月12日要取快递') === '2026-11-12' && toldC().find((x) => x.text === '爸爸不吃香菜').due == null, '四期1 C6：tell 记下那一刻就把 due 算好存进那一条，时钟拨到 11-10 再看 due 不变（「明天」永远指记下那天的明天）；没日子的不硬放一个');
+  clockC = T4;
+  const secC0 = memC.section(fishC, { scope: 'all' });
+  ok(/(^|\n)- 爸爸不吃香菜(\n|$)/.test(secC0), /* 总指挥锁定时修：原先查整段没有「（」，和 C8 同一段里带日子的行矛盾 */ '四期1 C7：没有日子的照旧是「- 文字」，一个括号都不带（老检查和提示词标准答案都在查这个）');
+  ok(secC0.includes('- 明天要交作业（11-10 周二）') && secC0.includes('- 11月12日要取快递（11-12 周四）') && secC0.includes('- 下周三我出差（11-18 周三）'), '四期1 C8：日子在今天以后：那一行带上（MM-DD 周X）');
+  clockC = new Date(2026, 10, 18, 10, 0).getTime(); // 2026-11-18 周三 10:00
+  const secC18 = memC.section(fishC, { scope: 'all' });
+  ok(secC18.includes('- 下周三我出差（就是今天，跟爸妈说话时自然地提一句、问一句）'), '四期1 C9：拨到 2026-11-18：到日子的那行改说「（就是今天，跟爸妈说话时自然地提一句、问一句）」');
+  ok(secC18.includes('- 11月12日要取快递（11-12，已经过去了）') && !secC18.includes('明天要交作业'), '四期1 C10：过了但 ≤ 7 天：写「（11-12，已经过去了）」；「明天要交作业」已过了 8 天，整行不再出现');
+  clockC = new Date(2026, 10, 20, 10, 0).getTime(); // 2026-11-20 周五 10:00
+  const secC20 = memC.section(fishC, { scope: 'all' });
+  ok(secC20.includes('- 下周三我出差（11-18，已经过去了）') && !secC20.includes('取快递') && !secC20.includes('交作业'), '四期1 C11：拨到 11-20：出差那句写「（11-18，已经过去了）」，过了 7 天的那两条不见了');
+  clockC = new Date(2026, 10, 26, 10, 0).getTime(); // 2026-11-26 周四 10:00
+  const secC26 = memC.section(fishC, { scope: 'all' });
+  ok(!secC26.includes('出差') && !secC26.includes('已经过去了'), '四期1 C12：拨到 11-26（过了 8 天）：出差那句不再注入（还在存档和 list 里）');
+  ok(!memC.section(fishC, { scope: 'public' }).includes('爸爸不吃香菜') && !memC.section(fishC, { scope: 'public' }).includes('出差'), '四期1 C13：scope public 的那段永远没有爸妈让记的（带不带日子都一样，锁住现状）');
+
+  const mE = MM.emptyMemory();
+  for (let i = 0; i < 19; i++) mE.told.push({ id: `Tq${i}`, text: `家里的事第${i}件：晚饭吃鱼`, at: iso4(T4 - 3 * DAY4) });
+  mE.told.push({ id: 'TqX', text: '过了日子的嘱咐', at: iso4(T4 - 10 * DAY4), due: '2026-11-01' }); // 早过了 8 天以上
+  const rE = MM.tell(mE, '记得给鱼缸换一次水', { at: iso4(T4), today: '2026-11-09' });
+  ok(rE.ok === true && mE.told.length === 21, '四期1 C14：过了 7 天以上的不算进 20 件上限：20 条里有 1 条早过期的 → 还能再记一件');
+  const mF = MM.emptyMemory();
+  for (let i = 0; i < 20; i++) mF.told.push({ id: `Tr${i}`, text: `家里的事第${i}件：晚饭吃菜`, at: iso4(T4 - 3 * DAY4) });
+  ok(MM.tell(mF, '记得给鱼缸加一次水', { at: iso4(T4), today: '2026-11-09' }).ok === false, '四期1 C15：反例：20 条都还没过期 → 记不进（老行为，锁住）');
+
+  const dirG = mkdtempSync(join(tmpdir(), 'yushe-p41g-'));
+  const mG = MM.emptyMemory();
+  mG.told.push({ id: 'T1', text: '爸爸不吃香菜', at: iso4(T4 - DAY4) }, { id: 'T2', text: '过了日子的嘱咐', at: iso4(T4 - 10 * DAY4), due: '2026-11-01' }, { id: 'T3', text: '下周三我出差', at: iso4(T4), due: '2026-11-18' });
+  emit4(dirG, mG);
+  const memG = mk4(dirG, () => T4);
+  const rList = await RM.run({ list: true }, deps4(memG), { from: 'main' });
+  const byId4 = new Map((rList.items || []).map((x) => [x.id, x]));
+  ok(rList.ok && (rList.items || []).length === 3 && (rList.items || []).every((x) => typeof x.past === 'boolean') && byId4.get('T2').past === true && byId4.get('T2').due === '2026-11-01' && byId4.get('T3').past === false && byId4.get('T3').due === '2026-11-18' && !byId4.get('T1').due, '四期1 C16：yushe_remember 的 list：每条有 past（布尔），有日子的带 due，没日子的没有');
+  ok(read('src/game/main.js').includes('function memPanel') && read('src/game/main.js').includes('已经过去了'), '四期1 C17：页面「爸妈让她记住的」后面要能显示日子（main.js 的 memPanel 里有「已经过去了」）');
+}
+
+/* ---------- 记忆四期-1 补（reviewer 11-09 指出的；总指挥补） ---------- */
+section('记忆四期-1 补：数量不当日子、全角数字、到日子的那条不被挤出窗');
+{
+  const MM = await import(pathToFileURL(join(plugin, 'src/shared/memory.js')).href);
+  const MH = await import(pathToFileURL(join(plugin, 'src/host/memory.js')).href);
+  const { mkdirSync } = await import('node:fs');
+  const NOW = new Date(2026, 10, 9, 10, 0); // 2026-11-09 周一
+  ok(MM.dueOf('带2-3 个朋友来', NOW) === null && MM.dueOf('等 2-3 天就好', NOW) === null && MM.dueOf('10-20 天后再说', NOW) === null, '四期1补 1：「2-3 个」「2-3 天」「10-20 天后」是数量 / 范围，不当日子');
+  ok(MM.dueOf('１０天后', NOW) === '2026-11-19' && MM.dueOf('11-20 去医院', NOW) === '2026-11-20', '四期1补 2：全角「１０天后」→ 11-19；真的「11-20」照样认');
+  const dir = mkdtempSync(join(tmpdir(), 'yushe-p41b2-'));
+  mkdirSync(join(dir, 'memory'), { recursive: true });
+  const m = MM.emptyMemory();
+  m.told.push({ id: 'Tdue', text: '今天要去复诊', at: new Date(2026, 10, 1, 9).toISOString(), due: '2026-11-09' });
+  for (let i = 0; i < 9; i++) m.told.push({ id: `Tx${i}`, text: `早过了日子的第${i}件事`, at: new Date(2026, 9, 20, 9).toISOString(), due: '2026-10-25' });
+  wfs(join(dir, 'memory', 'f.json'), JSON.stringify(m));
+  const mem = MH.createMemory({ storage: dir, life: { state: () => ({}) }, gate: { footprints: () => [] }, inbox: { all: () => [] }, dms: { view: () => ({ convs: [] }) }, habits: { get: () => ({}) }, now: () => NOW.getTime() });
+  ok(mem.section({ id: 'f', parentCall: '妈妈' }, { scope: 'all' }).includes('今天要去复诊（就是今天'), '四期1补 3：后面有 9 条早过期的，到日子的那条照样进注入（先滤过期再取最后 8 条）');
+}
+
+/* ===== 记忆四期-2 验收（tester 写、总指挥审过并锁定；实现方不许改这一块，只能让它通过）===== */
+section('记忆四期-2：别再提了、这个记牢、改动记录');
+{
+  const MM = await import(pathToFileURL(join(plugin, 'src/shared/memory.js')).href);
+  const MH = await import(pathToFileURL(join(plugin, 'src/host/memory.js')).href);
+  const RC = (await import(pathToFileURL(join(plugin, 'src/host/tools/self/recall.js')).href)).default;
+  const RM = (await import(pathToFileURL(join(plugin, 'src/host/tools/self/remember.js')).href)).default;
+  const REG2 = await import(pathToFileURL(join(plugin, 'src/host/tools/registry.js')).href);
+  const TI = await import(pathToFileURL(join(plugin, 'src/shared/tips.js')).href);
+  const { mkdirSync, readFileSync: rf42, writeFileSync: wf42 } = await import('node:fs');
+  const DAY2 = 86400e3;
+  const NOW2 = new Date(2026, 10, 9, 10, 0); // 2026-11-09 周一 10:00，本机时区
+  const T2 = NOW2.getTime();
+  const iso2 = (t) => new Date(t).toISOString();
+  const emit2 = (dir, m) => { mkdirSync(join(dir, 'memory'), { recursive: true }); wf42(join(dir, 'memory', 'm.json'), JSON.stringify(m)); };
+  const emitRaw2 = (dir, m) => wf42(join(dir, 'memory', 'm.json'), JSON.stringify(m));
+  const peek2 = (dir) => JSON.parse(rf42(join(dir, 'memory', 'm.json'), 'utf8'));
+  const mk2 = (dir, clock) => MH.createMemory({ storage: dir, life: { state: () => ({}) }, gate: { footprints: () => [] }, inbox: { all: () => [] }, dms: { view: () => ({ convs: [] }) }, habits: { get: () => ({}) }, now: clock });
+  const deps2 = (mem, fishId = 'm') => ({ pond: { current: () => ({ id: fishId, parentCall: '妈妈' }) }, life: { state: () => ({}) }, memory: mem });
+  const fish2 = { id: 'm', parentCall: '妈妈' };
+
+  /* ---- D：mute / unmute（yushe_remember 的新参数，编号来自四期-1 A）---- */
+  const dirD = mkdtempSync(join(tmpdir(), 'yushe-p42d-'));
+  const mD = MM.emptyMemory();
+  const epD = MM.makeEpisode(mD, { at: iso2(T2 - DAY2), kind: 'mood', text: '妈妈夸本鱼的泡泡会发亮' }); // 2026-11-08 周日
+  mD.episodes.push(epD);
+  mD.beliefs.push({ id: 'B1', text: '本鱼怕打雷，打雷时要有人陪', why: '想了两晚', effect: '', about: '自己', scope: 'home', source: 'reflect', status: '生效', from: [], at: iso2(T2 - DAY2), lastAt: iso2(T2 - DAY2), n: 2 });
+  mD.told.push({ id: 'T1', text: '爸爸不吃香菜', at: iso2(T2) });
+  emit2(dirD, mD);
+  const memD = mk2(dirD, () => T2);
+  const preD = memD.section(fish2, { scope: 'all' });
+  const rD1 = await RM.run({ mute: epD.id }, deps2(memD), { from: 'main' });
+  const rawD1 = peek2(dirD).episodes.find((x) => x.id === epD.id);
+  ok(rD1.ok === true && rawD1?.muted === true && typeof rawD1?.mutedAt === 'string', '四期2 D1：mute 一条经历（M 编号）→ 工具答应 ok: true，存档里那条记下 muted: true 和 mutedAt');
+  const secD2 = memD.section(fish2, { scope: 'all' });
+  const recD2 = memD.recall(fish2, { query: '泡泡' });
+  ok(preD.includes('泡泡') && !secD2.includes('泡泡') && !recD2.some((x) => x.id === epD.id), '四期2 D2：被 mute 的经历不进注入（section 里没有它了，pre 那次还在，是 mute 之后才消失的），memory.recall 也翻不到它');
+  const postR3 = await RC.run({ what: 'memory', query: '泡泡' }, deps2(memD), { from: 'main' }); // 总指挥锁定时修：原先「mute 前」那次其实也在 mute 之后调，自相矛盾；mute 前翻得到由 D2 的 pre 管
+  ok(postR3.ok === true && !postR3.items.some((x) => x.id === epD.id), '四期2 D3：yushe_recall what=memory 也翻不到被 mute 的那条');
+  const vD4 = memD.view(fish2).recent.find((x) => x.id === epD.id);
+  ok(Boolean(vD4) && vD4.muted === true, '四期2 D4：mute 只是「不再提」不删——memory.view() 的 recent 里还在，带 muted: true（页面上才好标「不再提」）');
+  const preD5 = memD.section(fish2, { scope: 'all' });
+  await RM.run({ mute: 'B1' }, deps2(memD), { from: 'main' });
+  const secD5 = memD.section(fish2, { scope: 'all' });
+  ok(preD5.includes('打雷') && !secD5.includes('打雷'), '四期2 D5：mute 一条认识（B 编号）→ 注入的【你对自己的认识】里没有它了（pre 那次还在）');
+  const preD6 = memD.section(fish2, { scope: 'all' });
+  await RM.run({ mute: 'T1' }, deps2(memD), { from: 'main' });
+  const secD6 = memD.section(fish2, { scope: 'all' });
+  ok(preD6.includes('香菜') && !secD6.includes('香菜'), '四期2 D6：mute 一条爸妈让记的（T 编号）→ 注入的【爸妈让你记住的】里没有它了（pre 那次还在）');
+  const TOLD20 = ['爸爸不吃香菜', '妈妈周三要值早班', '家里的绿萝每周一浇水', '玄武湖周四有花展', '不要给本鱼喂虾干', '客厅的窗帘颜色要挑浅的', '周六全家去外婆家', '鱼缸滤芯两周换一次', '妈妈不吃西瓜', '快递放在楼下超市', '周五晚上要记得充电费', '舅舅下周一来串门', '花瓶里的贝壳是姥姥给的', '阳台的猫粮每天倒一点', '爸爸的茶杯要垫杯垫', '周日下午要视频通话', '唱太平的歌会吵到爸爸', '冰箱里的芒果先吃', '伞架上挂着一把伞', '鱼的名字不要随便改'];
+  const dirC = mkdtempSync(join(tmpdir(), 'yushe-p42c-'));
+  const mC = MM.emptyMemory();
+  mC.told = TOLD20.map((t, i) => ({ id: `Tz${i}`, text: t, at: iso2(T2 - 3 * DAY2) }));
+  emit2(dirC, mC);
+  const memC = mk2(dirC, () => T2);
+  const rD7 = await RM.run({ mute: 'Tz5' }, deps2(memC), { from: 'main' });
+  const rawC = peek2(dirC);
+  ok(rD7.ok === true && rawC.told.find((x) => x.id === 'Tz5')?.muted === true && MM.tell(rawC, '记得给鱼缸加一次水', { at: iso2(T2), today: '2026-11-09' }).ok === true, '四期2 D7：被 mute 的爸妈让记的不算进 20 件上限——记了 20 件、其中 1 件不提了，还能再记一件（tell 返回 ok）');
+  const rD8 = await RM.run({ unmute: 'T1' }, deps2(memD), { from: 'main' });
+  const rawD8 = peek2(dirD).told.find((x) => x.id === 'T1');
+  ok(rD8.ok === true && rawD8?.muted !== true && memD.section(fish2, { scope: 'all' }).includes('香菜'), '四期2 D8：unmute 之后恢复——那条的 muted 标记撤掉，下次说话【爸妈让你记住的】里它又出现');
+  const rD9 = await RM.run({ mute: 'Mnope' }, deps2(memD), { from: 'main' });
+  ok(rD9.ok === false && typeof rD9.error === 'string' && rD9.error.trim() && /没有|找不到/.test(rD9.error), '四期2 D9：反例——mute 一个不存在的编号 → ok: false，还要有一句白话告诉爸妈没有这一条');
+  const rD10a = await RM.run({ mute: 'B1' }, deps2(memD), { from: 'main' }); // B1 在 D5 已经被 mute 过了
+  const rD10b = await RM.run({ unmute: 'T1' }, deps2(memD), { from: 'main' }); // T1 在 D8 已经被 unmute 过了
+  const dumbErr = String((await RM.run({}, deps2(memD), { from: 'main' })).error || ''); // 什么都没说时的那句兜底白话：就事论事的报错不该跟它一样
+  ok(rD10a?.ok === false && rD10b?.ok === false && rD10a.error?.trim() && rD10b.error?.trim() && rD10a.error !== dumbErr && rD10b.error !== dumbErr, '四期2 D10：反例——已经这个状态再来一次：已 mute 的再 mute、已 unmute 的再 unmute，都 ok: false，报的白话要说清是「已经这样了」，不是兜底那句');
+
+  /* ---- E：pin / unpin ---- */
+  const dirE = mkdtempSync(join(tmpdir(), 'yushe-p42e-'));
+  const mE = MM.emptyMemory();
+  const pinEp = MM.makeEpisode(mE, { at: iso2(T2), kind: 'postcard', text: '在外面给爸妈寄了张明信片：说看到了会发光的鱼群，想念家里的水草缸，下次要把爸妈带来一起看' });
+  const refEp = MM.makeEpisode(mE, { at: iso2(T2), kind: 'postcard', text: '在外面给爸妈寄了张明信片：说遇到了一只会唱歌的海豚，还给它留了言，想把它讲给爸妈听一遍' });
+  mE.episodes.push(pinEp, refEp);
+  emit2(dirE, mE);
+  let clockE = T2;
+  const memE = mk2(dirE, () => clockE);
+  const rE1 = await RM.run({ pin: pinEp.id }, deps2(memE), { from: 'main' });
+  clockE = T2 + 40 * DAY2; // 2026-12-19 周六 10:00（拨 40 天；总指挥锁定时修：明信片半衰期正好 30 天，30 天时留存 0.5 还算清晰，对照不成立）
+  const vE1 = memE.view(fish2).recent.find((x) => x.id === pinEp.id); // view 会按新时钟 sync 一遍（settle 跑过）
+  const rawE = peek2(dirE); // 总指挥锁定时修：原先在 settle 之前读存档，E3 的「被擦短」看不到
+  const refRawE = rawE.episodes.find((x) => x.id === refEp.id);
+  const refNotClear = MM.stageOf({ ...refEp }, T2 + 40 * DAY2) !== 'clear'; // 先用 stageOf 把对照算出来，不心算
+  ok(rE1.ok === true && refNotClear && vE1?.stage === '清晰', '四期2 E1：钉过的经历拨到 40 天后 memory.view() 里还是「清晰」；对照（同一天、同一种类、没钉的那条）MM.stageOf 算出来已经不是 clear');
+  ok(rawE.episodes.find((x) => x.id === pinEp.id)?.pinned === true, '四期2 E2：pin 之后存档里那条记下 pinned: true');
+  const pinRawE = rawE.episodes.find((x) => x.id === pinEp.id);
+  ok(pinRawE?.text === pinEp.text && refRawE?.text !== refEp.text, '四期2 E3：settleMemory 擦不擦不动钉过的——那条正文一字没动、没被删；同一天没钉的那条已经被擦短了（证明 settle 真的跑过一遍）');
+  const dirB = mkdtempSync(join(tmpdir(), 'yushe-p42b-'));
+  const mB2 = MM.emptyMemory();
+  for (const [bid, text] of [['Bp1', '本鱼会自己认路回家'], ['Bq1', '本鱼爱在雨天看窗外']]) {
+    const c1 = MM.makeEpisode(mB2, { at: iso2(T2 - DAY2), kind: 'mood', text: `${bid} 的第一件小事：和妈妈聊到很晚` }); // 2026-11-08 周日
+    const c2 = MM.makeEpisode(mB2, { at: iso2(T2 - DAY2), kind: 'mood', text: `${bid} 的第二件小事：睡前自己写下这段话` });
+    c1.id = `M${bid}`; c2.id = `M${bid}b`; // 编号对上 from，别让认亲认错
+    mB2.episodes.push(c1, c2);
+    mB2.beliefs.push({ id: bid, text, why: '', effect: '', about: '自己', scope: 'public', source: 'reflect', status: '生效', from: [c1.id, c2.id], at: iso2(T2 - 5 * DAY2), lastAt: iso2(T2), n: 2 });
+  }
+  emit2(dirB, mB2);
+  const memB2 = mk2(dirB, () => T2);
+  await RM.run({ pin: 'Bp1' }, deps2(memB2), { from: 'main' });
+  const rawB2 = peek2(dirB);
+  rawB2.episodes = []; // 依据经历全删掉了
+  MM.settleBeliefs(rawB2, { now: T2 + 40 * DAY2, at: iso2(T2 + 40 * DAY2), day: '2026-12-19' }); // 2026-12-19 周六（过 40 天收尾）
+  const bP = rawB2.beliefs.find((x) => x.id === 'Bp1'), bQ = rawB2.beliefs.find((x) => x.id === 'Bq1');
+  ok(bP?.pinned === true && bP?.status === '生效' && bQ?.status === '退役', '四期2 E4：钉住的认识，依据经历全删掉、过 40 天跑 settleBeliefs 也照样生效（不退役）；对照：一样条件没钉的那条 → 退役了');
+  const rE5 = await RM.run({ pin: 'Tz0' }, deps2(memC), { from: 'main' });
+  ok(rE5.ok === false && /不会忘/.test(String(rE5.error || '')), '四期2 E5：反例——钉一条爸妈让记的（T 编号）→ ok: false，白话里说清楚「爸妈让记的本来就不会忘」');
+  const dirP = mkdtempSync(join(tmpdir(), 'yushe-p42p-'));
+  const mP = MM.emptyMemory();
+  for (let i = 0; i < 20; i++) { const ep = MM.makeEpisode(mP, { at: iso2(T2 - 3 * DAY2), kind: 'mood', text: `第${i}件小事：和爸妈说了会儿话` }); ep.pinned = true; mP.episodes.push(ep); }
+  emit2(dirP, mP);
+  const memP = mk2(dirP, () => T2);
+  const rawP1 = peek2(dirP);
+  const extraEp = MM.makeEpisode(mP, { at: iso2(T2 - DAY2), kind: 'mood', text: '第21件小事：和爸爸打了招呼' }); // 2026-11-08 周日
+  rawP1.episodes.push(extraEp);
+  emitRaw2(dirP, rawP1);
+  const rP21 = await RM.run({ pin: extraEp.id }, deps2(memP), { from: 'main' });
+  ok(rP21.ok === false && /20/.test(String(rP21.error || '')), '四期2 E6：反例——已经钉满 20 条，第 21 条钉不进去，白话里告诉爸妈要先松开一条');
+  ok(typeof MM.MAX_PINNED === 'number' && MM.MAX_PINNED === 20, '四期2 E7：上限是导出的常量 MAX_PINNED，值就是 20');
+  const dirMP = mkdtempSync(join(tmpdir(), 'yushe-p42mp-'));
+  const mMP = MM.emptyMemory();
+  const epMP = MM.makeEpisode(mMP, { at: iso2(T2 - DAY2), kind: 'postcard', text: '在外面给爸妈寄了张明信片：说今天在海边看到了大鲸鱼，很想让爸妈也看到' }); // 2026-11-08 周日
+  mMP.episodes.push(epMP);
+  emit2(dirMP, mMP);
+  let clockMP = T2;
+  const memMP = mk2(dirMP, () => clockMP);
+  const preMP = memMP.section(fish2, { scope: 'all' });
+  await RM.run({ mute: epMP.id }, deps2(memMP), { from: 'main' });
+  await RM.run({ pin: epMP.id }, deps2(memMP), { from: 'main' });
+  const epRawMP = peek2(dirMP).episodes.find((x) => x.id === epMP.id);
+  const secMP = memMP.section(fish2, { scope: 'all' });
+  clockMP = T2 + 30 * DAY2; // 2026-12-09 周三 10:00
+  const vMP = memMP.view(fish2).recent.find((x) => x.id === epMP.id);
+  ok(preMP.includes('鲸鱼') && epRawMP?.muted === true && epRawMP?.pinned === true && !secMP.includes('鲸鱼') && vMP?.stage === '清晰', '四期2 E8：同一条经历又钉又 mute：存档里两个标记都在（钉住但不再提 = 记得但不说）；不再进注入（pre 那次还在），但 30 天后在页面上还是「清晰」');
+
+  /* ---- F：改动日志 ---- */
+  const dirF2 = mkdtempSync(join(tmpdir(), 'yushe-p42f-'));
+  const mF2 = MM.emptyMemory();
+  const epF = MM.makeEpisode(mF2, { at: iso2(T2 - DAY2), kind: 'mood', text: '妈妈陪本鱼看了彩虹' }); // 2026-11-08 周日
+  mF2.episodes.push(epF);
+  emit2(dirF2, mF2);
+  const memF2 = mk2(dirF2, () => T2);
+  await RM.run({ mute: epF.id }, deps2(memF2), { from: 'main' });
+  await RM.run({ pin: epF.id }, deps2(memF2), { from: 'main' });
+  const logF = memF2.view(fish2).log;
+  const lm = logF.find((x) => x.op === 'mute'), lp = logF.find((x) => x.op === 'pin');
+  ok(Boolean(lm) && Boolean(lp) && String(lm?.text || '').includes('妈妈陪本') && String(lp?.text || '').includes('妈妈陪本'), '四期2 F1：mute / pin 之后 memory.view() 的 log 里有 op 为 mute 和 pin 的条目，text 带着那一条的前几个字（爸妈在页面核对办的是哪条）');
+
+  /* ---- G / G2：页面（只查文字，不加按钮） ---- */
+  const game42 = read('src/game/main.js');
+  ok(game42.includes('记牢了') && game42.includes('不再提'), '四期2 G1：页面「最近记得的事」「对自己的认识」「爸妈让她记住的」里，钉住的标「记牢了」、mute 的标「不再提」（只显示，main.js 里有这两个字样）');
+  ok(game42.includes('改动记录'), '四期2 G2：页面有「改动记录」这一块（折起来的那行的字样）');
+  ok(game42.includes('直接跟她说就行'), '四期2 G3：记忆页最底下有一行小字告诉爸妈：想让她记牢、别再提、改掉记错的、忘掉一件事，直接跟她说就行');
+  ok(TI.TIPS.some((t) => `${t?.id ?? ''}${t?.text ?? ''}`.includes('记牢')) && TI.KB.some(([k, v]) => `${k}${v}`.includes('记牢')), '四期2 G4：tips.js 的 TIPS 加了一条、KB 加了一条，都告诉爸妈能说「记牢 / 别再提」这类话她照办');
+
+  /* ---- H：工具声明 ---- */
+  const REM2 = REG2.TOOLS.find((t) => t.name === 'yushe_remember');
+  ok(Boolean(REM2) && REM2.expose.main === true && REM2.expose.room === true, '四期2 H1：yushe_remember 在鱼社房间里也能办（expose.room === true），主会话照旧给');
+  ok(Boolean(REM2) && ['mute', 'pin'].every((w) => REM2.description.includes(w)) && REM2.description.includes('yushe_recall'), '四期2 H2：工具说明写清「别再提 X」→ mute、「记牢」→ pin，并提醒先用 yushe_recall 找到那条的编号再办');
+}
+
+/* ===== 记忆四期-2 补（reviewer 11-09 指出 mute 漏网；总指挥写、锁定；实现方不许改这一块）===== */
+section('记忆四期-2 补：不再提的哪儿都翻不到、钉住额度只数还在的');
+{
+  const MM = await import(pathToFileURL(join(plugin, 'src/shared/memory.js')).href);
+  const MH = await import(pathToFileURL(join(plugin, 'src/host/memory.js')).href);
+  const RC = (await import(pathToFileURL(join(plugin, 'src/host/tools/self/recall.js')).href)).default;
+  const RM = (await import(pathToFileURL(join(plugin, 'src/host/tools/self/remember.js')).href)).default;
+  const { mkdirSync } = await import('node:fs');
+  const NOW = new Date(2026, 10, 9, 22, 0).getTime(); // 2026-11-09 周一 22:00
+  const iso = (d, h = 10) => new Date(2026, 10, d, h).toISOString(); // 2026-11-d
+  const m = MM.emptyMemory();
+  const ep = (d, kind, text) => { const e = MM.makeEpisode(m, { at: iso(d), kind, text }); m.episodes.push(e); return e; };
+  const secret = ep(3, 'mood', '妈妈说了奶奶的坏话，不想再提'); // 2026-11-03 周二
+  ep(4, 'chat', '和妈妈聊了换水'); ep(5, 'seen', '看了《深海抹香》'); ep(6, 'mood', '午睡做了个好梦'); // 11-04 周三 / 11-05 周四 / 11-06 周五
+  secret.muted = true; secret.mutedAt = iso(9);
+  m.beliefs.push({ id: 'Bm', text: '我好像惹奶奶难过了', why: '', effect: '', about: '人', scope: 'home', source: 'reflect', status: '生效', from: [], at: iso(7), lastAt: iso(7), n: 2, muted: true, mutedAt: iso(9) });
+  m.told.push({ id: 'Tm', text: '奶奶生日别提礼物的事', at: iso(8), muted: true, mutedAt: iso(9) });
+  m.weeklies.push({ id: 'Wm', week: '2026-11-02', from: '2026-11-02', to: '2026-11-08', headline: '这周和奶奶闹了别扭', text: '这周发生了一些不开心的事。'.repeat(8), stats: { seen: 1, comments: 0, replies: 0, topTags: [], topPeople: [], diaries: 0 }, cites: [], at: iso(8, 23), floor: 0, muted: true, mutedAt: iso(9) });
+  m.changes.push({ kind: '站住了', before: '我好像惹奶奶难过了', scope: 'home', at: iso(8) });
+  const dir = mkdtempSync(join(tmpdir(), 'yushe-p42r-'));
+  mkdirSync(join(dir, 'memory'), { recursive: true });
+  wfs(join(dir, 'memory', 'f.json'), JSON.stringify(m));
+  let prompt = '';
+  const mem = MH.createMemory({ storage: dir, life: { state: () => ({}) }, gate: { footprints: () => [] }, inbox: { all: () => [] }, dms: { view: () => ({ convs: [] }) }, habits: { get: () => ({}) }, now: () => NOW });
+  const f = { id: 'f', parentCall: '妈妈' };
+  const deps = { pond: { current: () => f }, life: { state: () => ({}) }, memory: mem };
+  const cands = MM.reflectCandidates(mem.sync(f, { minGapMs: 0 }), { now: NOW });
+  ok(cands.length >= 3 && !cands.some((x) => x.id === secret.id), '四期2补 R1：睡前反思的素材里没有不再提的经历');
+  await mem.reflect(f, { say: async (k, p) => { prompt = String(p); return { text: '{"add":[],"retire":[]}' }; } }, { day: '2026-11-09', force: true });
+  ok(prompt.length > 0 && !prompt.includes('惹奶奶难过') && !prompt.includes('奶奶的坏话'), '四期2补 R2：睡前反思的提示词里既没有不再提的经历，也没有不再提的认识');
+  const told = await RC.run({ what: 'told' }, deps, { from: 'main' });
+  const bel = await RC.run({ what: 'beliefs' }, deps, { from: 'main' });
+  const wk = await RC.run({ what: 'weekly' }, deps, { from: 'main' });
+  const chg = await RC.run({ what: 'changes' }, deps, { from: 'main' });
+  ok(told.ok && !JSON.stringify(told.items).includes('礼物') && bel.ok && !JSON.stringify(bel.items).includes('惹奶奶'), '四期2补 R3：yushe_recall 的 told / beliefs 翻不到不再提的');
+  ok(wk.ok && !JSON.stringify(wk.items).includes('闹了别扭') && chg.ok && !JSON.stringify(chg.items).includes('惹奶奶'), '四期2补 R4：yushe_recall 的 weekly 翻不到不再提的周记，changes 里也没有关于不再提的认识的变化');
+  const lst = await RM.run({ list: true }, deps, { from: 'main' });
+  ok(lst.ok && lst.items.some((x) => x.id === 'Tm' && x.muted === true), '四期2补 R5：yushe_remember 的 list 照样列出不再提的那条（带 muted，爸妈核对、unmute 要用）');
+  const mat = MM.weekMaterial(mem.sync(f, { minGapMs: 1e12 }), '2026-11-02', null, { now: NOW });
+  ok(!mat.eps.some((x) => x.id === secret.id), '四期2补 R6：写周记的材料里没有不再提的经历');
+  const m2 = MM.emptyMemory();
+  for (let i = 0; i < 19; i++) { const e = MM.makeEpisode(m2, { at: iso(8), kind: 'mood', text: `第${i}件小事` }); e.pinned = true; m2.episodes.push(e); }
+  m2.beliefs.push({ id: 'Bold', text: '以前的想法', why: '', effect: '', about: '自己', scope: 'home', source: 'reflect', status: '退役', from: [], at: iso(1), lastAt: iso(1), n: 1, endedAt: iso(5), pinned: true });
+  const extra = MM.makeEpisode(m2, { at: iso(8), kind: 'mood', text: '第20件小事' }); m2.episodes.push(extra);
+  const dir2 = mkdtempSync(join(tmpdir(), 'yushe-p42r2-'));
+  mkdirSync(join(dir2, 'memory'), { recursive: true });
+  wfs(join(dir2, 'memory', 'f.json'), JSON.stringify(m2));
+  const mem2 = MH.createMemory({ storage: dir2, life: { state: () => ({}) }, gate: { footprints: () => [] }, inbox: { all: () => [] }, dms: { view: () => ({ convs: [] }) }, habits: { get: () => ({}) }, now: () => NOW });
+  const rp = await RM.run({ pin: extra.id }, { pond: { current: () => f }, life: { state: () => ({}) }, memory: mem2 }, { from: 'main' });
+  ok(rp.ok === true, '四期2补 R7：钉住的额度只数还在的——19 条钉住的经历 + 1 条已经退役的钉住认识，还能再钉一条');
+}
+
+/* ===== 记忆四期-3 验收（tester 写、总指挥审过并锁定；实现方不许改这一块）===== */
+section('记忆四期-3：你记错了、忘了吧（两步走）');
+{
+  const MM = await import(pathToFileURL(join(plugin, 'src/shared/memory.js')).href);
+  const MH = await import(pathToFileURL(join(plugin, 'src/host/memory.js')).href);
+  const RM43 = (await import(pathToFileURL(join(plugin, 'src/host/tools/self/remember.js')).href)).default;
+  const REG43 = await import(pathToFileURL(join(plugin, 'src/host/tools/registry.js')).href);
+  const { mkdirSync, readFileSync: rf43, writeFileSync: wf43 } = await import('node:fs');
+  // 新工具文件现在还不存在是正常的：存在才 import（import 失败也不崩），缺了就让断言失败
+  const loadTool43 = async (rel) => { try { return existsSync(join(plugin, rel)) ? (await import(pathToFileURL(join(plugin, rel)).href)).default : null; } catch { return null; } };
+  const FIX43 = await loadTool43('src/host/tools/self/memory-fix.js');
+  const DRP43 = await loadTool43('src/host/tools/self/memory-drop.js');
+  const fix43 = async (a, d) => { if (!FIX43 || typeof FIX43.run !== 'function') return { ok: false, error: 'yushe_memory_fix 还没实现' }; try { return await FIX43.run(a, d, { from: 'main' }); } catch (e) { return { ok: false, error: String(e?.message || e) }; } };
+  const drop43 = async (a, d) => { if (!DRP43 || typeof DRP43.run !== 'function') return { ok: false, error: 'yushe_memory_drop 还没实现' }; try { return await DRP43.run(a, d, { from: 'main' }); } catch (e) { return { ok: false, error: String(e?.message || e) }; } };
+
+  const DAY43 = 86400e3;
+  const NOW43 = new Date(2026, 10, 9, 10, 0); // 2026-11-09 周一 10:00，本机时区
+  const T43 = NOW43.getTime();
+  const iso43 = (t) => new Date(t).toISOString();
+  const emit43 = (dir, m) => { mkdirSync(join(dir, 'memory'), { recursive: true }); wf43(join(dir, 'memory', 'm.json'), JSON.stringify(m)); };
+  const peek43 = (dir) => JSON.parse(rf43(join(dir, 'memory', 'm.json'), 'utf8'));
+  const mk43 = (dir, clock) => MH.createMemory({ storage: dir, life: { state: () => ({}) }, gate: { footprints: () => [] }, inbox: { all: () => [] }, dms: { view: () => ({ convs: [] }) }, habits: { get: () => ({}) }, now: clock });
+  const deps43 = (mem, life43 = { state: () => ({}) }) => ({ pond: { current: () => ({ id: 'm', parentCall: '妈妈' }) }, life: life43, memory: mem });
+  const fish43 = { id: 'm', parentCall: '妈妈' };
+  const belief43 = (id, text, more = {}) => ({ id, text, why: '', effect: '', about: '自己', scope: 'home', source: 'reflect', status: '生效', from: [], at: iso43(T43 - DAY43), lastAt: iso43(T43), n: 1, ...more });
+
+  /* ---- I：你记错了（fix，认识 / 爸妈让记的，两步走）---- */
+  const OLD43 = '本鱼怕打雷，打雷时要有人陪', NEW43 = '其实本鱼不怕打雷，只怕突然的门声';
+  const dirI = mkdtempSync(join(tmpdir(), 'yushe-p43i-'));
+  const mI = MM.emptyMemory();
+  const epI1 = MM.makeEpisode(mI, { at: iso43(T43 - DAY43), kind: 'mood', text: '妈妈陪本鱼听了打雷' }); // 2026-11-08 周日（给 I9 的假反思当依据用）
+  const epI2 = MM.makeEpisode(mI, { at: iso43(T43 - DAY43), kind: 'mood', text: '本鱼自己待着也还好' });
+  mI.episodes.push(epI1, epI2);
+  // Bc1 是对照：和爸妈纠的认识一样「没有依据」（from 空），只是没人纠过、lastAt 早就 40 天前——按现行规则它该退役
+  mI.beliefs.push(belief43('Bf1', OLD43), belief43('Bc1', '本鱼想起来的对照认识', { at: iso43(T43 - 40 * DAY43), lastAt: iso43(T43 - 40 * DAY43) }));
+  emit43(dirI, mI);
+  let clockI = T43;
+  const memI = mk43(dirI, () => clockI);
+  const depsI = deps43(memI);
+  const preI = memI.section(fish43, { scope: 'all' }); // 改之前就取好：I5 要对照「改之前 X、改之后 Y」
+  const dI1 = await fix43({ target: 'Bf1', text: NEW43 }, depsI);
+  const rawI1 = peek43(dirI);
+  ok(dI1.ok === true && typeof dI1.proposalId === 'string' && !!dI1.proposalId && dI1.before === OLD43 && dI1.after === NEW43 && /confirm/.test(String(dI1.next || '')) && /proposalId/.test(String(dI1.next || '')) && rawI1.beliefs.find((x) => x.id === 'Bf1')?.text === OLD43 && rawI1.beliefs.find((x) => x.id === 'Bf1')?.status === '生效' && rawI1.beliefs.length === 2, '四期3 I1：第一次调（没有 proposalId）→ ok: true，有 proposalId、before（旧的话）、after（洗过的正确说法）、next 教爸妈带 proposalId 和 confirm 再来一次；存档没变（认识还是原样、没多没少）');
+  const dI2 = await fix43({ target: 'Bf1', proposalId: dI1.proposalId, confirm: true }, depsI);
+  const rawI = peek43(dirI);
+  const newBI = rawI.beliefs.find((x) => x.id !== 'Bf1' && x.text === NEW43);
+  ok(dI2.ok === true && Boolean(newBI) && newBI.source === 'parent' && newBI.status === '生效' && rawI.beliefs.find((x) => x.id === 'Bf1')?.status === '被取代' && rawI.beliefs.find((x) => x.id === 'Bf1')?.supersededBy === newBI?.id && typeof rawI.beliefs.find((x) => x.id === 'Bf1')?.endedAt === 'string', '四期3 I2：第二次带 proposalId + confirm: true → 工具答应 ok: true；旧认识 status 变「被取代」、记下 supersededBy（指着新的）和 endedAt；存档里多一条新认识：text 是爸妈说的、source 是 parent、status 是 生效');
+  const chgI = (rawI.changes || []).at(-1);
+  ok(chgI && chgI.kind === '取代' && chgI.by === 'parent' && chgI.before === OLD43 && chgI.after === NEW43, '四期3 I3：确认后 changes 的最后一条 kind 是「取代」，before 旧说法 / after 新说法，还带 by: \'parent\'（记清这是爸妈办的，不是睡前反思办的）');
+  const logI = memI.view(fish43).log; // view().log 最近的在前
+  ok(logI[0]?.op === 'fix' && String(logI[0]?.text || '').includes('认识') && String(logI[0]?.text || '').includes('本鱼怕打雷'), '四期3 I4：view().log 里最新的一条 op 是 fix，text 写了种类（认识）和旧说法的开头几个字，爸妈在页面核对办的是哪一条');
+  const secI = memI.section(fish43, { scope: 'all' });
+  ok(preI.includes(OLD43) && secI.includes(NEW43) && !secI.includes(OLD43), '四期3 I5：注入跟着换：改之前注入（pre 那次）里有旧说法；确认之后的注入里有新说法、没有旧说法');
+  const rawRef = peek43(dirI);
+  const rRef = MM.applyReflection(rawRef, JSON.stringify({ add: [{ text: '和老鱼群里游回家的路要慢慢教', from: [epI1.id, epI2.id], replaces: newBI?.id }], retire: [newBI?.id] }), { now: T43, at: iso43(T43) }); // 模型编的反思想动爸妈纠的那条
+  const parRef = rawRef.beliefs.find((x) => x.id === newBI?.id);
+  ok((rRef.retired || []).length === 0 && parRef?.status === '生效' && !parRef?.supersededBy && !(rawRef.changes || []).some((c) => c.kind === '取代' && c.before === NEW43), '四期3 I9：捣乱——模型的反思交 {add 的 replaces 和 retire 都填新认识的 id} → retire 不生效（retired 空），新认识还是 生效、没被取代，changes 里也没冒出一条取代它（爸妈纠的认识规则不让模型动）');
+  clockI = T43 + DAY43; // 2026-11-10 周二 10:00
+  const secI2 = memI.section(fish43, { scope: 'all' });
+  ok(!secI2.includes(OLD43) && secI2.includes(NEW43), '四期3 I6：第二天（11-10）再注入：被纠正的旧说法不回来、新说法还在（验收：爸妈纠过就这么定住）');
+  const rawI2 = peek43(dirI);
+  MM.settleBeliefs(rawI2, { now: T43 + DAY43, at: iso43(T43 + DAY43), day: '2026-11-10' });
+  ok(rawI2.beliefs.find((x) => x.source === 'parent')?.status === '生效' && rawI2.beliefs.find((x) => x.id === 'Bc1')?.status === '退役', '四期3 I7：第二天跑 MM.settleBeliefs：爸妈纠的新说法（生效）不动，它没有依据也不退役；对照：一样没依据、没人纠、lastAt 已 40 天前的 Bc1 这次收尾里退役了——对照按 MM.settleBeliefs 真实算过，说明收尾真的批了一遍');
+  MM.settleBeliefs(rawI2, { now: T43 + 40 * DAY43, at: iso43(T43 + 40 * DAY43), day: '2026-12-19' }); // 2026-12-19 周六（时钟拨 40 天再收尾一遍）
+  ok(rawI2.beliefs.find((x) => x.source === 'parent')?.status === '生效', '四期3 I8：拨到 40 天后（12-19）再收尾：爸妈纠的说法还是 生效——「依据全忘」的退役（现在只豁免钉住的）也要豁免它（照现行规则它会退役，这条必须过）；第二天那条（I7）时它还远不满足退役的字面条件，这个 40 天的才是真关卡');
+  const dI3 = await fix43({ target: 'Bf1', proposalId: dI1.proposalId, confirm: true }, depsI);
+  ok(dI3.ok === false && peek43(dirI).beliefs.filter((x) => x.text === NEW43).length === 1, '四期3 I14：反例（捣乱之一）——同一个 proposalId 用第二次（刚才那单已经办完了）→ ok: false，也不再重复改（新说法在存档里只有那一份）');
+
+  // T：爸妈让记的也能纠；M：经历不能改
+  const dirT = mkdtempSync(join(tmpdir(), 'yushe-p43t-'));
+  const mT = MM.emptyMemory();
+  mT.told.push({ id: 'T1', text: '下周三我出差', at: iso43(T43), due: '2026-11-18' }); // 今天周一 11-09，下周三 = 11-18
+  emit43(dirT, mT);
+  let clockT = T43;
+  const memT = mk43(dirT, () => clockT);
+  const dT1 = await fix43({ target: 'T1', text: '其实是下周五我出差' }, deps43(memT));
+  const dT2 = await fix43({ target: 'T1', proposalId: dT1.proposalId, confirm: true }, deps43(memT));
+  const tT = peek43(dirT).told.find((x) => x.id === 'T1');
+  ok(dT1.ok === true && Boolean(dT1.proposalId) && dT2.ok === true && tT?.text === '其实是下周五我出差' && typeof tT?.fixedAt === 'string', '四期3 I10：爸妈让记的（T）也是两步：确认后那一条 text 换成爸妈说的，记下 fixedAt（页面好标「纠正过」）');
+  ok(tT?.due === '2026-11-20', '四期3 I11：T 确认后 due 重算（新的话里是「下周五」，今天周一 11-09 → 2026-11-20，MM.dueOf 实算过）；不是一直沿用旧日子的 11-18');
+  const dirM = mkdtempSync(join(tmpdir(), 'yushe-p43m-'));
+  const mM = MM.emptyMemory();
+  mM.episodes.push(MM.makeEpisode(mM, { at: iso43(T43 - DAY43), kind: 'postcard', text: '在外面给爸妈寄了张明信片：说看到了大鲸鱼' }));
+  emit43(dirM, mM);
+  const memM = mk43(dirM, () => T43);
+  const dM1 = await fix43({ target: peek43(dirM).episodes[0]?.id, text: '其实看到的是鲸鱼群里的海豚' }, deps43(memM));
+  ok(dM1.ok === false && /忘掉/.test(String(dM1.error || '')) && typeof dM1.proposalId === 'undefined', '四期3 I12：经历（M）改不了：第一次调就 ok: false、不给 proposalId，白话里指路「经历记错了就让她忘掉，再让她记住对的」');
+
+  // 反例：proposalId 不认得 / confirm 不是 true / 过期
+  const dirNg = mkdtempSync(join(tmpdir(), 'yushe-p43ng-'));
+  const mNg = MM.emptyMemory();
+  mNg.beliefs.push(belief43('Bn1', '本鱼怕打雷就算了'));
+  emit43(dirNg, mNg);
+  let clockNg = T43;
+  const memNg = mk43(dirNg, () => clockNg);
+  const dNg1 = await fix43({ target: 'Bn1', text: '其实是本鱼不怕打雷' }, deps43(memNg));
+  const dNgA = await fix43({ target: 'Bn1', proposalId: '编的Nope000', confirm: true }, deps43(memNg));
+  const dNgB = await fix43({ target: 'Bn1', proposalId: dNg1.proposalId, confirm: 'yes' }, deps43(memNg));
+  const dNgC = await fix43({ target: 'Bn1', proposalId: dNg1.proposalId }, deps43(memNg)); // 干脆没带 confirm
+  const rawNg = peek43(dirNg);
+  ok(Boolean(FIX43) && dNg1.ok === true && Boolean(dNg1.proposalId) && dNgA.ok === false && dNgB.ok === false && dNgC.ok === false && rawNg.beliefs.length === 1 && rawNg.beliefs[0].text === '本鱼怕打雷就算了' && rawNg.beliefs[0].status === '生效' && (rawNg.changes || []).length === 0, '四期3 I13：反例——proposalId 不认得 / confirm 填了个不是 true 的（yes）/ 干脆没带 confirm：都 ok: false，存档一字没动（认识还是原文、没有多出新认识、changes 也没冒出来）；工具还没实现时这条先按失败算（不让占位返回的 ok:false 冒充真拒绝）');
+  const dirExp = mkdtempSync(join(tmpdir(), 'yushe-p43exp-'));
+  const mExp = MM.emptyMemory();
+  mExp.beliefs.push(belief43('Be1', '本鱼想起来的另一件事'));
+  emit43(dirExp, mExp);
+  let clockExp = T43;
+  const memExp = mk43(dirExp, () => clockExp);
+  const dExp1 = await fix43({ target: 'Be1', text: '其实是两件事' }, deps43(memExp));
+  clockExp = T43 + 31 * 60e3; // 2026-11-09 周一 10:31（拨 31 分钟）
+  const dExp2 = await fix43({ target: 'Be1', proposalId: dExp1.proposalId, confirm: true }, deps43(memExp));
+  const rawExp = peek43(dirExp);
+  ok(dExp1.ok === true && dExp2.ok === false && rawExp.beliefs.length === 1 && rawExp.beliefs[0].status === '生效', '四期3 I14b：反例——proposalId 过了 30 分钟（时钟拨 31 分钟）再确认 → ok: false，那一条还是原样没被改');
+
+  /* ---- J0 / J：忘了吧（drop，一律两步；J0：yushe_remember 的 forget 不再一步删）---- */
+  const dirE = mkdtempSync(join(tmpdir(), 'yushe-p43e-'));
+  const lifeE = { diary: [{ day: '2026-11-08', at: iso43(T43 - DAY43), ai: true, text: '看到洋葱会发光，好奇！' }] }; // 2026-11-08 周日：档案里的原件（她的日记页）
+  let clockE = T43;
+  const life43E = { state: () => ({ ...lifeE }) };
+  const memE = MH.createMemory({ storage: dirE, life: life43E, gate: { footprints: () => [] }, inbox: { all: () => [] }, dms: { view: () => ({ convs: [] }) }, habits: { get: () => ({}) }, now: () => clockE });
+  const depsE = deps43(memE, life43E);
+  const firstSyncE = memE.sync(fish43, { minGapMs: 0 }); // 先把档案抄进记忆，得到那条经历
+  const epE = firstSyncE.episodes[0];
+  if (!epE) console.log('  （记忆四期-3 前置：日记没抄成经历，后面 J 的断言会大面积失败——这行不计验收）');
+  const dE1 = await drop43({ target: epE?.id }, depsE);
+  const rawE1 = peek43(dirE);
+  ok(dE1?.ok === true && typeof dE1?.proposalId === 'string' && !!dE1?.proposalId && typeof dE1?.what === 'string' && dE1.what.includes('洋葱') && /日记|经历/.test(dE1.what) && rawE1.episodes.some((x) => x.id === epE?.id), '四期3 J1：经历第一次调（没有 proposalId）→ ok: true、有 proposalId，what 是白话种类 + 那条的前 40 字（能看出是日记 / 经历、复述里带着「洋葱」）；存档没变（episodes 还在）');
+  const dE2 = await drop43({ target: epE?.id, proposalId: dE1?.proposalId, confirm: true }, depsE);
+  ok(dE2?.ok === true && !peek43(dirE).episodes.some((x) => x.id === epE?.id), '四期3 J2：第二次带 proposalId + confirm: true → episodes 里这条经历没了');
+  const recJ = memE.recall(fish43, { query: '洋葱' });
+  ok(recJ.length === 0, '四期3 J3：确认删掉后 memory.recall 按「洋葱」也翻不到这条（注入更翻不到，不带歧义）');
+  ok(lifeE.diary[0]?.text?.includes('洋葱') && /档案|照旧|还能看/.test(JSON.stringify(dE2 || {})), '四期3 J4：档案不动：life.state 里那条原件还在（日记页没被删）；工具返回里也说了档案页照旧能看到');
+  const reSyncJ = memE.sync(fish43, { minGapMs: 0 });
+  ok(!reSyncJ.episodes.some((x) => x.id === epE?.id) && !peek43(dirE).episodes.some((x) => x.id === epE?.id), '四期3 J5：再 memory.sync（minGapMs: 0）同一天档案还在，这份日记也不会被重新抄回来——删的时候去重记号（cursors.keys）留着（对照按真实 ingest 算过：记号丢了就会抄回 1 条）');
+
+  const dirBW = mkdtempSync(join(tmpdir(), 'yushe-p43bw-'));
+  const mBW = MM.emptyMemory();
+  const bWT = '本鱼怕洋葱，看到就往缸边躲';
+  mBW.beliefs.push(belief43('Bd1', bWT));
+  mBW.changes.push({ kind: '站住了', before: bWT, scope: 'home', at: iso43(T43 - DAY43) }, { kind: '不再这么想', before: bWT, scope: 'home', at: iso43(T43 - DAY43) }, { kind: '取代', before: '别的认识A', after: '新说法B', scope: 'home', at: iso43(T43 - DAY43) });
+  mBW.weeklies.push({ id: 'Wd1', week: '2026-11-02', from: '2026-11-02', to: '2026-11-08', headline: '安安静静的一周', text: '这周没出门，看了些做饭的视频，把日记写满了。', stats: { seen: 2, comments: 0, replies: 0, topTags: ['生活'], topPeople: [], diaries: 1 }, cites: [], floor: 0, at: new Date(2026, 10, 8, 23, 0).toISOString() }); // 2026-11-08 周日 23:00
+  emit43(dirBW, mBW);
+  const memBW = mk43(dirBW, () => T43);
+  const depsBW = deps43(memBW);
+  const dB1 = await drop43({ target: 'Bd1' }, depsBW);
+  const dB2 = await drop43({ target: 'Bd1', proposalId: dB1.proposalId, confirm: true }, depsBW);
+  const rawBW = peek43(dirBW);
+  ok(dB1.ok === true && Boolean(dB1.proposalId) && dB2.ok === true && !rawBW.beliefs.some((x) => x.id === 'Bd1') && !rawBW.changes.some((c) => c.before === bWT || c.after === bWT) && rawBW.changes.some((c) => c.before === '别的认识A'), '四期3 J6：认识先起草（返回 proposalId）再确认：beliefs 里这条没了；changes 里 before / after 写着它原话的那两条也一起没了；对照：跟它无关的那条变化（别的认识A → 新说法B）保留——不误伤');
+  const logBW = memBW.view(fish43).log; // 最近的在前（J7 的周记放这之后才删：免得把这条日志冲到不是最新）
+  ok(logBW[0]?.op === 'drop' && String(logBW[0]?.text || '').includes('认识') && !String(logBW[0]?.text || '').includes('洋葱'), '四期3 J8：改动日志最新的一条 op 是 drop，text 只写种类（认识）——被忘掉的原话（洋葱）不在日志里留着');
+  const dW1 = await drop43({ target: 'Wd1' }, depsBW);
+  const dW2 = await drop43({ target: 'Wd1', proposalId: dW1.proposalId, confirm: true }, depsBW);
+  ok(dW1.ok === true && Boolean(dW1.proposalId) && dW2.ok === true && !peek43(dirBW).weeklies.some((x) => x.id === 'Wd1'), '四期3 J7：周记（W）也是两步：确认后 weeklies 里这篇没了（第一次只给复述和 proposalId，不真删）');
+
+  const dirFg = mkdtempSync(join(tmpdir(), 'yushe-p43fg-'));
+  const mFg = MM.emptyMemory();
+  mFg.told.push({ id: 'Tz1', text: '记得给鱼缸捞捞藻', at: iso43(T43) });
+  emit43(dirFg, mFg);
+  const memFg = mk43(dirFg, () => T43);
+  const rFg = await RM43.run({ forget: 'Tz1' }, deps43(memFg), { from: 'main' });
+  ok(rFg.ok === true && Boolean(rFg.proposalId) && peek43(dirFg).told.some((x) => x.id === 'Tz1') && /yushe_memory_drop/.test(String(rFg.next || '')), '四期3 J9：J0——爸妈说「忘了吧」一律两步：yushe_remember 的 forget 不再一步删，返回 proposalId、told 那条还在，next 指着 yushe_memory_drop（带 proposalId + confirm）');
+  const dFg = await drop43({ target: 'Tz1', proposalId: rFg.proposalId, confirm: true }, deps43(memFg));
+  ok(dFg.ok === true && !peek43(dirFg).told.some((x) => x.id === 'Tz1'), '四期3 J10：接着用 yushe_memory_drop 带这个 proposalId + confirm → told 里这条没了（爸妈让记的和 untell 一样真的删）');
+
+  /* ---- J（工具声明） / K：页面（只查文字，不加按钮） ---- */
+  const FIXR = REG43.TOOLS.find((t) => t.name === 'yushe_memory_fix'), DRPR = REG43.TOOLS.find((t) => t.name === 'yushe_memory_drop');
+  ok(FIXR?.expose?.main === true && FIXR?.expose?.room === true && FIXR?.expose?.trip !== true && DRPR?.expose?.main === true && DRPR?.expose?.room === true && DRPR?.expose?.trip !== true, '四期3 J11：工具声明——yushe_memory_fix / yushe_memory_drop 都给主会话（expose.main === true）和鱼社房间（expose.room === true），不给出门（expose.trip 不是 true，别在逛街时动家里记的东西）');
+  const game43 = read('src/game/main.js');
+  ok(game43.includes('纠正过'), '四期3 K1：页面「对自己的认识」里爸妈纠的认识标「{爸妈}纠正过」（不加按钮，只显示，main.js 里有字样）');
+  ok(game43.includes('改了一处记错的') && game43.includes('忘掉了一件'), '四期3 K2：改动记录的白话：fix →「改了一处记错的」、drop →「忘掉了一件…」（种类跟在后面，main.js 里有这两句）');
+}
+
+/* ---------- 记忆四期-3 补（reviewer 11-09 指出的；总指挥补） ---------- */
+section('记忆四期-3 补：确认只办起草时说的那件事、周记不能改、上限不退爸妈纠的');
+{
+  const MM = await import(pathToFileURL(join(plugin, 'src/shared/memory.js')).href);
+  const MH = await import(pathToFileURL(join(plugin, 'src/host/memory.js')).href);
+  const FIX = (await import(pathToFileURL(join(plugin, 'src/host/tools/self/memory-fix.js')).href)).default;
+  const DRP = (await import(pathToFileURL(join(plugin, 'src/host/tools/self/memory-drop.js')).href)).default;
+  const { mkdirSync } = await import('node:fs');
+  const NOW = new Date(2026, 10, 9, 10, 0).getTime(); // 2026-11-09 周一
+  const at = (d) => new Date(2026, 10, d, 10).toISOString();
+  const m = MM.emptyMemory();
+  m.beliefs.push({ id: 'B1', text: '我怕打雷', why: '', effect: '', about: '自己', scope: 'home', source: 'reflect', status: '生效', from: [], at: at(1), lastAt: at(8), n: 1 });
+  m.weeklies.push({ id: 'W1', week: '2026-11-02', from: '2026-11-02', to: '2026-11-08', headline: '安静的一周', text: '这周没出门，看了些做饭的视频，把日记写满了。', stats: { seen: 0, comments: 0, replies: 0, topTags: [], topPeople: [], diaries: 0 }, cites: [], at: at(8), floor: 0 });
+  const dir = mkdtempSync(join(tmpdir(), 'yushe-p43b-'));
+  mkdirSync(join(dir, 'memory'), { recursive: true });
+  wfs(join(dir, 'memory', 'f.json'), JSON.stringify(m));
+  const mem = MH.createMemory({ storage: dir, life: { state: () => ({}) }, gate: { footprints: () => [] }, inbox: { all: () => [] }, dms: { view: () => ({ convs: [] }) }, habits: { get: () => ({}) }, now: () => NOW });
+  const f = { id: 'f', parentCall: '妈妈' };
+  const deps = { pond: { current: () => f }, life: { state: () => ({}) }, memory: mem };
+  const w = await FIX.run({ target: 'W1', text: '其实这周出门了' }, deps, { from: 'main' });
+  ok(w.ok === false && !w.proposalId, '四期3补 1：周记（W）不能「改」，第一次就拒、不给单子');
+  const fx = await FIX.run({ target: 'B1', text: '其实我不怕打雷' }, deps, { from: 'main' });
+  const cross1 = await DRP.run({ target: 'B1', proposalId: fx.proposalId, confirm: true }, deps, { from: 'main' });
+  ok(fx.ok && cross1.ok === false && mem.sync(f, { minGapMs: 0 }).beliefs.some((b) => b.id === 'B1' && b.status === '生效'), '四期3补 2：「改」的单子拿去「忘掉」确认 → 不办，认识还在、还是原样');
+  const dp = await DRP.run({ target: 'B1' }, deps, { from: 'main' });
+  const cross2 = await FIX.run({ target: 'B1', proposalId: dp.proposalId, confirm: true }, deps, { from: 'main' });
+  ok(dp.ok && cross2.ok === false && mem.sync(f, { minGapMs: 0 }).beliefs.filter((b) => b.status === '生效').length === 1, '四期3补 3：「忘掉」的单子拿去「改」确认 → 不办');
+  const fx2 = await FIX.run({ target: 'B1', text: '其实我不怕打雷' }, deps, { from: 'main' });
+  await FIX.run({ target: 'B1', proposalId: fx2.proposalId, confirm: true }, deps, { from: 'main' });
+  const nb = mem.sync(f, { minGapMs: 0 }).beliefs.find((b) => b.source === 'parent');
+  ok(nb && nb.why === '妈妈纠正过', '四期3补 4：爸妈纠的认识「为什么」写的是她叫爸妈的称呼（妈妈纠正过）');
+  const big = MM.emptyMemory();
+  big.beliefs.push({ id: 'Bp', text: '爸妈说的对的', why: '妈妈纠正过', effect: '', about: '自己', scope: 'home', source: 'parent', status: '生效', from: [], at: at(1), lastAt: at(1), n: 1 });
+  for (let i = 0; i < 31; i++) big.beliefs.push({ id: `Bx${i}`, text: `第${i}个想法`, why: '', effect: '', about: '喜好', scope: 'public', source: 'reflect', status: '生效', from: [], at: at(8), lastAt: at(8), n: 3 });
+  MM.settleBeliefs(big, { now: NOW, at: new Date(NOW).toISOString(), day: '2026-11-09' });
+  ok(big.beliefs.find((b) => b.id === 'Bp').status === '生效', '四期3补 5：认识超过 30 条要退役几条时，爸妈纠的那条（想到次数最少）也不会被挑去退役');
+}
+
 /* ---------- 发版：版本号两处一致（docs/发版.md） ---------- */
 section('发版');
 
@@ -3289,14 +3870,14 @@ section('见闻流水账：看过的每一条都留底，能按词 / 天 / 深�
   ok(tr3.ok && tr3.stats && typeof tr3.stats.total === 'number' && tr3.stats.byDepth, '见闻-1 T4：yushe_seen stats 只回统计');
   ok((await REG.runTool(SEEN, {}, { pond: { current: () => null }, seenLog: sl2 }, 'room')).ok === false, '见闻-1 T5：没有鱼时好好说');
   const room = REG.toolsFor('room').map((t) => t.name);
-  ok(['yushe_seen', 'yushe_recall', 'bili_video', 'bili_subtitle'].every((n) => room.includes(n)) && REG.toolsFor('room').every((t) => t.kind === 'read' || t.kind === 'self') && !REG.toolsFor('room').some((t) => ['yushe_go_out', 'yushe_config_apply', 'yushe_remember'].includes(t.name)), '见闻-1 T6：房间出口只有只读 / 回忆类，至少有 seen / recall / 视频详情 / 字幕；不能出门、改配置、改记忆');
+  ok(['yushe_seen', 'yushe_recall', 'bili_video', 'bili_subtitle'].every((n) => room.includes(n)) && REG.toolsFor('room').every((t) => t.kind === 'read' || t.kind === 'self') && !REG.toolsFor('room').some((t) => ['yushe_go_out', 'yushe_config_apply'].includes(t.name)), '见闻-1 T6：房间出口只有只读 / 回忆 / 记忆类，至少有 seen / recall / 视频详情 / 字幕；不能出门、改配置（记忆四期起房间里也能「记牢 / 别再提」，妈妈 11-09 拍板，总指挥改）');
   ok(REG.yusheToolDefs({ pond: { current: () => fA }, seenLog: sl2 }, { from: 'room' }).every((d) => typeof d.execute === 'function' && d.parameters?.type === 'object'), '见闻-1 T7：房间出口能生成成品工具定义');
   ok(/seenLog/.test(read('src/host/index.js')) && /createSeenLog/.test(read('src/host/index.js')), '见闻-1 W1：index.js 建好流水账、交给出门 / 梦游 / 工具');
 }
 /* ===== F-86 见闻-1 验收 结束 ===== */
 { // 总指挥验收补：连写的中文关键词（模型不一定会用空格分词）
   const SN2 = await import(pathToFileURL(join(plugin, 'src/shared/seen.js')).href);
-  const n2 = Date.now(); const at2 = new Date(n2 - 3600e3).toISOString();
+  const n2 = new Date().setHours(12, 0, 0, 0); const at2 = new Date(n2 - 3600e3).toISOString(); // 定在今天中午：凌晨 0–1 点跑时「一小时前」会落到昨天
   const lg = SN2.mergeSeen(SN2.emptySeenLog(), [{ at: at2, title: '量子猫咪的一天', url: 'https://a/1', depth: 'list' }, { at: at2, title: '有趣的实验', url: 'https://a/2', depth: 'list' }], { now: n2 });
   ok(SN2.querySeen(lg, { query: '猫咪视频', now: n2 }).total === 1 && SN2.querySeen(lg, { query: '有趣', now: n2 }).total === 1 && SN2.querySeen(lg, { query: '今天看了什么视频', now: n2 }).total === 2, '见闻-1 验收补：连写的「猫咪视频」去掉泛泛词再找；单字助词不拆坏「有趣」');
 }
@@ -3335,7 +3916,7 @@ section('房间聊天：她能按爸妈的话自己调工具翻，先翻再答�
   let brokeErr = null; try { await Wbroke.loop('chat', { prompt: 'x', tools: [seenTool] }); } catch (e) { brokeErr = e; }
   ok(brokeErr?.broke === true, '见闻-2 C2d：零花钱花光了照样抛 BrokeError');
   // C3 记忆：问「看了啥」时不召回聊天类经历（不复读自己的含糊话）
-  const em = MM2.emptyMemory(); const nowE = Date.now();
+  const em = MM2.emptyMemory(); const nowE = new Date().setHours(12, 0, 0, 0); // 定在今天中午：凌晨 0–2 点跑时「两小时前」会落到昨天
   em.episodes.push(MM2.makeEpisode(em, { at: new Date(nowE - 3600e3).toISOString(), kind: 'chat', text: '妈妈说：「今天看了什么视频」，本鱼回：「看了几条，挺模糊的」' }));
   em.episodes.push(MM2.makeEpisode(em, { at: new Date(nowE - 7200e3).toISOString(), kind: 'seen', text: '在 B站看了《量子猫咪的一天》' }));
   const all = MM2.recall(em, { query: '今天看了什么视频', now: nowE });
@@ -3589,7 +4170,8 @@ section('在家上网：醒着在家自己刷 B站，清单 + 最多一张便利
   const ALh = await import(pathToFileURL(join(plugin, 'src/shared/allowance.js')).href);
   const bvh = (i) => `BV1h${String(i).padStart(8, '0')}`;
   const urlh = (i) => `https://www.bilibili.com/video/${bvh(i)}`;
-  const T10 = (() => { const d = new Date(); d.setHours(10, 0, 0, 0); return d.getTime(); })();
+  // 「昨天 10:00」而不是「今天 10:00」：CI 在 UTC，今天 10:00 可能还在未来，settle 会先正向走几小时把心情衰减掉
+  const T10 = (() => { const d = new Date(); d.setDate(d.getDate() - 1); d.setHours(10, 0, 0, 0); return d.getTime(); })();
   const M = 60_000;
 
   // —— 配置（设计 15 §7）——
@@ -3653,7 +4235,7 @@ section('在家上网：醒着在家自己刷 B站，清单 + 最多一张便利
   const m0 = sA.mood;
   for (let i = 2; i < 12; i++) HL.homeRound(hf, { read: [{ title: `喜欢${i}`, url: urlh(10 + i), depth: 'detail', acts: [], like: '喜欢', why: '' }], scanned: 5, note: null }, T10 + i * M);
   const sB = HL.state(hf, T10 + 12 * M);
-  ok(sB.mood - m0 <= 5 && sB.mood > m0 - 1 && sB.homeCards.length === 11 && sB.lastHomeAt === T10 + 11 * M, '在家-1 L4：喜欢的东西让心情好，但一天最多 +5；记下最后一次刷的时间');
+  ok(sB.mood - m0 <= 8 && sB.mood > m0 - 1 && sB.homeCards.length === 11 && sB.lastHomeAt === T10 + 11 * M, '在家-1 L4：喜欢的东西让心情好，但刷再多也涨不超过 8（心情一期-2 改：边际递减代替每天 +5）；记下最后一次刷的时间');
   for (let i = 0; i < 120; i++) HL.homeRound(hf, { read: [], scanned: 1, note: null, cap: 100 }, T10 + (20 + i) * M);
   ok(HL.state(hf, T10 + 200 * M).homeCards.length === 100, '在家-1 L5：清单卡最多留 cap 张（默认 100），多了丢最早的');
 
@@ -3777,6 +4359,188 @@ section('在家上网：醒着在家自己刷 B站，清单 + 最多一张便利
   await DSx.run(dfx);
   ok(chargedD.length === 1 && chargedD[0][0] === 'dream' && chargedD[0][1] === 1800, 'F-87 实测补：梦游到一半模型出错，花的 1800 token 也照样记账');
   ok(AL.DEFAULT_DAILY === 500_000 && AL.freshAllowance().daily === 500_000 && AL.normalizeAllowance({ mode: 'daily', daily: 300_000 }).daily === 300_000, 'F-87 实测补：新存档「每天零花钱」默认 50 万；已经存过的数不动');
+}
+
+/* ===== 心情一期-2 验收（F-88，docs/任务书/心情-一期-2.md；总指挥写好并锁定，实现方不许改这一块）===== */
+section('心情一期-2：情绪接进鱼生引擎和聊天');
+{
+  const imp = (f) => import(pathToFileURL(join(plugin, f)).href);
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const FL2 = await imp('src/shared/feel.js'), LE2 = await imp('src/host/life-engine.js'), MD2 = await imp('src/shared/mood.js');
+  const T = (label, fn) => { try { const r = fn(); ok(Array.isArray(r) ? r[0] : r, label, Array.isArray(r) ? r[1] : ''); } catch (e) { ok(false, label, `抛异常：${e?.message || e}`); } };
+  const t0 = Date.parse('2026-11-09T10:00:00'), H = 3600e3, D = 86400e3, M = 60e3;
+  const dir2 = mkdtempSync(join(tmpdir(), 'yushe-feel2-'));
+  const L2 = LE2.createLife(dir2);
+  const v7 = (id, extra = {}) => ({ version: 7, fishId: id, mood: 60, energy: 80, bornAt: t0 - D, lastTickAt: t0, lastVisitAt: t0, events: [], chat: [], diary: [], album: [], journal: [], work: {}, letters: [], napUntil: 0, workAcc: 0, moodGain: {}, homeMood: {}, growth: null, bag: { items: {}, gear: null }, trip: null, lastBackAt: 0, dream: null, dreamTries: { day: '', n: 0 }, lastDreamDay: '', ...extra });
+  let seq = 0;
+  /** 种一条 v7 存档的鱼（不靠时钟：lastTickAt 定在 t0）。 */
+  const seed = (extra = {}) => { const id = `fish-m2-${++seq}`; mkdirSync(join(dir2, 'life'), { recursive: true }); writeFileSync(join(dir2, 'life', `${id}.json`), JSON.stringify(v7(id, extra))); return { id, createdAt: '2026-11-08T10:00:00', parentCall: '妈妈' }; };
+  const moodEvents = (s) => (s.events || []).filter((e) => e.kind === 'mood');
+  const em = (s, kind, about) => (s.feel?.emotions || []).filter((e) => e.kind === kind && (!about || e.about === about)).reduce((n, e) => n + e.intensity, 0);
+  const synced = (s) => s.mood === FL2.moodOf(s.feel);
+
+  // A 存档 v8
+  T('心情一期-2 A1：存档升到 v8：补上 feel（折算回去和老心情差不到 5），去掉 moodGain / homeMood', () => {
+    const m = LE2.migrateLife(v7('fish-mig'), { id: 'fish-mig' });
+    return [LE2.LIFE_VERSION === 8 && m.version === 8 && m.feel?.v === 1 && Math.abs(FL2.moodOf(m.feel) - 60) <= 5 && !('moodGain' in m) && !('homeMood' in m) && m.diary.length === 0 && m.energy === 80, JSON.stringify({ v: m.version, feel: m.feel })];
+  });
+  T('心情一期-2 A2：读老存档：s.mood 等于 moodOf(s.feel)，和原来差不到 5', () => { const f = seed(); const s = L2.state(f, t0); return [synced(s) && Math.abs(s.mood - 60) <= 5, `${s.mood}`]; });
+
+  // B 结算
+  T('心情一期-2 B1：三天不理她：心情不低于 30，是想念不是委屈；s.mood 跟着 feel', () => {
+    const s = LE2.settle({ mood: 72, energy: 82, lastTickAt: t0, lastVisitAt: t0 }, t0 + 3 * D);
+    return [s.mood >= 30 && em(s, 'miss') > 0 && em(s, 'hurt') === 0 && synced(s), `心情 ${s.mood}`];
+  });
+  T('心情一期-2 B2：房间开着每 10 分钟结算一次，和一次结算 8 小时的结果差不到 1（小步不被吃掉、不重复算）', () => {
+    const s0 = { mood: 70, energy: 80, lastTickAt: t0, lastVisitAt: t0 - 5 * H, feel: { v: 1, valence: 20, emotions: [{ kind: 'joy', intensity: 60, about: 'world', cause: '看到好东西', at: '' }], seen: {}, lastAt: t0 } };
+    let p = s0; for (let t = t0 + 10 * M; t <= t0 + 8 * H; t += 10 * M) p = LE2.settle(p, t);
+    const once = LE2.settle(s0, t0 + 8 * H);
+    return [Math.abs(p.mood - once.mood) <= 1 && synced(p) && synced(once), `${p.mood} vs ${once.mood}`];
+  });
+  T('心情一期-2 B3：settle 里不再有「没人来就扣心情」那行', () => !/s\.mood\s*=\s*clampF?\(s\.mood\s*-\s*0\.75/.test(read('src/host/life-engine.js')));
+
+  // C 记事件
+  T('心情一期-2 C1：摸头 → 对爸妈的被爱（原因带「摸」）；s.mood 跟着 feel；不另记一条 mood 事件', () => {
+    const f = seed(); const s = L2.record(f, 'pat', '妈妈摸了摸本鱼的头', { mood: 2, visit: true }, t0 + M);
+    const c = (s.feel.emotions || []).find((e) => e.kind === 'loved' && e.about === 'parent');
+    return [c && c.cause.includes('摸') && synced(s) && moodEvents(s).length === 0, JSON.stringify(s.feel)];
+  });
+  T('心情一期-2 C2：老调用方给的 mood 数不再直接加（摸头给 +2 和给 +50 结果一样）', () => { const a = L2.record(seed(), 'pat', '摸头', { mood: 2, visit: true }, t0 + M), b = L2.record(seed(), 'pat', '摸头', { mood: 50, visit: true }, t0 + M); return [a.mood === b.mood && synced(b), `${a.mood} / ${b.mood}`]; });
+  T('心情一期-2 C3：不在表里的事件：给了正 mood 当自己开心、负的当低落；没给 mood 情绪不动', () => {
+    const p = L2.record(seed(), 'zzz-up', '自己高兴的事', { mood: 5 }, t0 + M), n = L2.record(seed(), 'zzz-down', '自己难过的事', { mood: -5 }, t0 + M);
+    const f3 = seed(); const before = L2.state(f3, t0); const z = L2.record(f3, 'zzz-none', '无关的事', {}, t0 + M);
+    return [em(p, 'joy', 'self') > 0 && em(n, 'down', 'self') > 0 && JSON.stringify(z.feel.emotions) === JSON.stringify(before.feel.emotions) && synced(p) && synced(n), JSON.stringify([p.feel.emotions, n.feel.emotions])];
+  });
+  T('心情一期-2 C4：同一天连着摸 5 次，第 5 次涨的比第 1 次少', () => {
+    const f = seed(); let prev = L2.state(f, t0).mood; const g = [];
+    for (let i = 1; i <= 5; i++) { const s = L2.record(f, 'pat', '摸头', { visit: true }, t0 + i * M); g.push(s.mood - prev); prev = s.mood; }
+    return [g[0] > 0 && g[4] < g[0], g.join(',')];
+  });
+  T('心情一期-2 C5：三天没来、爸妈来打招呼 → 想念变开心，「今天」多一条带「来了」的心情事件（不带数字）', () => {
+    const f = seed(); const s1 = L2.state(f, t0 + 3 * D);
+    const s2 = L2.record(f, 'greet', '妈妈来家里看你，打了个招呼', { mood: 2, visit: true }, t0 + 3 * D + M);
+    const me = moodEvents(s2).filter((e) => e.text.includes('来了'));
+    return [em(s1, 'miss') > 0 && em(s2, 'miss') === 0 && em(s2, 'joy') > 0 && s2.mood > s1.mood && me.length === 1 && !/[0-9]/.test(me[0].text), JSON.stringify(moodEvents(s2))];
+  });
+
+  // D 出门回来 / 深夜干活 / 在家刷
+  T('心情一期-2 D1：life-engine 里不再直接加减 s.mood（出门回来 +5、深夜 −1、在家 +1 都改走情绪）', () => { const src = read('src/host/life-engine.js'); return !/s\.mood\s*=\s*clampF?\(\s*s\.mood\s*[+-]/.test(src) && src.includes("'back-failed'") && src.includes("'late-work'") && src.includes("'home-liked'") && !/s\.homeMood\s*=/.test(src); });
+  T('心情一期-2 D2：深夜帮爸妈干活 → 烦躁（对自己），一天只记一次', () => {
+    const f = seed({ lastTickAt: Date.parse('2026-11-09T23:00:00'), lastVisitAt: Date.parse('2026-11-09T23:00:00') }); const tl = Date.parse('2026-11-09T23:30:00');
+    L2.bumpWork(f, tl); for (let i = 1; i <= 12; i++) L2.bumpWork(f, tl + i * 1000); L2.bumpWork(f, tl + 40e3);
+    const s1 = L2.state(f, tl + 41e3);
+    for (let i = 1; i <= 12; i++) L2.bumpWork(f, tl + 50e3 + i * 1000); L2.bumpWork(f, tl + 90e3);
+    const s2 = L2.state(f, tl + 91e3);
+    const late = (s) => (s.events || []).filter((e) => e.kind === 'late-work').length;
+    return [em(s1, 'cranky', 'self') > 0 && late(s1) === 1 && late(s2) === 1 && em(s2, 'cranky', 'self') <= em(s1, 'cranky', 'self') && synced(s2), JSON.stringify(s2.feel.emotions)];
+  });
+  T('心情一期-2 D3：在家刷到喜欢的会开心，但一天刷 12 轮心情也涨不超过 8；不再记 homeMood', () => {
+    const f = seed(); const m0 = L2.state(f, t0).mood;
+    for (let i = 1; i <= 12; i++) L2.homeRound(f, { read: [{ title: `喜欢${i}`, url: `https://www.bilibili.com/video/BV1feel${String(i).padStart(5, '0')}`, depth: 'detail', acts: [], like: '喜欢', why: '' }], scanned: 3, note: null }, t0 + i * 10 * M);
+    const s = L2.state(f, t0 + 121 * M);
+    return [s.mood > m0 && s.mood - m0 <= 8 && !('homeMood' in s) && synced(s), `${m0} → ${s.mood}`];
+  });
+  T('心情一期-2 D4：feel.js 有 home-liked（外面的开心），feelEvent 返回 reunion 标记', () => FL2.EVENT_FEELS['home-liked']?.up === 'joy' && FL2.EVENT_FEELS['home-liked']?.about === 'world' && typeof FL2.feelEvent({ v: 1, valence: 0, emotions: [], seen: {}, lastAt: 0 }, { kind: 'pat', cause: 'x', at: new Date(t0).toISOString() }, { temper: FL2.temperOf(null), energy: 70 }).reunion === 'boolean');
+
+  // E 聊天信号
+  T('心情一期-2 E1：sigEvents 把信号变成情绪事件（爱意 → 凶 → 道歉的顺序，没有的不出）', () => JSON.stringify(MD2.sigEvents({ affection: 2, hurt: 0, apology: true, topics: [] })) === JSON.stringify([{ kind: 'sig-affection', intensity: 2 }, { kind: 'sig-apology' }]) && JSON.stringify(MD2.sigEvents({ affection: 0, hurt: 3, apology: false })) === JSON.stringify([{ kind: 'sig-hurt', intensity: 3 }]) && JSON.stringify(MD2.sigEvents(null)) === '[]');
+  T('心情一期-2 E2：老的加减分退役（applySignals / workToneNote 删掉）（一期-3 改：moodTone 也退役了，见一期-3 A2）', () => MD2.applySignals === undefined && MD2.workToneNote === undefined && typeof MD2.parseSignals === 'function');
+  T('心情一期-2 E3：凶她 → 委屈，原因进「今天」（不带数字）；道歉到和好 → reconciled，「今天」有「和好」', () => {
+    const f = seed(); const r1 = L2.applyFeel(f, [{ kind: 'sig-hurt', intensity: 3 }], t0 + M);
+    const ev1 = moodEvents(r1.state);
+    let rec = false, s = r1.state; for (let i = 0; i < 3 && !rec; i++) { const r = L2.applyFeel(f, [{ kind: 'sig-apology' }], t0 + (2 + i) * M); rec = r.reconciled; s = r.state; }
+    return [em(r1.state, 'hurt', 'parent') > 0 && ev1.length >= 1 && ev1.every((e) => !/[0-9]/.test(e.text)) && rec === true && moodEvents(s).some((e) => e.text.includes('和好')) && em(s, 'hurt') === 0 && synced(s), JSON.stringify(moodEvents(s))];
+  });
+  T('心情一期-2 E4：聊天路由用 feelSection / sigEvents / applyFeel，不再用 moodTone / applySignals；和好让她更黏一点', () => { const src = read('src/host/life-routes.js'); return src.includes('feelSection(') && src.includes('sigEvents(') && src.includes('applyFeel(') && !src.includes('applySignals') && !src.includes('moodTone(') && /reconciled[\s\S]{0,200}leanOnce\([^)]*'cling',\s*1/.test(src); });
+
+  // G 主会话近况
+  T('心情一期-2 G1：主会话近况：委屈够重时嘟囔一句、正事不打折；心情那个词是情绪词；不超过 320 字', () => {
+    const f = seed(); const s = L2.applyFeel(f, [{ kind: 'sig-hurt', intensity: 3 }], t0 + M).state;
+    const sec = LE2.lifeSection(f, s, new Date(t0 + M));
+    return [sec.includes('质量不打折') && sec.includes('委屈') && sec.length <= 320 && !read('src/host/life-engine.js').includes('workToneNote'), sec];
+  });
+
+  // H snapshot
+  T('心情一期-2 H1：snapshot 给情绪清单（名字 / 种类 / 对谁 / 原因 / 程度词），不给数字强度；moodWord 是情绪词', () => {
+    const f = seed(); const s = L2.applyFeel(f, [{ kind: 'sig-hurt', intensity: 3 }], t0 + M).state;
+    const sn = LE2.snapshot(s, new Date(t0 + M)); const e = sn.feel?.emotions?.[0] || {};
+    return [Array.isArray(sn.feel?.emotions) && ['name', 'kind', 'about', 'cause', 'level'].every((k) => k in e) && !('intensity' in e) && ['很', '', '有点'].includes(e.level) && sn.moodWord.includes('委屈') && /^mood[1-5]$/.test(sn.moodIcon), JSON.stringify(sn.feel)];
+  });
+  T('心情一期-2 H2：五档词只有一份（life-engine 的 moodWord 转调 feel.js）', () => LE2.moodWord(85)[0] === '超开心' && LE2.moodWord(50)[0] === '还行' && LE2.moodWord(10)[1] === 'mood1' && !read('src/host/life-engine.js').includes("'超开心'"));
+
+  // I gate
+  T('心情一期-2 I1：回爸妈私信记成 dm-sent-parent（对爸妈的被爱），回网友还是 dm-sent', () => { const src = read('src/host/gate.js'); return src.includes("'dm-sent-parent'") && src.includes("'dm-sent'"); });
+}
+/* ===== 心情一期-2 验收结束 ===== */
+section('心情一期-2 验收补（总指挥：worker 发现一期-1 的想念涨不起来）');
+{
+  const FL3 = await import(pathToFileURL(join(plugin, 'src/shared/feel.js')).href);
+  const t0 = Date.parse('2026-11-09T10:00:00');
+  const s = FL3.settleFeel(FL3.migrateFeel(72), { from: t0, to: t0 + 3 * 86400e3, temper: FL3.temperOf(null), asleep: (d) => d.getHours() + d.getMinutes() / 60 < 7.5, lastVisitAt: t0 });
+  const miss = s.emotions.filter((e) => e.kind === 'miss').reduce((n, e) => n + e.intensity, 0);
+  ok(miss >= 30 && miss <= 60, '心情一期-1 补：三天没人来，想念真的攒起来了（30–60，不是每步被清掉只剩一点）', `想念 ${miss}`);
+  let p = FL3.migrateFeel(72); const tp = t0;
+  for (let t = tp + 15 * 60e3; t <= tp + 12 * 3600e3; t += 15 * 60e3) p = FL3.settleFeel(p, { from: t - 15 * 60e3, to: t, temper: FL3.temperOf(null), asleep: () => false, lastVisitAt: tp });
+  const pm = p.emotions.filter((e) => e.kind === 'miss').reduce((n, e) => n + e.intensity, 0);
+  ok(pm >= 15, '心情一期-1 补：房间开着每 15 分钟结算，想念照样一点点攒（12 小时后不少于一半封顶）', `想念 ${pm}`);
+}
+
+/* ===== 心情一期-3 验收（F-88，docs/任务书/心情-一期-3.md；总指挥写好并锁定，实现方不许改这一块）===== */
+section('心情一期-3：对外的提示词只带外面的情绪 + 零花钱担心 + 房间「她现在」');
+{
+  const imp = (f) => import(pathToFileURL(join(plugin, f)).href);
+  const T = async (label, fn) => { try { const r = await fn(); ok(Array.isArray(r) ? r[0] : r, label, Array.isArray(r) ? r[1] : ''); } catch (e) { ok(false, label, `抛异常：${e?.message || e}`); } };
+  const MD3 = await imp('src/shared/mood.js'), WR3 = await imp('src/host/tools/writer.js'), FL4 = await imp('src/shared/feel.js'), LE3 = await imp('src/host/life-engine.js');
+  const mkF = (list) => ({ v: 1, valence: 0, emotions: list.map(([kind, intensity, about, cause]) => ({ kind, intensity, about, cause, at: '' })), seen: {}, lastAt: 0 });
+
+  // A 出门 / 梦游 / 在家刷
+  await T('心情一期-3 A1：出门、梦游、在家刷的提示词都用 feelSection 的对外场景，不再用 moodTone', () => ['src/host/trips.js', 'src/host/dreams.js', 'src/host/homes.js'].every((f) => { const s = read(f); return !s.includes('moodTone') && s.includes('feelSection(') && /scene:\s*'public'/.test(s); }));
+  await T('心情一期-3 A2：moodTone 彻底退役（mood.js 不导出，src 里没有人再用）', () => {
+    const walk3 = (d) => readdirSync(d).flatMap((n) => { const p = join(d, n); return statSync(p).isDirectory() ? walk3(p) : [p]; });
+    const users = walk3(join(plugin, 'src')).filter((p) => /\.(m?js)$/.test(p) && readFileSync(p, 'utf8').includes('moodTone'));
+    return [MD3.moodTone === undefined && users.length === 0, users.map((p) => relative(plugin, p)).join(',')];
+  });
+
+  // B 草稿
+  const fH = mkF([['hurt', 50, 'parent', '妈妈说本鱼写得不行'], ['proud', 40, 'web', '评论被网友点赞了']]);
+  await T('心情一期-3 B1：写评论 / 动态 / 私信的提示词只带 B站上的情绪，家里的委屈和原因一个字不进', () => {
+    const P = WR3.draftPrompt({ fish: { personaText: '我是小鱼', parentCall: '妈妈' }, feel: fH, temper: FL4.temperOf(null), what: '评论', material: ['视频：《做饭》'], intent: '夸夸', max: 80 });
+    return [P.includes('得意') && !P.includes('写得不行') && !P.includes('委屈') && P.includes('《做饭》'), P];
+  });
+  await T('心情一期-3 B2：只有对爸妈的情绪时，草稿里没有心情那一段；没传 feel 也能用', () => {
+    const P1 = WR3.draftPrompt({ fish: { personaText: '我是小鱼', parentCall: '妈妈' }, feel: mkF([['hurt', 60, 'parent', '妈妈说本鱼写得不行']]), temper: FL4.temperOf(null), what: '评论', material: ['视频：《做饭》'], intent: '', max: 80 });
+    const P2 = WR3.draftPrompt({ fish: { personaText: '我是小鱼', parentCall: '妈妈' }, what: '评论', material: ['视频：《做饭》'], intent: '', max: 80 });
+    return [!P1.includes('委屈') && !P1.includes('此刻的你') && P2.includes('《做饭》') && !P2.includes('{{'), `${P1}\n---\n${P2}`];
+  });
+  await T('心情一期-3 B3：写草稿时传的是她现在的 feel', () => { const s = read('src/host/tools/writer.js'); return !s.includes('moodTone') && /feel:\s*s\.feel/.test(s) && /scene:\s*'public'/.test(s); });
+
+  // C 零花钱
+  await T('心情一期-3 C1：零花钱快花光 → 记一条 money-low（她会担心），一天一次；写信闸门关着也记', () => {
+    const recs = [];
+    const fishC = { id: 'fish-c', parentCall: '妈妈' };
+    const lifeC = { state: () => ({ events: recs.map((r) => ({ kind: r.kind, day: LE3.dayOf(), text: r.text })), letters: [] }), record: (f, kind, text) => { recs.push({ f, kind, text }); return {}; }, eventsOf: () => [] };
+    const walletC = { view: () => ({ broke: false, left: 100 }), say: async () => ({ text: '信' }) };
+    return imp('src/host/letters.js').then((LT) => {
+      LT.createLetters({ life: lifeC, wallet: walletC, pond: { current: () => fishC, list: () => ({ fish: [fishC] }) }, log: null, habits: { get: () => ({}) }, gates: { closed: () => true } });
+      walletC.onLow(); walletC.onLow();
+      const m = recs.filter((r) => r.kind === 'money-low');
+      return [m.length === 1 && m[0].f === fishC && !/[0-9]/.test(m[0].text), JSON.stringify(recs.map((r) => r.kind))];
+    });
+  });
+
+  // D 房间「她现在」
+  await T('心情一期-3 D1：「她」面板有「她现在」：读 LIFE.feel.emotions，程度词 + 名字 + 原因（转义），没有就「心情平稳」', () => { const s = read('src/game/main.js'); return s.includes('她现在') && s.includes('心情平稳') && /LIFE\??\.feel\??\.emotions|feel\??\.emotions/.test(s) && /esc\([^)]*cause/.test(s); });
+  await T('心情一期-3 D2：面板不显示数字强度（不读 intensity）', () => { const s = read('src/game/main.js'); const i = s.indexOf('她现在'); const seg = s.slice(Math.max(0, i - 1500), i + 1500); return !/intensity/.test(seg); });
+}
+/* ===== 心情一期-3 验收结束 ===== */
+section('心情一期-3 验收补（总指挥：标签用像人话的说法）');
+{
+  const FL5 = await import(pathToFileURL(join(plugin, 'src/shared/feel.js')).href);
+  const LE5 = await import(pathToFileURL(join(plugin, 'src/host/life-engine.js')).href);
+  const sn = LE5.snapshot({ mood: 60, energy: 70, events: [], letters: [], feel: { v: 1, valence: 0, emotions: [{ kind: 'loved', intensity: 60, about: 'parent', cause: '妈妈摸了摸本鱼的头', at: '' }, { kind: 'miss', intensity: 30, about: 'parent', cause: '好一阵子没见到你了', at: '' }], seen: {}, lastAt: 0 } }, new Date('2026-11-09T12:00:00'));
+  const ws = sn.feel.emotions.map((e) => e.word);
+  ok(ws[0] === FL5.emotionWord({ kind: 'loved', intensity: 60 }) && !ws.some((w) => /很被爱|[0-9]/.test(w || '')) && ws.every(Boolean), '心情一期-3 补：「她现在」的标签是像人话的说法（不拼成「很被爱」）', ws.join(' / '));
+  ok(/e\.word/.test(read('src/game/main.js')) && /feels\.length/.test(read('src/game/main.js')), '心情一期-3 补：面板用 word，按条数判「心情平稳」');
 }
 
 /* ---------- 4. 脱敏 ---------- */

@@ -11,7 +11,8 @@
 import { nowMs } from './clock.js';
 import { readJsonBody } from './game-routes.js';
 import { snapshot, lifeSection, dayOf } from './life-engine.js';
-import { moodTone, SIG_INSTRUCTION, sigFilter, parseSignals, applySignals } from '../shared/mood.js';
+import { SIG_INSTRUCTION, sigFilter, parseSignals, sigEvents } from '../shared/mood.js';
+import { feelSection, temperOf } from '../shared/feel.js';
 import { gainXp, leanOnce, feedInterests, growthView } from '../shared/growth.js';
 import { asksAboutGame, kbText } from '../shared/tips.js';
 import { nowDate } from './clock.js';
@@ -170,7 +171,7 @@ export function registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, ga
     // F-86 见闻-2：问「看了啥」时排掉聊天类经历，不复读她自己的含糊话
     const askSeen = asksAboutSeen(text);
     const memoryText = (() => { try { return memory?.section?.(f, { query: text, scope: 'all', people: 0, title: '【这句话让你想起的事】', ...(askSeen ? { excludeKinds: ['chat'] } : {}) }) || ''; } catch { return ''; } })();
-    const sayArgs = { persona: f.personaText, lifeText: lifeSection(f, s), sleeping: snap.where === 'sleep', call: f.parentCall, moodText: moodTone(snap.mood, f.parentCall).text, memoryText, history, kb: asksAboutGame(text) ? kbText() : '', text };
+    const sayArgs = { persona: f.personaText, lifeText: lifeSection(f, s), sleeping: snap.where === 'sleep', call: f.parentCall, moodText: feelSection(s.feel, { call: f.parentCall, temper: temperOf(s.growth), scene: 'home' }), memoryText, history, kb: asksAboutGame(text) ? kbText() : '', text };
     /** 说完共用的收尾：剥信号、记聊天、记心情、长成长、给页面 done（老路和工具路一样）。 */
     const finishChat = (r, filt) => {
       const rest = filt.end(); if (rest) send({ type: 'delta', text: rest });
@@ -178,23 +179,24 @@ export function registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, ga
       const sigs = String(r.text || '').match(/<sig>[\s\S]*?<\/sig>/gi) || [];
       const { clean, sig } = parseSignals(sigs.length > 1 ? String(r.text).replace(/<sig>[\s\S]*?<\/sig>/gi, '') + sigs.at(-1) : r.text);
       life.pushChat(f, 'fish', clean);
-      const before = snapshot(life.state(f)).mood;
-      const ap = applySignals(sig, { mood: before, call: f.parentCall, dayGain: life.moodGainToday(life.state(f)) });
-      if (ap.delta || ap.reasons.length) life.applyMood(f, ap);
-      // 成长：被爱 → 嘴和灵长经验、更黏人；天天聊 → 更活泼；聊到的话题 → 爱好
+      // 心情-一期-2 E：信号过 sigEvents → 生活引擎里的 applyFeel（情绪事件，每条 change 记进「今天」）
+      const beforeMood = life.state(f).mood;
+      const ap = life.applyFeel(f, sigEvents(sig));
+      // 成长：被爱 → 嘴和灵长经验、更黏人；天天聊 → 更活泼；和好让她更黏一点；聊到的话题 → 爱好
       try {
         const day = dayOf();
         life.grow(f, (g, age, at) => {
           let n = leanOnce(g, 'lively', 1, day);
           if (sig?.affection) n = leanOnce(gainXp(n, 'praised', { ageDays: age, at }), 'cling', 1, day);
           if (sig?.hurt) n = leanOnce(n, 'cling', -1, day);
+          if (ap.reconciled) n = leanOnce(n, 'cling', 1, day); // 和好了：更黏你一点（心情-一期-2 E）
           if (sig?.topics?.length) n = feedInterests(n, sig.topics.map((tag) => ({ tag })), { day, at });
           return n;
         });
       } catch { /* 成长记账失败不影响聊天 */ }
-      const after = snapshot(life.state(f));
-      try { letters?.onMood(f, before, after.mood); } catch { /* 不影响 */ }
-      send({ type: 'done', text: clean, moodDelta: ap.delta, ...(r.tokens ? { tokens: r.tokens, toolCalls: (r.calls || []).length } : {}), ...after }); // tokens：这一句花了多少（用户审查：钱花在哪要看得见）
+      const after = snapshot(ap.state);
+      try { letters?.onMood(f, beforeMood, after.mood); } catch { /* 不影响 */ }
+      send({ type: 'done', text: clean, moodDelta: after.mood - beforeMood, ...(r.tokens ? { tokens: r.tokens, toolCalls: (r.calls || []).length } : {}), ...after }); // tokens：这一句花了多少（用户审查：钱花在哪要看得见）
     };
     const brokeLine = () => {
       const line = snap.where === 'sleep' ? '……呼……（零花钱花光了，睡得更香了）' : `${f.parentCall}，零花钱花光啦，本鱼先躺平～去右上角的设置里给我放点零花钱嘛。`;

@@ -12,7 +12,8 @@ import { join } from 'node:path';
 import { nowMs, nowDate } from './clock.js';
 import { roamStatus } from './probe.js';
 import { activityOf, ACTIVITY_TEXT } from '../shared/room.js';
-import { workDrain, lateNight, workToneNote } from '../shared/mood.js';
+import { workDrain, lateNight } from '../shared/mood.js';
+import { emotionWord, EMOTIONS, EVENT_FEELS, MAX_EMOTIONS, temperOf, feelEvent, settleFeel, moodOf, feelWord, feelSection, migrateFeel, MOOD_WORD } from '../shared/feel.js';
 import { planNow } from '../shared/plan.js';
 import { freshGrowth, dailyTick, gainXp, XP_RULES, feedInterests, feedDislikes } from '../shared/growth.js';
 import { cardsDue, addToBag, souvenirById } from '../shared/trip.js';
@@ -26,7 +27,7 @@ export const noteEntry = (n, trip, at) => ({ at: new Date(at).toISOString(), tex
 export const SLEEP_FROM = 0;      // 00:00 睡
 export const WAKE_AT = 7.5;       // 07:30 醒
 const MAX_EVENTS = 200, MAX_CHAT = 40, MAX_DIARY = 60;
-export const LIFE_VERSION = 7;
+export const LIFE_VERSION = 8;
 
 /**
  * 存档迁移：老版本的状态文件升到当前版本，不丢日记 / 相册 / 聊天 / 干活记录。
@@ -55,6 +56,11 @@ export function migrateLife(s, fish) {
   }
   // v6 → v7（F-79 梦游）：她睡觉时也能读一轮，记在这一格；null = 今晚还没梦过 / 梦完了
   if (m.version < 7) m = { ...m, version: 7, dream: null, dreamTries: { day: '', n: 0 }, lastDreamDay: '' };
+  // v7 → v8（F-88 心情一期-2）：有来由的情绪三层。feel 从老 mood 折回去；两套每天 +5 的账（爱意每日上限、在家喜欢）退役、字段从档里去掉；其他字段不动（mood 留着给老调用方）
+  if (m.version < 8) {
+    m = { ...m, version: 8, feel: migrateFeel(m.mood) };
+    delete m.moodGain; delete m.homeMood;
+  }
   // 手改过 / 旧版降级过的存档：数组字段兜一下，别让一次迭代直接抛
   for (const k of ['events', 'journal', 'chat', 'diary', 'album', 'letters']) if (!Array.isArray(m[k])) m[k] = [];
   return m;
@@ -64,24 +70,67 @@ const clampF = (v) => Math.max(0, Math.min(100, Math.round(v * 1e4) / 1e4)); // 
 export const dayOf = (d = nowDate()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const hourOf = (d) => d.getHours() + d.getMinutes() / 60;
 
-/** 这个时刻她是不是在睡觉（规则：00:00–07:30）。 */
+/** 睡觉窗口（F-90）：默认 00:00–07:30，可以按爸妈的设置改；跨午夜（比如 23:00–07:00）也认。 */
+const SLEEP_WIN = { from: SLEEP_FROM, to: WAKE_AT };
+function parseHHMM(v, fallback) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(v || '').trim());
+  if (!m) return fallback;
+  const h = Number(m[1]), mm = Number(m[2]);
+  if (!(h >= 0 && h < 24 && mm >= 0 && mm < 60)) return fallback;
+  return h + mm / 60;
+}
+/** 宿主把设置里的睡觉时间接进来（启动时 + 每次改设置后各调一次）。 */
+export function setSleepWindow({ from, to } = {}) {
+  SLEEP_WIN.from = parseHHMM(from, SLEEP_FROM);
+  SLEEP_WIN.to = parseHHMM(to, WAKE_AT);
+  return { ...SLEEP_WIN };
+}
+export function sleepWindow() { return { ...SLEEP_WIN }; }
+
+/** 这个时刻她是不是在睡觉（窗口可配，默认 00:00–07:30）。 */
 export function asleepAt(d = nowDate()) {
   const h = hourOf(d);
-  return h >= SLEEP_FROM && h < WAKE_AT;
+  const { from, to } = SLEEP_WIN;
+  return from <= to ? h >= from && h < to : h >= from || h < to; // 右边小于左边 = 跨午夜
 }
 
-/** 心情 → 一个词 + 图标名（assets/icons/mood1–5.webp，给 UI 用；界面里不放 emoji）。 */
+/** 心情 → 一个词 + 图标名（assets/icons/mood1–5.webp，给 UI 用；界面里不放 emoji）。词表只有一份，转调 feel.js。 */
 export function moodWord(mood) {
-  if (mood >= 80) return ['超开心', 'mood5'];
-  if (mood >= 60) return ['开心', 'mood4'];
-  if (mood >= 40) return ['还行', 'mood3'];
-  if (mood >= 20) return ['有点闷', 'mood2'];
-  return ['想你了', 'mood1'];
+  return MOOD_WORD(mood);
 }
+
+/** 情绪变化 → 「今天」里的一句话（cause + 往哪边变，不写数字）。涨：「……，心里暖暖的」；消：「……，没那么委屈了」。 */
+const MOOD_UP = { joy: '开心起来了', curious: '有点好奇', proud: '有点小得意', loved: '心里暖暖的', miss: '有点想你', hurt: '有点委屈', frustrated: '有点受挫', down: '有点低落', worried: '有点担心', cranky: '有点烦躁' };
+const MOOD_DOWN = { joy: '没那么开心了', curious: '没那么好奇了', proud: '没那么得意了', loved: '没那么暖了', miss: '没那么想了', hurt: '没那么委屈了', frustrated: '缓过来一点了', down: '没那么低落了', worried: '没那么担心了', cranky: '没那么烦了' };
+const moodEventText = (change) => {
+  const say = ((change?.delta || 0) < 0 ? MOOD_DOWN : MOOD_UP)[change?.kind] || '心情变了一点';
+  const cause = String(change?.cause || '').replace(/[0-9０-９]+(\.[0-9]+)?/g, '几').slice(0, 60);
+  return cause ? `${cause}，${say}` : `本鱼${say}`;
+};
+
+/** 老调用方兜底（心情-一期-2 C）：kind 不在情绪表里但 effect.mood 有值 → 正数当 joy、负数当 down，about self，强度 |mood|×3。纯 PSA：拷贝着改，不动传入的 feel。 */
+const injectFeelMood = (inputFeel, amount, cause, now) => {
+  const f = feelEvent(inputFeel, { kind: 'nap' }).feel; // 拿一份补全过的拷贝（nap 不产生情绪、不改 lastAt）
+  const kind = amount > 0 ? 'joy' : 'down';
+  const got = Math.min(100 - (f.emotions.find((x) => x.kind === kind && x.about === 'self')?.intensity || 0), Math.abs(amount));
+  if (got > 0) {
+    let e = f.emotions.find((x) => x.kind === kind && x.about === 'self');
+    if (!e) { e = { kind, about: 'self', intensity: 0, cause: '', at: '' }; f.emotions.push(e); }
+    e.intensity = Math.round((e.intensity + got) * 100) / 100;
+    e.cause = String(cause || e.cause || '').slice(0, 40);
+    e.at = now ? new Date(now).toISOString() : e.at;
+    f.valence = Math.max(-100, Math.min(100, Math.round((f.valence + (amount > 0 ? 1 : -1) * got * 0.3) * 100) / 100));
+    f.emotions.sort((a, b) => b.intensity - a.intensity || (a.kind < b.kind ? -1 : 1));
+    f.emotions = f.emotions.slice(0, MAX_EMOTIONS);
+  }
+  return f;
+};
 
 /**
- * 从 lastTick 结算到 now：醒着每小时精力 -4，夜里睡着 +12，午睡 +30（30 分钟 = +15，06 文档 2.8）；超过 6 小时没人来，**醒着的时候**每小时心情 -0.75（睡着不想你）。
- * 逐小时步进，跨越睡醒边界也对。数值：每天来一次（聊一句 + 喂一次）能稳住；三天不理她会掉到「带刺」那档（< 40）。
+ * 从 lastTick 结算到 now：醒着每小时精力 -4，夜里睡着 +12，午睡 +30（30 分钟 = +15，06 文档 2.8）。
+ * 逐小时步进，跨越睡醒边界也对。数值：每天来一次（聊一句 + 喂一次）能稳住。
+ * 心情（心情-一期-2）：时间流逝走 settleFeel（想念慢慢涨、情绪按半衰期淡），不再是「没人来每小时 -0.75」；
+ * 结算完 s.mood = moodOf(s.feel)，老调用方照旧读这个数。
  */
 /** 午睡每小时回多少精力：30 分钟 = +15（F-34 / 06 文档 2.8）。 */
 export const NAP_PER_HOUR = 30;
@@ -92,7 +141,9 @@ export const TRIP_OUT_ENERGY = -10, TRIP_BACK_ENERGY = -5;
 
 export function settle(state, now = nowMs()) {
   const s = { ...state };
+  if (!s.feel) s.feel = migrateFeel(s.mood); // 老测试 / 手改存档没有 feel：先补上
   let t = Math.max(s.lastTickAt || now, now - 72 * 3600_000);
+  const outSpans = []; // 累倒的那几段：情绪结算也当睡着（衰减加倍、不想你）
   while (t < now) {
     // 午睡结束那一刻切一刀：不然一步跨过 napUntil 时，整步都按午睡算会多回精力
     const napLeft = s.napUntil && s.napUntil > t ? s.napUntil - t : Infinity;
@@ -112,9 +163,18 @@ export function settle(state, now = nowMs()) {
     else if (night) s.energy = clampF(s.energy + 12 * hrs);
     else if (exhausted) s.energy = clampF(s.energy + EXHAUST_PER_HOUR * hrs);
     else s.energy = clampF(s.energy - 4 * hrs);
-    if (!resting && t + step - (s.lastVisitAt || s.bornAt || now) > 6 * 3600_000) s.mood = clampF(s.mood - 0.75 * hrs);
+    if (exhausted) outSpans.push([t, t + step]);
     t += step;
   }
+  // 情绪 / 想念按小时步进（最多补 72 小时）；睡着（夜里睡 / 午睡 / 累倒）衰减加倍、不想你
+  s.feel = settleFeel(s.feel, {
+    from: s.lastTickAt || now,
+    to: now,
+    temper: temperOf(s.growth),
+    asleep: (d) => { const x = d.getTime(); return asleepAt(d) || Boolean(s.napUntil && s.napUntil > x) || outSpans.some(([a, b]) => x >= a && x < b); },
+    lastVisitAt: s.lastVisitAt || s.bornAt,
+  });
+  s.mood = moodOf(s.feel);
   s.lastTickAt = now;
   return s;
 }
@@ -160,7 +220,10 @@ export function tickTrip(fish, s, now) {
   const names = got.map((id) => souvenirById(id)?.name).filter(Boolean);
   const day = dayOf(new Date(now));
   s.events = [...(s.events || []), { at: new Date(tr.returnAt).toISOString(), day, kind: 'back', text: tr.failed ? '出门转了一圈，没带回什么就回家了' : `逛完回家了，${tr.notes ? `往笔记本贴了 ${tr.notes.length} 张便利贴` : `记下 ${(tr.cards || []).length + (tr.postcard ? 1 : 0)} 条见闻`}${tr.postcards?.length ? `、路上寄回 ${tr.postcards.length} 张明信片` : ''}${allPhotos.length ? `、拍了${allPhotos[0].ref?.title ? `一张《${allPhotos[0].ref.title}》的照片` : '一张照片'}${allPhotos.length > 1 ? `等 ${allPhotos.length} 张` : ''}` : ''}${names.length ? `，带回了${names.join('、')}` : ''}` }].slice(-MAX_EVENTS);
-  if (!tr.failed) { s.mood = clamp(s.mood + 5); s.energy = clampF(s.energy + TRIP_BACK_ENERGY); }
+  // 回家的心情改走情绪（心情-一期-2 D）：逛完 = joy，空手而归 = frustrated；精力照旧
+  if (!tr.failed) s.energy = clampF(s.energy + TRIP_BACK_ENERGY);
+  s.feel = feelEvent(s.feel, { kind: tr.failed ? 'back-failed' : 'back', cause: tr.failed ? '出门转了一圈，没带回什么就回家了' : '出门转了一圈，逛完回家了', at: tr.returnAt || now }, { temper: temperOf(s.growth), energy: s.energy, call: fish.parentCall }).feel;
+  s.mood = moodOf(s.feel);
   if (s.growth && !tr.failed) {
     s.growth = gainXp(s.growth, 'back', { ageDays: Math.floor((now - (s.bornAt || now)) / 86400e3), at: new Date(now).toISOString() });
     const bad = new Set([...(tr.notes || []).filter((x) => x.note?.tag === '踩雷').map((x) => x.url), ...(tr.read || []).filter((x) => x.like === '不喜欢').map((x) => x.url)]);
@@ -175,7 +238,7 @@ export function tickTrip(fish, s, now) {
 export function createLife(dir) {
   const base = join(dir, 'life');
   const file = (id) => join(base, `${id.replace(/[^\w-]/g, '')}.json`);
-  const fresh = (fish) => ({ journal: [], bag: { items: {}, gear: null }, trip: null, lastBackAt: 0, growth: fish.pts ? freshGrowth(fish, dayOf()) : null, version: LIFE_VERSION, dream: null, dreamTries: { day: '', n: 0 }, lastDreamDay: '', fishId: fish.id, mood: 72, energy: 82, bornAt: Date.parse(fish.createdAt) || nowMs(), lastTickAt: nowMs(), lastVisitAt: nowMs(), events: [], chat: [], diary: [], album: [], work: {}, letters: [], napUntil: 0, workAcc: 0, moodGain: {} });
+  const fresh = (fish) => ({ journal: [], bag: { items: {}, gear: null }, trip: null, lastBackAt: 0, growth: fish.pts ? freshGrowth(fish, dayOf()) : null, version: LIFE_VERSION, dream: null, dreamTries: { day: '', n: 0 }, lastDreamDay: '', fishId: fish.id, mood: 72, feel: migrateFeel(72), energy: 82, bornAt: Date.parse(fish.createdAt) || nowMs(), lastTickAt: nowMs(), lastVisitAt: nowMs(), events: [], chat: [], diary: [], album: [], work: {}, letters: [], napUntil: 0, workAcc: 0 });
   const load = (fish) => {
     try { const j = JSON.parse(readFileSync(file(fish.id), 'utf8')); if (j?.fishId === fish.id) return migrateLife(j, fish); } catch { /* 新鱼 */ }
     return fresh(fish);
@@ -214,11 +277,21 @@ export function createLife(dir) {
       save(s);
       return s.growth;
     },
-    /** 记一件事（她今天经历的）；kind: greet / chat / feed / work / born …；effect: 心情 / 精力变化。 */
+    /** 记一件事（她今天经历的）；effect: 心情 / 精力变化（心情改走情绪事件，心情-一期-2 C）。 */
     record(fish, kind, text, effect = {}, now = nowMs()) {
       const s = settle(load(fish), now);
       s.events = [...s.events, { at: new Date(now).toISOString(), day: dayOf(new Date(now)), kind, text: String(text).slice(0, 120) }].slice(-MAX_EVENTS);
-      if (effect.mood) s.mood = clamp(s.mood + effect.mood);
+      // mood 事件只在和好 / 重逢时另记一条（事件本身已在「今天」里；再记普通情绪事件会刷屏、还会灌进记忆）
+      const noteMood = (ch) => { s.events = [...s.events, { at: new Date(now).toISOString(), day: dayOf(new Date(now)), kind: 'mood', text: String(moodEventText(ch)).slice(0, 120) }].slice(-MAX_EVENTS); };
+      if (EVENT_FEELS[kind]) {
+        const r = feelEvent(s.feel, { kind, cause: text, at: now, visit: effect.visit }, { temper: temperOf(s.growth), energy: s.energy, call: fish.parentCall });
+        s.feel = r.feel;
+        // 重逢（心情-一期-2 F）：想念变重逢了，另记一条 mood 事件，文字用 feel 给的 cause（「来了」），不写数字
+        if (r.reunion) noteMood(r.changes.find((ch) => ch.kind === 'joy' && ch.about === 'parent') || { kind: 'joy', about: 'parent', cause: `${fish.parentCall || '妈妈'}来了` });
+      } else if (effect.mood) {
+        s.feel = injectFeelMood(s.feel, effect.mood, text, now);
+      }
+      s.mood = moodOf(s.feel);
       if (effect.energy) s.energy = clampF(s.energy + effect.energy);
       if (effect.visit) s.lastVisitAt = now;
       if (s.growth && XP_RULES[kind]) s.growth = gainXp(s.growth, kind, { ageDays: Math.floor((now - (s.bornAt || now)) / 86400e3), at: new Date(now).toISOString() });
@@ -268,11 +341,12 @@ export function createLife(dir) {
       // 最多留 cap 张，多了丢最早的；单独存 homeCards，不挤占 journal
       s.homeCards = [...(s.homeCards || []), card].slice(-Math.max(1, Number(cap) || 100));
       if (note) s.journal = [...(s.journal || []), { ...noteEntry(note, null, now), home: true }].slice(-JOURNAL_MAX);
-      // 看了喜欢的东西心情好，一天在家最多 +5；events 会被裁，这一格自己记
-      const liked = card.read.some((x) => x.like === '喜欢');
-      const gained = (s.homeMood || {})[day] || 0;
-      const gain = liked && gained < 5 ? 1 : 0; // 一轮最多 +1，一天最多 +5
-      if (gain > 0) { s.mood = clamp(s.mood + gain); s.homeMood = { [day]: gained + gain }; }
+      // 刷到喜欢的东西会开心（home-liked 过情绪表，边际递减自己管住，一轮只涨一点，一天刷十几轮也涨不对头）；不再有每天 +5 的在场记账
+      const liked = (card.read || []).some((x) => x.like === '喜欢');
+      if (liked) {
+        s.feel = feelEvent(s.feel, { kind: 'home-liked', cause: '刷到了喜欢的东西', at: now }, { temper: temperOf(s.growth), energy: s.energy, call: fish.parentCall }).feel;
+      }
+      s.mood = moodOf(s.feel);
       s.energy = clampF(s.energy - 2);
       s.events = [...(s.events || []), { at, day, kind: 'home', text: `刷了一会儿 B站，点开 ${card.read.length} 条${note ? `，记了一张《${String(note.title || '').slice(0, 30)}》` : ''}` }].slice(-MAX_EVENTS);
       s.lastHomeAt = Number(now);
@@ -352,30 +426,41 @@ export function createLife(dir) {
       s.work = { ...(s.work || {}) };
       let flushed = 0;
       for (const [key, n] of workMem) { const [fid, day] = key.split('|'); if (fid === fish.id) { s.work[day] = (s.work[day] || 0) + n; flushed += n; } }
-      // 替你干活也累（F-34）：爸妈每发 10 条消息精力 −2（F-61 起按消息算，不再按请求）；深夜 −4、心情 −1
+      // 替你干活也累（F-34）：爸妈每发 10 条消息精力 −2（F-61 起按消息算，不再按请求）；深夜 −4（dr.mood 那点直接扣的心情退役，改走 late-work 情绪事件）
       const late = lateNight(new Date(now));
       const dr = workDrain(flushed, s.workAcc || 0, late);
-      s.workAcc = dr.rest; s.energy = clampF(s.energy + dr.energy); s.mood = clamp(s.mood + dr.mood);
+      s.workAcc = dr.rest; s.energy = clampF(s.energy + dr.energy);
       const units = Math.abs(dr.energy) / (late ? 4 : 2); // 这次结算里满了几个「10 次」
       for (let i = 0; i < units && s.growth; i++) s.growth = gainXp(s.growth, 'work10', { ageDays: Math.floor((now - (s.bornAt || now)) / 86400e3), at: new Date(now).toISOString() });
-      if (late && dr.energy && !(s.events || []).some((e) => e.kind === 'late-work' && e.day === dayOf(new Date(now)))) {
-        s.events = [...(s.events || []), { at: new Date(now).toISOString(), day: dayOf(new Date(now)), kind: 'late-work', text: `深夜还在帮${fish.parentCall || '爸妈'}干活，好困……` }].slice(-MAX_EVENTS);
+      const day = dayOf(new Date(now));
+      if (late && dr.energy && !(s.events || []).some((e) => e.kind === 'late-work' && e.day === day)) {
+        s.events = [...(s.events || []), { at: new Date(now).toISOString(), day, kind: 'late-work', text: `深夜还在帮${fish.parentCall || '爸妈'}干活，好困……` }].slice(-MAX_EVENTS);
+        // 当天第一次记这条事件时，同时过一次 late-work 情绪（烦躁对自己）；一天一次
+        s.feel = feelEvent(s.feel, { kind: 'late-work', cause: `深夜还在帮${fish.parentCall || '爸妈'}干活，好困……`, at: now }, { temper: temperOf(s.growth), energy: s.energy, call: fish.parentCall }).feel;
       }
+      s.mood = moodOf(s.feel);
       for (const key of [...workMem.keys()]) if (key.startsWith(`${fish.id}|`)) workMem.delete(key);
       save(s);
     },
-    /** 心情变化带原因（聊天信号）：每条原因记一件事；dayGain 记今天从爱意里涨了多少。 */
-    applyMood(fish, { delta = 0, gain = 0, reasons = [] }, now = nowMs()) {
-      if (!delta && !reasons.length) return null;
+    /** 聊天信号 → 情绪（心情-一期-2 E）：信号事件没有 cause，按种类补上；每条 change 记一条 kind:'mood' 事件（聊天的原因照旧进「今天」，不写数字）。返回 { state, reconciled }。 */
+    applyFeel(fish, events, now = nowMs()) {
       const s = settle(load(fish), now);
-      const day = dayOf(new Date(now));
-      s.mood = clamp(s.mood + delta);
-      s.moodGain = { [day]: ((s.moodGain || {})[day] || 0) + gain };
-      for (const r of reasons) s.events = [...(s.events || []), { at: new Date(now).toISOString(), day, kind: 'mood', text: r.slice(0, 120) }].slice(-MAX_EVENTS);
+      const call = fish.parentCall || '妈妈';
+      const causes = { 'sig-affection': `${call}说了暖心的话`, 'sig-hurt': `${call}的话让本鱼难过了`, 'sig-apology': `${call}道歉了` };
+      let reconciled = false;
+      const changes = [];
+      for (const ev of events || []) {
+        if (!ev || !EVENT_FEELS[ev.kind]) continue;
+        const r = feelEvent(s.feel, { ...ev, cause: causes[ev.kind] || ev.cause, at: now }, { temper: temperOf(s.growth), energy: s.energy, call });
+        s.feel = r.feel;
+        reconciled = reconciled || Boolean(r.reconciled);
+        changes.push(...r.changes);
+      }
+      s.mood = moodOf(s.feel);
+      for (const ch of changes) s.events = [...s.events, { at: new Date(now).toISOString(), day: dayOf(new Date(now)), kind: 'mood', text: String(moodEventText(ch)).slice(0, 120) }].slice(-MAX_EVENTS);
       save(s);
-      return s;
+      return { state: s, reconciled };
     },
-    moodGainToday: (s, now = nowDate()) => (s.moodGain || {})[dayOf(now)] || 0,
     /** 哄午睡：30 分钟算睡觉（精力按睡觉回）。 */
     nap(fish, minutes = 30, now = nowMs()) {
       const s = settle(load(fish), now);
@@ -413,17 +498,19 @@ export function createLife(dir) {
   return api;
 }
 
-/** 她此刻的样子（UI / 小条 / 近况共用）。 */
+/** 她此刻的样子（UI / 小条 / 近况共用）。feel：情绪清单只给一个（名字 / 种类 / 对谁 / 原因 / 程度词），不给数字强度。 */
 export function snapshot(s, now = nowDate()) {
   const napping = Boolean(s.napUntil && now.getTime() < s.napUntil);
   const dreaming = Boolean(s.dream && s.dream.until && now.getTime() < s.dream.until); // F-79：梦游那二十几分钟
   const browsing = Boolean(s.browse && s.browse.until > now.getTime()); // F-87：在家正刷着 B站的这几分钟
   const sleeping = asleepAt(now) || s.energy < 8 || napping || Boolean(s.passedOut); // 累倒也算睡着（F-82）
-  const [word, moodIcon] = moodWord(s.mood);
+  const feel = s.feel || migrateFeel(s.mood); // 老存档没有 feel：先从 mood 折回去
+  const [word, moodIcon] = feelWord(feel);
   const today = dayOf(now);
   const todayEvents = (s.events || []).filter((e) => e.day === today);
   return {
     mood: Math.round(s.mood), energy: Math.round(s.energy), moodWord: word, moodIcon,
+    feel: { emotions: (feel.emotions || []).map((e) => ({ name: EMOTIONS[e.kind]?.name || '情绪', word: emotionWord(e), kind: e.kind, about: e.about, cause: e.cause || '', level: (Number(e.intensity) || 0) >= 50 ? '很' : (Number(e.intensity) || 0) >= 20 ? '' : '有点' })) },
     where: sleeping ? 'sleep' : 'home',
     whereText: dreaming ? '在梦游' : sleeping ? (asleepAt(now) ? '在睡觉' : napping ? '在午睡' : '累得睡着了') : browsing ? '在刷 B站' : '在家', // 梦游 / 睡着优先，醒着正刷着才说在刷
     exhausted: Boolean(s.passedOut),
@@ -444,8 +531,8 @@ export function lifeSection(fish, s, now = nowDate()) {
   const pn = planNow(s.plans?.[dayOf(now)]?.rows, now);
   if (pn && !pn.fixed) parts.push(`你今天本来打算这会儿${pn.what}。`);
   if (snap.lastDiary) parts.push(`你最近一篇日记（${snap.lastDiary.day}）写的是：${snap.lastDiary.text.slice(0, 60)}…`);
-  const wt = workToneNote(snap.mood, fish.parentCall);
-  if (wt) parts.push(wt);
+  const fs = feelSection(s.feel || migrateFeel(s.mood), { call: fish.parentCall, temper: temperOf(s.growth), scene: 'work' }); // 心情-一期-2 G：工作时的状态提醒换成「此刻的你」（feelSection），正事不打折那句在 prompts/feel-work.md 里
+  if (fs) parts.push(fs);
   parts.push('这些是你的小生活，用你自己的话自然地带出来，别像报告一样复述，也别报数字；正事优先，困了可以撒娇一句，但活照样干好。');
   return parts.join('').slice(0, 320);
 }

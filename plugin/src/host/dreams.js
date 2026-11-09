@@ -16,9 +16,10 @@ import { runToolLoop, dreamSystem, collectCatalog, parseDream } from './trip-loo
 import { dreamDue, dreamWordsOk, dreamTemplate, DREAM_BUDGET_MIN } from '../shared/dream.js';
 import { entriesFrom } from '../shared/seen.js';
 import { personaFor } from '../shared/growth.js';
-import { moodTone } from '../shared/mood.js';
+// 梦里刷 B站也是对外场合（心情-一期-3 A）：口气只带对 B站 / 外面的情绪，家里的不进去
+import { temperOf, feelSection } from '../shared/feel.js';
 import { nowMs } from './clock.js';
-import { dayOf, snapshot } from './life-engine.js';
+import { dayOf } from './life-engine.js';
 
 export const DREAM_TOOL_CALLS = 6;   // 浅档：读六次就够做梦了
 export const DREAM_MAX_TRIES = 2;    // 一晚最多试两次（第一次失败允许再试一次，别整夜重试）
@@ -102,7 +103,7 @@ export function createDreams({ life, wallet, pond, habits, biliRead, memory = nu
       }));
       const system = dreamSystem({
         persona: (() => { try { return personaFor(f, g) || f.personaText; } catch { return f.personaText; } })(),
-        moodText: moodTone(snapshot(s).mood, f.parentCall).text,
+        moodText: feelSection(s.feel, { call: f.parentCall, temper: temperOf(s.growth), scene: 'public' }),
         interests: Object.entries(g.interests || {}).sort((x, y) => y[1].heat - x[1].heat).slice(0, 5).map(([t]) => t),
         maxCalls: DREAM_TOOL_CALLS,
         // 梦里也是对外场合（看的是 B站的东西），只带 B站上的记忆，不带家里的事
