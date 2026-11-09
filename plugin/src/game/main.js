@@ -1102,8 +1102,9 @@ function draftsHtml() {
   if (MAIL.mode !== 'approve') {
     const qs = MAIL.queued || [];
     if (!qs.length) return '';
-    const next = MAIL.nextAt && Date.parse(MAIL.nextAt) > Date.now() ? `下一条最早 ${hhmm(MAIL.nextAt)} 发` : '马上就会发';
-    return `<div class="drafts"><h4>${ICON('speech')} 她排队想在 B站说的话（${qs.length} 条，${next}）</h4>${qs.map((d) => `<div class="dcard"><b>${draftLabel(d)}</b>${d.target?.url ? ` <a href="${esc(d.target.url)}" target="_blank" rel="noreferrer">看视频</a>` : ''}<p style="margin:6px 0;font:14px/1.6 var(--body)">${esc(d.text)}</p><div class="dacts"><button class="gb plain sm" data-reject="${esc(d.id)}">不发这条</button></div></div>`).join('')}<small class="trust">发言间隔、每天上限、要不要先给你批准，都在设置「她的上网习惯」里。</small></div>`;
+    // F-92：她说不出为什么——是睡着了、在等发言间隔、还是今天额度用完了，得让爸妈看见
+    const next = MAIL.queuedWhy || (MAIL.nextAt && Date.parse(MAIL.nextAt) > Date.now() ? `下一条最早 ${hhmm(MAIL.nextAt)} 发` : '马上就会发');
+    return `<div class="drafts"><h4>${ICON('speech')} 她排队想在 B站说的话（${qs.length} 条）</h4><small class="trust">${esc(next)}</small>${qs.map((d) => `<div class="dcard"><b>${draftLabel(d)}</b>${d.target?.url ? ` <a href="${esc(d.target.url)}" target="_blank" rel="noreferrer">看视频</a>` : ''}<p style="margin:6px 0;font:14px/1.6 var(--body)">${esc(d.text)}</p><div class="dacts"><button class="gb plain sm" data-reject="${esc(d.id)}">不发这条</button></div></div>`).join('')}<small class="trust">发言间隔、每天上限、要不要先给你批准，都在设置「她的上网习惯」里。</small></div>`;
   }
   if (!ds.length) return '';
   const tr = MAIL.trust;
@@ -1226,9 +1227,11 @@ async function renderPhone() {
   body.onclick = null;
   if (APP === 'letters') {
     // 信箱：一封一封看，新的在前；打开时把「新」记下来再标已读
+    // F-93：先推一次队列（宿主心跳 10 分钟一次，别让爸妈打开信箱还干等）
+    await api('/flush', {}).catch(() => {});
     const [r, dr, ib, dm] = await Promise.all([api('/letters'), api('/drafts').catch(() => ({ pending: [] })), api('/inbox').catch(() => null), api('/dms').catch(() => null)]);
     if (ib) ib.items = (ib.items || []).map((x) => ({ ...x, seenBefore: x.seen }));
-    MAIL = { list: r.letters || [], i: 0, tab: (MAIL && MAIL.tab) || '全部', unread: new Set((r.letters || []).filter((l) => !l.read).map((l) => l.id)), drafts: dr.pending || [], queued: dr.queued || [], mode: dr.mode, nextAt: dr.nextAt, trust: dr.trust, today: dr.today, limits: dr.limits, inbox: ib, dms: dm };
+    MAIL = { list: r.letters || [], i: 0, tab: (MAIL && MAIL.tab) || '全部', unread: new Set((r.letters || []).filter((l) => !l.read).map((l) => l.id)), drafts: dr.pending || [], queued: dr.queued || [], mode: dr.mode, nextAt: dr.nextAt, queuedWhy: dr.queuedWhy, trust: dr.trust, today: dr.today, limits: dr.limits, inbox: ib, dms: dm };
     if (!MAIL.list.length && !MAIL.drafts.length && !MAIL.queued.length && !(ib?.items || []).length && !(dm?.convs || []).length) { body.innerHTML = `<div class="needcfg">${ICON('mail')}<div>还没有信。<br>她出门回来、有感悟、零花钱快花光时会给你写信。</div></div>`; return; }
     renderLetter();
     if (r.unread || ib?.unseen || dm?.unseen) { if (r.unread) await api('/letters/read', {}); if (ib?.unseen) await api('/inbox', { seen: true }); if (dm?.unseen) await api('/dms', { seen: true }); renderMailDot(MAIL.mode === 'approve' ? MAIL.drafts.length : MAIL.queued.length); }

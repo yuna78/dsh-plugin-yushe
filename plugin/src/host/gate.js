@@ -24,6 +24,9 @@ import { createGates } from './gates.js';
 
 export const DRAFTS_PATH = '/api/dsh-yushe/drafts';
 export const FOOTPRINTS_PATH = '/api/dsh-yushe/footprints';
+// F-93：手动推一次发言队列。宿主 10 分钟才走一次心跳，爸妈打开信箱时别干等——
+// 页面打开就先推一把，到点的内容当场发出去。
+export const FLUSH_PATH = '/api/dsh-yushe/flush';
 const MAX_PENDING = 5;
 const QUEUE_TTL = 24 * 3600_000; // 排队超过一天的草稿就不发了（话题已经过时）
 const HOLD_MAX_MS = 6 * 3600_000; // 心情二期-2a：同一段情绪最多拦 6 小时，过了就放开
@@ -142,7 +145,11 @@ export function createGate({ storage, life, habits, biliRead, biliWrite, log, ga
       flushing = true;
       try {
         const list = all();
-        for (const d of list) if (d.status === 'queued' && nowMs() - Date.parse(d.createdAt) > QUEUE_TTL) { d.status = 'expired'; }
+        for (const d of list) {
+          if (d.status === 'queued' && nowMs() - Date.parse(d.createdAt) > QUEUE_TTL) d.status = 'expired';
+          // 不确定发出去没的：不会重试，但也别永远挂着——它算进 lastSpokeAt，会一直压着后面的发言
+          else if (d.status === 'uncertain' && nowMs() - Date.parse(d.sentAt || d.createdAt) > QUEUE_TTL) d.status = 'expired';
+        }
         save('drafts.json', list);
         const speak = G.open('speak');
         if (!speak.ok) return { sent: false, why: speak.why }; // 出口闸（F-79）
@@ -159,7 +166,21 @@ export function createGate({ storage, life, habits, biliRead, biliWrite, log, ga
     view() {
       const list = all();
       const h = habits.get();
-      return { mode: h.speakMode, every: Number(h.speakEvery), nextAt: lastSpokeAt() ? new Date(lastSpokeAt() + everyMs()).toISOString() : null, queued: list.filter((d) => d.status === 'queued').reverse(), pending: list.filter((d) => d.status === 'pending').reverse(), recent: list.filter((d) => d.status !== 'pending').slice(-20).reverse(), today: { comment: sentToday('comment'), post: sentToday('post'), dm: sentToday('dm') }, limits: { comment: limitOf('comment'), post: limitOf('post'), dm: limitOf('dm') }, trust: trustOf(list) };
+      const queuedList = list.filter((d) => d.status === 'queued');
+      // F-92：爸妈要看得懂「为什么还没发」——睡觉 / 等间隔 / 额度满了，分别说清楚
+      let queuedWhy = null;
+      if (queuedList.length) {
+        const waitMs = lastSpokeAt() + everyMs() - nowMs();
+        const first = queuedList[0];
+        const speak = G.open('speak');
+        if (!speak.ok) queuedWhy = speak.why === '安静时段' ? `安静时段（${h.quietTo || '06:00'} 结束）` : `她在睡觉（${h.sleepTo || '07:30'} 醒）`;
+        else if (waitMs > 0) queuedWhy = `还要等 ${Math.ceil(waitMs / 60_000)} 分钟（发言间隔 ${Number(h.speakEvery) || 60} 分钟）`;
+        else {
+          const cap = capCheck(first.kind, { sentToday: sentToday(first.kind), limit: limitOf(first.kind), kinds: K });
+          queuedWhy = cap.ok ? '马上就会发' : cap.why;
+        }
+      }
+      return { mode: h.speakMode, every: Number(h.speakEvery), nextAt: lastSpokeAt() ? new Date(lastSpokeAt() + everyMs()).toISOString() : null, queuedWhy, queued: queuedList.reverse(), pending: list.filter((d) => d.status === 'pending').reverse(), recent: list.filter((d) => d.status !== 'pending').slice(-20).reverse(), today: { comment: sentToday('comment'), post: sentToday('post'), dm: sentToday('dm') }, limits: { comment: limitOf('comment'), post: limitOf('post'), dm: limitOf('dm') }, trust: trustOf(list) };
     },
     /** 爸妈的决定。批准 = 再过一遍规矩（改过的字也要过）和今天的上限 → 发。 */
     async decide(id, action, newText, fish) {
@@ -197,6 +218,11 @@ export function registerGateRoutes({ scope, pond, gate, isLoopbackRequest, write
     if (!b?.id) return writeJson(res, 400, { ok: false, error: '请求格式不对' });
     writeJson(res, 200, await gate.decide(String(b.id), b.action, b.text, homeFish()));
   }, 'drafts route');
+  reg(FLUSH_PATH, async (req, res) => {
+    if (req.method !== 'POST') return writeJson(res, 405, { ok: false, error: 'method not allowed' });
+    const r = await gate.flush(homeFish()).catch((e) => ({ sent: false, why: String(e?.message || e) }));
+    writeJson(res, 200, { ok: true, ...r, ...gate.view() });
+  }, 'flush route');
   reg(FOOTPRINTS_PATH, async (req, res) => {
     if (req.method !== 'GET') return writeJson(res, 405, { ok: false, error: 'method not allowed' });
     writeJson(res, 200, { ok: true, items: gate.footprints() });

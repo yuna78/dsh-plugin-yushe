@@ -13,14 +13,15 @@
  *
  * 存 <storage>/memory/<fishId>.json，一条鱼一个文件。
  */
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { nowMs } from './clock.js';
-import { emptyMemory, migrateMemory, makeEpisode, meet, settleMemory, recall, knownPeople, aboutPerson, memoryText, memoryStats, stageOf, STAGE_TEXT, reflectCandidates, reflectPrompt, applyReflection, settleBeliefs, beliefsFor, activeBeliefs, tell, untell, localDay, defang, logOp, toldDueAge, toldLine, pickWeek, pickMonth, weekMaterial, monthMaterial, checkWeekly, checkChapter, weeklyPrompt, chapterPrompt, settleWeeklies, mergeChapters, recentLines, weeklyStage, weeklyStatus, nextId, WEEKLY_STAGE_TEXT, MAX_PINNED, cleanTold, dueOf, fixBelief, fixLogText, dropItem, dropLogText, findTarget } from '../shared/memory.js';
+import { emptyMemory, migrateMemory, makeEpisode, meet, settleMemory, recall, knownPeople, aboutPerson, memoryText, memoryStats, stageOf, STAGE_TEXT, reflectCandidates, reflectPrompt, applyReflection, settleBeliefs, beliefsFor, activeBeliefs, tell, untell, localDay, defang, logOp, toldDueAge, toldLine, pickWeek, pickMonth, weekMaterial, monthMaterial, checkWeekly, checkChapter, weeklyPrompt, chapterPrompt, settleWeeklies, mergeChapters, recentLines, weeklyStage, weeklyStatus, nextIdFor, WEEKLY_STAGE_TEXT, MAX_PINNED, cleanTold, dueOf, fixBelief, fixLogText, dropItem, dropLogText, findTarget } from '../shared/memory.js';
 import { personaFor } from '../shared/growth.js';
 import { homeMemKind } from '../shared/home.js'; // F-87 在家：读到哪层 → 记多重
 
 export const MEMORY_PATH = '/api/dsh-yushe/memory';
+export const CHAT_WAIT_MS = 5 * 60_000; // 修补-1 G：爸妈在房间说完一句，等她回答的窗口；没过错 5 分钟就不先抄，等她那句「本鱼回」
 const KEY_WINDOW = 3 * 86400e3; // 记号窗口：只留游标前 3 天内的 key，按时间清，不按条数截（一期-2 E）
 const PROPOSAL_MS = 30 * 60e3; // 四期-3：起草单 30 分钟有效、用一次就删、只对同一条鱼（和配置三件套一个规矩）
 const fixKindLog = (pfx) => (pfx === 'T' ? '爸妈让记的' : '认识');
@@ -33,8 +34,9 @@ const short = (s, n) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 const shownBelief = (b) => ({ id: b.id, text: b.text, why: b.why || '', effect: b.effect || '', about: b.about, state: b.status === '暂定' ? '还在想' : '想明白了', times: b.n || 1, since: b.at, source: b.source || 'reflect' }); // source 也给页面（四期-3 K：爸妈纠的标「纠正过」，只显示）
 
 /** 档案 → 一串「候选经历」（带去重 key）。纯函数，verify 直接测。 */
-export function archiveItems({ fish, life = {}, footprints = [], inbox = [], dms = [], parentMid = '', chatFrom = '' }) {
+export function archiveItems({ fish, life = {}, footprints = [], inbox = [], dms = [], parentMid = '', chatFrom = '', now = null }) {
   const call = fish?.parentCall || '爸妈';
+  const nowT = now instanceof Date ? now.getTime() : typeof now === 'number' && Number.isFinite(now) ? now : Date.parse(now) || 0; // 修补-1 G：只认 sync 传进来的「现在」；没传（老测试直调）就照旧全抄
   const out = [];
   const dedup = new Set(); // F-87：同一天同一条视频只出一条（key 按视频 + 本地日子去重，取第一次）
   // 和爸妈聊天：爸妈一句 + 她回的一句，记成一条（第二步：不再只记前 30 字）
@@ -43,6 +45,8 @@ export function archiveItems({ fish, life = {}, footprints = [], inbox = [], dms
     const c = chat[i];
     if (c.role !== 'user' || !c.at || (chatFrom && String(c.at) < chatFrom)) continue;
     const reply = chat[i + 1]?.role !== 'user' ? chat[i + 1] : null;
+    // 修补-1 G：chat 的最后一条是爸妈的、她还没回、离现在不到 5 分钟 → 这次先不抄（回答还在路上，别抢先把半句记死）；超了 5 分钟、或后面跟着爸妈另一句（她没回这句）→ 照旧抄
+    if (!reply && i === chat.length - 1 && nowT > 0 && Number.isFinite(Date.parse(c.at)) && nowT - Date.parse(c.at) < CHAT_WAIT_MS) continue;
     out.push({ key: `c:${c.at}`, at: c.at, kind: 'chat', text: `${call}说：「${short(c.text, 60)}」${reply ? `，本鱼回：「${short(reply.text, 40)}」` : ''}` });
   }
   for (const e of life.events || []) {
@@ -164,8 +168,52 @@ export function ingest(mem, items) {
 export function createMemory({ storage, life, gate, inbox, dms, habits, log, now }) {
   const base = join(storage, 'memory');
   const file = (id) => join(base, `${String(id).replace(/[^\w-]/g, '')}.json`);
-  const load = (fish) => { try { return migrateMemory(JSON.parse(readFileSync(file(fish.id), 'utf8'))); } catch { return emptyMemory(); } }; // 读出来一律过迁移（一期-2 G）
-  const save = (fish, m) => { mkdirSync(base, { recursive: true }); const f = file(fish.id); writeFileSync(`${f}.tmp`, JSON.stringify(m)); renameSync(`${f}.tmp`, f); };
+  const prevFile = (id) => { const f = file(id); return `${f.slice(0, -'.json'.length)}.prev.json`; }; // 修补-1 A：上一次写入留的那份
+  const brokenName = (id) => { // 修补-1 A：坏文件的名字「<id>.broken-<本机时间>.json」；同一秒坏过多次就往后编号，不把上一份坏的盖掉
+    const d = new Date(), p2 = (n) => String(n).padStart(2, '0');
+    let name = `${file(id).slice(0, -'.json'.length)}.broken-${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}.json`;
+    while (existsSync(name)) name = name.replace(/\.json$/, `-${String(Math.floor(Math.random() * 36 * 36)).padStart(2, '0')}.json`);
+    return name;
+  };
+  /** 修补-1 A：读 <id>.prev.json 能解析就用它；也读不出来就空记忆（新鱼 / 两份都坏了）。 */
+  const readPrev = (fish, warn) => {
+    try { return migrateMemory(JSON.parse(readFileSync(prevFile(fish.id), 'utf8'))); }
+    catch { if (warn) log?.warn?.(`[dsh-yushe] 记忆：存档读不回来，先从上一次那份接着用`); return emptyMemory(); }
+  };
+  /** 坏文件改名留着；改名失败（文件被占用之类）时把读到的原文另存一份，并记下「下次存档别把这个坏文件挪成 prev」——不然上一份好的 prev 会被它盖掉（修补-1 审查 4）。 */
+  const noRotate = new Set();
+  const keepBroken = (fish, raw) => {
+    try { renameSync(file(fish.id), brokenName(fish.id)); return; } catch {}
+    if (raw != null) { try { writeFileSync(brokenName(fish.id), raw); } catch {} }
+    noRotate.add(String(fish.id));
+    log?.warn?.(`[dsh-yushe] 记忆：坏的存档挪不开，下次存档时保留上一次那份`);
+  };
+  /** 读出来一律过迁移（一期-2 G）。修补-1 A：坏的不覆盖——读出错 / 解析不了 → 原文件改名留着（不打印内容），再试上一次那份。 */
+  const load = (fish) => {
+    let raw;
+    try { raw = readFileSync(file(fish.id), 'utf8'); }
+    catch (e) {
+      if (e?.code === 'ENOENT') return readPrev(fish); // 文件还没有：新鱼；有上一次那份就接着用（两次改名之间断电的情况）
+      log?.warn?.(`[dsh-yushe] 记忆：存档读不出来，这份先留在 memory/ 里慢慢看，这次用上一次的`);
+      keepBroken(fish, null);
+      return readPrev(fish, true);
+    }
+    try { return migrateMemory(JSON.parse(raw)); }
+    catch {
+      log?.warn?.(`[dsh-yushe] 记忆：存档写坏了，这份先留在 memory/ 里慢慢看，这次用上一次的`);
+      keepBroken(fish, raw);
+      return readPrev(fish, true);
+    }
+  };
+  /** 修补-1 A：先写临时文件 → 旧的先改名成 .prev.json（覆盖上一次的 prev）→ 临时文件顶上正式文件。坏一次最多丢最后一次写入。 */
+  const save = (fish, m) => {
+    mkdirSync(base, { recursive: true });
+    const f = file(fish.id);
+    writeFileSync(`${f}.tmp`, JSON.stringify(m));
+    if (existsSync(f) && !noRotate.has(String(fish.id))) renameSync(f, prevFile(fish.id));
+    renameSync(`${f}.tmp`, f);
+    noRotate.delete(String(fish.id));
+  };
   const days = () => Number(habits?.get?.().memoryDays) || 30;
   const recallN = () => Number(habits?.get?.().memoryRecall) || 5;
   const tnow = typeof now === 'function' ? now : nowMs; // 一期-3：可拨的时钟；不传就是宿主时钟，行为和以前一样
@@ -193,8 +241,17 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
       try {
         const s = life?.state?.(fish) || {};
         if (!m.cursors.chatFrom) m.cursors.chatFrom = new Date(now).toISOString(); // 0.29.0 已经从事件抄过的聊天不再抄一遍
-        const items = archiveItems({ fish, life: s, footprints: gate?.footprints?.() || [], inbox: inbox?.all?.() || [], dms: dms?.view?.().convs || [], parentMid: habits?.get?.().parentMid || '', chatFrom: m.cursors.chatFrom });
+        const parentMid = habits?.get?.().parentMid || '';
+        const items = archiveItems({ fish, life: s, footprints: gate?.footprints?.() || [], inbox: inbox?.all?.() || [], dms: dms?.view?.().convs || [], parentMid, chatFrom: m.cursors.chatFrom, now });
         const added = ingest(m, items);
+        // 修补-1 D：设了爸妈 B站号以后，以前分不清、记成网友私信（dm-in）的爸妈私信改回家里；认人里那个人也标成爸妈
+        if (parentMid) {
+          const pm = String(parentMid).replace(/\D/g, '');
+          for (const e of m.episodes || []) {
+            if (e && e.kind === 'dm-in' && String(e.keys?.mid || '').replace(/\D/g, '') === pm) { e.kind = 'dm-parent'; e.scope = 'home'; }
+          }
+          for (const p of Object.values(m.people || {})) if (p && p.mid && String(p.mid).replace(/\D/g, '') === pm && pm) p.parent = true;
+        }
         const { forgot, faded } = settleMemory(m, now, days());
         settleWeeklies(m, now, days()); // 三期：周记也慢慢模糊（半衰期 × 6）；章节不忘
         if (added) logOp(m, { op: 'add', n: added, at: new Date(now).toISOString() });   // 改动日志：这轮记了什么
@@ -316,7 +373,7 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
       if (week) {
         const mat = weekMaterial(m, week, s, opts);
         out.weekly = await write('weekly', (fix) => weeklyPrompt({ persona, call: fish.parentCall, mat, fix }), (raw) => checkWeekly(mat, raw), (entry) => {
-          const at = new Date(tnow()).toISOString(), w = { id: nextId(m.weeklies, 'W'), ...entry, at };
+          const at = new Date(tnow()).toISOString(), w = { id: nextIdFor(m, m.weeklies, 'W'), ...entry, at };
           m.weeklies = [...(m.weeklies || []), w];
           logOp(m, { op: 'weekly', at, text: `${w.from}–${w.to}：${w.headline}` });
           return w;
@@ -328,7 +385,7 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
       if (month) {
         const mat = monthMaterial(m, month, s);
         out.chapter = await write('chapter', (fix) => chapterPrompt({ persona, call: fish.parentCall, mat, fix }), (raw) => checkChapter(mat, raw), (entry) => {
-          const at = new Date(tnow()).toISOString(), c = { id: nextId(m.chapters, 'C'), ...entry, at };
+          const at = new Date(tnow()).toISOString(), c = { id: nextIdFor(m, m.chapters, 'C'), ...entry, at };
           m.chapters = [...(m.chapters || []), c];
           logOp(m, { op: 'chapter', at, text: `${c.month}「${c.title}」` });
           return c;

@@ -109,6 +109,12 @@ export function migrateMemory(raw) {
     };
   }
   if (v < 4) m = { ...m, version: MEMORY_VERSION, weeklies: Array.isArray(m.weeklies) ? m.weeklies : [], chapters: Array.isArray(m.chapters) ? m.chapters : [] }; // 三期：回忆录的格子
+  // 修补-1 C：爸妈纠过的认识（source 'parent'）和记它原话的变化（by 'parent'）一律收回家（scope 'home'）。可重复跑，不升版本号。
+  m = {
+    ...m,
+    beliefs: (Array.isArray(m.beliefs) ? m.beliefs : []).map((b) => (b && typeof b === 'object' && !Array.isArray(b) && b.source === 'parent' && b.scope !== 'home' ? { ...b, scope: 'home' } : b)),
+    changes: (Array.isArray(m.changes) ? m.changes : []).map((c) => (c && c.by === 'parent' && c.scope !== 'home' ? { ...c, scope: 'home' } : c)),
+  };
   return m;
 }
 
@@ -712,7 +718,8 @@ export function tell(mem, text, { at, today } = {}) {
   if (!c.ok) return c;
   mem.told = Array.isArray(mem.told) ? mem.told : [];
   const due = dueOf(c.text, typeof at === 'number' ? at : Date.parse(at) || 0); // 没日子的不硬放一个
-  const same = mem.told.find((x) => sim(x.text, c.text) >= 0.6);
+  // 修补-1 B：两条都算出了 due 而且 due 不一样 → 不是同一句，另记一条（一样的话、或其中一条没日子 → 照旧合并更新）
+  const same = mem.told.find((x) => sim(x.text, c.text) >= 0.6 && !(x.due && due && x.due !== due));
   if (same) { same.text = c.text; same.at = at; if (due) same.due = due; else delete same.due; return { ok: true, item: same, merged: true }; } // 同一句话合并更新时 due 也重算
   if (mem.told.filter((x) => localDay(x.at) === today).length >= TOLD_PER_DAY) return { ok: false, why: `今天已经记了 ${TOLD_PER_DAY} 件了，明天再说` };
   const live = mem.told.filter((x) => { if (x.muted) return false; const a = toldDueAge(x, today); return a == null || a <= 7; }); // 过了 7 天以上的不算进上限（还在存档里、list 里能看到）；不再提的也不算（四期-2 D7）
@@ -752,16 +759,17 @@ export function findTarget(mem, id) {
 
 /**
  * 四期-3 I：爸妈纠认识（改 mem）。旧的让位成「被取代」、记 supersededBy 和 endedAt；
- * 新的一条就是爸妈说的：source 'parent'、当场生效（不用攒依据）、why 写「爸妈纠正过」，认识里的其他字段接着旧的来。
+ * 新的一条就是爸妈说的：source 'parent'、当场生效（不用攒依据）、why 写「爸妈纠正过」，一律 scope: 'home'（修补-1 C：
+ * 爸妈的原话不出门——纠正一条 B站范围的认识也不能带着旧 scope 出去，四期规格 I 的「scope: 旧的 scope」是规格错了）。
  * changes 记「取代」并带 by: 'parent'（记清这是爸妈办的）。返回新的一条。
  */
 export function fixBelief(mem, old, text, { at, call = '爸妈' } = {}) {
   mem.seq = (mem.seq || 0) + 1;
-  const b = { id: `B${mem.seq.toString(36)}`, text, why: `${clean(call, 10) || '爸妈'}纠正过`, effect: '', about: old.about, scope: old.scope || 'home', source: 'parent', status: '生效', from: [], at, lastAt: at, n: 1, confirmedAt: at };
+  const b = { id: `B${mem.seq.toString(36)}`, text, why: `${clean(call, 10) || '爸妈'}纠正过`, effect: '', about: old.about, scope: 'home', source: 'parent', status: '生效', from: [], at, lastAt: at, n: 1, confirmedAt: at };
   old.status = '被取代'; old.supersededBy = b.id; old.endedAt = at;
   mem.beliefs = Array.isArray(mem.beliefs) ? mem.beliefs : [];
   mem.beliefs.push(b);
-  addChange(mem, { kind: '取代', before: old.text, after: b.text, by: 'parent', scope: b.scope, at });
+  addChange(mem, { kind: '取代', before: old.text, after: b.text, by: 'parent', scope: 'home', at });
   return b;
 }
 
@@ -785,6 +793,24 @@ export function dropItem(mem, id) {
   if (f.kind.arr === 'beliefs') { // 删认识时把提它原话的 changes 清掉（J6）
     const t = f.item.text;
     mem.changes = (mem.changes || []).filter((c) => c.before !== t && c.after !== t);
+  }
+  if (f.kind.arr === 'weeklies') { // 修补-1 F1/F2：删掉的周不再重写（cursors.droppedWeeks，最多 30 个，旧的挤掉）、编号不复用（high-water 记 cursors.maxIds）
+    let cursors = mem.cursors;
+    if (!cursors || typeof cursors !== 'object' || Array.isArray(cursors)) cursors = mem.cursors = {};
+    const dw = Array.isArray(cursors.droppedWeeks) ? cursors.droppedWeeks : (cursors.droppedWeeks = []);
+    dw.push(String(f.item.week || f.item.from || ''));
+    cursors.droppedWeeks = dw.slice(-30);
+    bumpMaxId(cursors, 'W', f.item.id);
+  }
+  if (f.kind.arr === 'episodes') { // 取舍（修补-1 审查 2）：同一个人别的记录引号里恰好是同一句话，也一起去掉——宁可认人少复述一句，也不留被忘掉的那句
+    // 修补-1 F3：删掉的经历带 mid / who 时，把那个人 last 里「引号里的话出现在这条经历文字里」的记法去掉（人留着、别的记录不动）
+    const keys = f.item?.keys || {};
+    const pk = keys.mid || keys.who ? personKey({ mid: keys.mid, who: keys.who }) : null;
+    const p = pk ? (mem.people || {})[pk] : null;
+    if (p && Array.isArray(p.last)) {
+      const text = String(f.item.text || '');
+      p.last = p.last.filter((l) => { const q = String(l || '').match(/「([^」]+)」/); return !(q && q[1] && text.includes(q[1])); });
+    }
   }
   return { ok: true, kind: f.kind, item: f.item };
 }
@@ -895,9 +921,11 @@ export function weekCount(mem, week, { now, baseDays = 30 } = {}) {
 export function pickWeek(mem, today, opts = {}) {
   if (!isYmd(today)) return null;
   const cur = weekOf(today), sunday = new Date(ymdMs(today)).getDay() === 0;
+  const dropped = (mem.cursors && Array.isArray(mem.cursors.droppedWeeks)) ? mem.cursors.droppedWeeks.map(String) : []; // 修补-1 F1：爸妈说忘掉的那几周不再重写
   for (let k = sunday ? 0 : 1; k <= 2; k++) {
     const w = addDays(cur, -7 * k);
     if ((mem.weeklies || []).some((x) => x.week === w)) continue;
+    if (dropped.includes(w)) continue;
     if (weekCount(mem, w, opts) >= 3) return w;
   }
   return null;
@@ -909,8 +937,8 @@ export function weeklyStatus(mem, today, opts = {}) {
 }
 const prevMonth = (ym) => { const [y, mo] = ym.split('-').map(Number); const d = new Date(y, mo - 2, 1); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`; };
 const monthEnd = (ym) => { const [y, mo] = ym.split('-').map(Number); return localDay(new Date(y, mo, 0).getTime()); };
-/** 和这个月有重叠的周记（跨月那周两边都算）。 */
-const monthWeeklies = (mem, ym) => (mem.weeklies || []).filter((w) => w.from <= monthEnd(ym) && w.to >= `${ym}-01`);
+/** 和这个月有重叠的周记（跨月那周两边都算）。不再提的不算（修补-1 E：写章节的门槛、材料、依据都不带它）。 */
+const monthWeeklies = (mem, ym) => (mem.weeklies || []).filter((w) => !w.muted && w.from <= monthEnd(ym) && w.to >= `${ym}-01`);
 /** 今晚该写哪个月的章节（没有就 null）：上个月、比最近一章新、还没写、有 ≥ 2 篇周记或 ≥ 5 篇日记。 */
 export function pickMonth(mem, today, life) {
   if (!isYmd(today)) return null;
@@ -934,8 +962,25 @@ function madeUp(text, corpus, nums) {
   for (const m2 of String(text).matchAll(/\d{2,}/g)) if (!nums.has(Number(m2[0])) && !corpus.includes(m2[0])) return `数字 ${m2[0]} 对不上这周的事`;
   return '';
 }
-/** 下一个编号（W / C 各自数）。 */
-export function nextId(list, p) { let n = 0; for (const x of list || []) { const k = Number(String(x?.id || '').slice(1)); if (String(x?.id || '').startsWith(p) && k > n) n = k; } return `${p}${n + 1}`; }
+/** 下一个编号（W / C 各自数）。floor：曾经发过的最大号（修补-1 F2，删了最大号也不拿回同一个号），老存档不给 floor 就按现有最大号算。 */
+export function nextId(list, p, floor = 0) { let n = Number(floor) || 0; for (const x of list || []) { const k = Number(String(x?.id || '').slice(1)); if (String(x?.id || '').startsWith(p) && k > n) n = k; } return `${p}${n + 1}`; }
+/** F2 编号不复用的入口（改 mem.cursors）：取下一个编号时把高水位记进 cursors.maxIds（{ W: n, C: n }），删过最大号也不会再拿到它。 */
+export function nextIdFor(mem, list, p) {
+  let cursors = mem.cursors;
+  if (!cursors || typeof cursors !== 'object' || Array.isArray(cursors)) cursors = mem.cursors = {};
+  const maxIds = cursors.maxIds && typeof cursors.maxIds === 'object' && !Array.isArray(cursors.maxIds) ? cursors.maxIds : (cursors.maxIds = {});
+  const id = nextId(list, p, Number(maxIds[p]) || 0);
+  const n = Number(String(id).slice(1));
+  if (n > (Number(maxIds[p]) || 0)) maxIds[p] = n;
+  return id;
+}
+/** F2 的高水位（改 cursors.maxIds，{ W: n, C: n }）：发过 / 删过的编号以后不再用。p = 'W' / 'C'。 */
+export function bumpMaxId(cursors, p, id) {
+  const maxIds = cursors.maxIds && typeof cursors.maxIds === 'object' && !Array.isArray(cursors.maxIds) ? cursors.maxIds : (cursors.maxIds = {});
+  const n = Number(String(id ?? '').replace(/\D/g, ''));
+  if (n > (Number(maxIds[p]) || 0)) maxIds[p] = n;
+  return maxIds[p];
+}
 
 /** 周记的材料（给提示词，也给验收）：这周还记得的事、这周的日记、统计。 */
 export function weekMaterial(mem, week, life, { now, baseDays = 30 } = {}) {
@@ -1049,6 +1094,7 @@ function memoirFor(mem, tr, now, baseDays) {
     if (overlap(new Date(y, mo - 1, 1).getTime(), new Date(y2, mo2, 1).getTime())) out.push({ id: c.id, stage: 'clear', kind: 'chapter', at: c.at, text: `${c.title}：${c.headline}。${String(c.text).slice(0, 80)}` });
   }
   for (const w of (mem.weeklies || []).slice().sort((a, b) => String(b.from).localeCompare(String(a.from)))) {
+    if (w.muted) continue; // 修补-1 E：不再提的周记不冒出来（问一段日子也不翻）
     const st = weeklyStage(w, now, baseDays);
     if (st === 'forgotten' || !isYmd(w.from) || !isYmd(w.to)) continue;
     if (overlap(ymdMs(w.from), ymdMs(w.to) + DAY)) out.push({ id: w.id, stage: st, kind: 'weekly', at: w.at, text: `${w.headline}：${String(w.text).slice(0, 80)}` });
