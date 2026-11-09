@@ -1038,7 +1038,9 @@ $('diaryWrite2').addEventListener('click', async () => {
 let APP = 'album';
 // 右上角各入口的页面（F-45 / F-46 / F-47）：不再有手机那排二级入口，点哪个就是哪一页
 const BOOK_TITLE = { letters: '信箱', album: '明信片', journal: '她的笔记本', bag: '背包' };
-let MAIL = { list: [], i: 0, unread: new Set() }, PHOTOS = { list: [], i: -1 }, PHOTO_JUMP = null; // PHOTO_JUMP：从见闻缩略图点进来，直接翻到那张
+// F-89：信箱分 tab，别把 B站消息和她的信拼成一坨
+const MAIL_TABS = ['全部', '信', 'B站', '待发'];
+let MAIL = { list: [], i: 0, unread: new Set(), tab: '全部' }, PHOTOS = { list: [], i: -1 }, PHOTO_JUMP = null; // PHOTO_JUMP：从见闻缩略图点进来，直接翻到那张
 const navBtns = (i, n, prev, next) => `<div class="lnav"><button class="gb plain sm" data-nav="prev" ${i <= 0 ? 'disabled' : ''}><i class="tri l"></i>${prev}</button><span>${n ? `第 ${i + 1} / ${n}` : ''}</span><button class="gb plain sm" data-nav="next" ${i >= n - 1 ? 'disabled' : ''}>${next}<i class="tri"></i></button></div>`;
 const draftLabel = (d) => d.kind === 'comment' ? `评论 · 在《${esc(d.target?.title || '')}》下面` : d.kind === 'dm' ? `私信 · 回 ${esc(d.target?.who || '网友')}` : '动态';
 // 私信 + 爸妈专线（任务 46）：一段段对话，对方的话只展示
@@ -1069,10 +1071,39 @@ function inboxHtml() {
     : `<b>${esc(x.who)}</b> 关注了她`;
   return `<div class="drafts"><h4>${ICON('heart')} B站上有人理她${ib.fanCount != null ? `<small style="color:var(--mute);font-weight:400"> · 粉丝 ${ib.fanCount}</small>` : ''}</h4>${ib.items.slice(0, 40).map((x) => `<div class="jentry">${!x.seenBefore ? '<span class="newtag">新</span>' : ''}${ICON(INBOX_ICON[x.kind] || 'sparkle')} ${line(x)}<small style="color:var(--mute)">${esc(String(x.at || x.got || '').slice(5, 10))} ${esc(hhmm(x.at || x.got))}</small>${x.url ? ` <a href="${esc(x.url)}" target="_blank" rel="noreferrer">在 B站看</a>` : ''}</div>`).join('')}</div>`;
 }
+// F-89：信箱 tab —— 全部按时间倒序混排，信 / B站 / 待发各自成页
+const tabBar = (cur) => `<div class="mtabs">${MAIL_TABS.map((t) => `<button class="mtab${t === cur ? ' on' : ''}" data-mtab="${t}">${t}</button>`).join('')}</div>`;
+const mailTime = (x) => Date.parse(x.at || x.got || x.createdAt || 0) || 0;
+function allHtml() {
+  // 全部：她的信 + B站上有人理她 + 待发，一条时间轴
+  const items = [];
+  for (const l of MAIL.list || []) items.push({ at: mailTime(l), raw: l.at, kind: 'letter', x: l });
+  for (const x of (MAIL.inbox?.items || [])) items.push({ at: mailTime(x), raw: x.at || x.got, kind: 'inbox', x });
+  for (const d of [...(MAIL.queued || []), ...(MAIL.drafts || [])]) items.push({ at: mailTime(d), raw: d.createdAt, kind: 'draft', x: d });
+  items.sort((a, b) => b.at - a.at);
+  if (!items.length) return `<div class="needcfg">${ICON('mail')}<div>还没有东西。<br>她出门回来、有感悟、零花钱快花光时会给你写信。</div></div>`;
+  const line = (x) => x.kind === 'reply' ? `<b>${esc(x.who)}</b> 回了她<p>${esc(x.text)}</p>`
+    : x.kind === 'like' ? `<b>${esc(x.who)}</b>${(x.count || 1) > 1 ? ` 等 ${x.count} 人` : ''} 赞了她`
+    : `<b>${esc(x.who)}</b> 关注了她`;
+  return items.map(({ at, raw, kind, x }) => {
+    const when = `<small style="color:var(--mute)">${esc(mmdd(raw || at))} ${esc(hhmm(raw || new Date(at).toISOString()))}</small>`;
+    if (kind === 'letter') {
+      const li = MAIL.list.indexOf(x);
+      return `<div class="jentry" data-mletter="${li}"><b>${ICON('mail')} ${esc(x.kindText || '信')}</b> ${when}<p>${esc(String(x.text || '').slice(0, 60))}${String(x.text || '').length > 60 ? '…' : ''}</p><a href="javascript:void 0" data-mletter="${li}">展开看</a></div>`;
+    }
+    if (kind === 'inbox') return `<div class="jentry">${ICON(INBOX_ICON[x.kind] || 'sparkle')} ${line(x)} ${when}</div>`;
+    return `<div class="jentry"><b>${ICON('speech')} ${draftLabel(x)}</b> ${when}<p>${esc(String(x.text || '').slice(0, 60))}</p></div>`;
+  }).join('');
+}
 function renderLetter() {
-  const { list, i } = MAIL, l = list[i];
-  if (!l) { $('phoneBody').innerHTML = dmsHtml() + inboxHtml() + draftsHtml(); return; }
-  $('phoneBody').innerHTML = dmsHtml() + inboxHtml() + draftsHtml() + `<div class="lview"><div class="lpaper"><div class="lhead">${MAIL.unread.has(l.id) ? '<span class="newtag">新</span>' : ''}${esc(l.kindText || '信')} · ${esc(l.day)} ${esc(hhmm(l.at))}</div><p>${esc(l.text)}</p></div>${navBtns(i, list.length, '新一封', '旧一封')}</div>`;
+  const { list, i, tab } = MAIL;
+  const bar = tabBar(tab);
+  if (tab === '全部') { $('phoneBody').innerHTML = bar + allHtml(); return; }
+  if (tab === 'B站') { $('phoneBody').innerHTML = bar + (dmsHtml() + inboxHtml() || `<div class="needcfg">${ICON('heart')}<div>B站上还没人理她。</div></div>`); return; }
+  if (tab === '待发') { $('phoneBody').innerHTML = bar + (draftsHtml() || `<div class="needcfg">${ICON('speech')}<div>她没在排队说什么。</div></div>`); return; }
+  const l = list[i];
+  if (!l) { $('phoneBody').innerHTML = bar + `<div class="needcfg">${ICON('mail')}<div>还没有信。<br>她出门回来、有感悟、零花钱快花光时会给你写信。</div></div>`; return; }
+  $('phoneBody').innerHTML = bar + `<div class="lview"><div class="lpaper"><div class="lhead">${MAIL.unread.has(l.id) ? '<span class="newtag">新</span>' : ''}${esc(l.kindText || '信')} · ${esc(l.day)} ${esc(hhmm(l.at))}</div><p>${esc(l.text)}</p></div>${navBtns(i, list.length, '新一封', '旧一封')}</div>`;
 }
 // 明信片（F-84/F-85）：她出门途中从外面寄回家的。正面是她拍的照片，没拍成就是一张风景明信片（鱼社自己的画）；
 // 背面她自己选写哪种：见闻 / 想你 / 口信（F-85）——风景卡选了想你和口信就不放链接和便利贴，只放她的话；照片卡照旧
@@ -1150,7 +1181,7 @@ async function renderPhone() {
     // 信箱：一封一封看，新的在前；打开时把「新」记下来再标已读
     const [r, dr, ib, dm] = await Promise.all([api('/letters'), api('/drafts').catch(() => ({ pending: [] })), api('/inbox').catch(() => null), api('/dms').catch(() => null)]);
     if (ib) ib.items = (ib.items || []).map((x) => ({ ...x, seenBefore: x.seen }));
-    MAIL = { list: r.letters || [], i: 0, unread: new Set((r.letters || []).filter((l) => !l.read).map((l) => l.id)), drafts: dr.pending || [], queued: dr.queued || [], mode: dr.mode, nextAt: dr.nextAt, trust: dr.trust, today: dr.today, limits: dr.limits, inbox: ib, dms: dm };
+    MAIL = { list: r.letters || [], i: 0, tab: (MAIL && MAIL.tab) || '全部', unread: new Set((r.letters || []).filter((l) => !l.read).map((l) => l.id)), drafts: dr.pending || [], queued: dr.queued || [], mode: dr.mode, nextAt: dr.nextAt, trust: dr.trust, today: dr.today, limits: dr.limits, inbox: ib, dms: dm };
     if (!MAIL.list.length && !MAIL.drafts.length && !MAIL.queued.length && !(ib?.items || []).length && !(dm?.convs || []).length) { body.innerHTML = `<div class="needcfg">${ICON('mail')}<div>还没有信。<br>她出门回来、有感悟、零花钱快花光时会给你写信。</div></div>`; return; }
     renderLetter();
     if (r.unread || ib?.unseen || dm?.unseen) { if (r.unread) await api('/letters/read', {}); if (ib?.unseen) await api('/inbox', { seen: true }); if (dm?.unseen) await api('/dms', { seen: true }); renderMailDot(MAIL.mode === 'approve' ? MAIL.drafts.length : MAIL.queued.length); }
@@ -1165,6 +1196,10 @@ async function renderPhone() {
         else toast('好，这条不发');
         return renderPhone();
       }
+      const tb = e.target.closest('[data-mtab]');
+      if (tb) { MAIL.tab = tb.dataset.mtab; MAIL.i = 0; return renderLetter(); }
+      const lt = e.target.closest('[data-mletter]');
+      if (lt) { MAIL.tab = '信'; MAIL.i = Number(lt.dataset.mletter) || 0; return renderLetter(); }
       const b = e.target.closest('[data-nav]'); if (!b || b.disabled) return; MAIL.i += b.dataset.nav === 'next' ? 1 : -1; renderLetter();
     };
   } else if (APP === 'album') {

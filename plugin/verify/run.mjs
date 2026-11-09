@@ -2132,6 +2132,9 @@ section('笔记本：便利贴、读过清单、不喜欢（F-82）');
   ok(r2.ok && r2.items.length === notes.length && r2.items.every((x) => x.tag !== '明信片'), '出门时也想得起笔记本（B站上的事），明信片不算便利贴');
   // 页面：入口改名、只看不改
   const html = read('src/game/index.html'), mainJs = read('src/game/main.js');
+  // F-89：信箱分 tab（全部 / 信 / B站 / 待发），「全部」按时间倒序混排
+  ok(/MAIL_TABS = \['全部', '信', 'B站', '待发'\]/.test(mainJs) && /data-mtab/.test(mainJs)
+     && /items.sort\(\(a, b\) => b\.at - a\.at\)/.test(mainJs), '信箱分 tab，「全部」按时间倒序');
   ok(/id="journalBtn"[^>]*title="她的笔记本"[\s\S]{0,120}笔记本/.test(html) && mainJs.includes("journal: '她的笔记本'"), '右上角入口叫「笔记本」');
   const nbSrc = mainJs.slice(mainJs.indexOf('function renderNotebook'), mainJs.indexOf('async function renderPhone'));
   ok(!/data-(del|edit|pin)|删除|编辑/.test(nbSrc) && mainJs.includes('NB_PER_PAGE = 6'), '笔记本只看不改：没有删除 / 编辑 / 置顶；一页 6 张');
@@ -3730,7 +3733,9 @@ section('在家上网：醒着在家自己刷 B站，清单 + 最多一张便利
   ok(oldMid.tripToolCalls === 16 && HBx.normalizeHabits({ tripToolCalls: 6 }).tripToolCalls === 8 && mine.tripToolCalls === 13 && after.tripToolCalls === 12, '在家-1 验收补：F-87 之前存的出门额度老档位 6/12/20 换成 8/16/24（「读多深」不会变成自定义）；手改过的、F-87 之后存的不动');
   const dx = mkdtempSync(join(tmpdir(), 'yushe-home-x-'));
   const LX = LE.createLife(dx); const fx = { id: 'homex', name: 'x', parentCall: '妈妈', personaText: 'x', createdAt: new Date(Date.now() - 86400e3).toISOString(), pts: { brain: 40, tongue: 40, belly: 40, heart: 40, spark: 40 }, story: {} };
-  const t0 = (() => { const d = new Date(); d.setHours(11, 0, 0, 0); return d.getTime(); })();
+  // 用「昨天 11:00」而不是「今天 11:00」：CI 跑在 UTC，今天 11:00 可能还在未来，
+  // settle 会先正向走几个小时把心情衰减掉，断言就飘了（本机 EST 通过、CI 挂）
+  const t0 = (() => { const d = new Date(); d.setDate(d.getDate() - 1); d.setHours(11, 0, 0, 0); return d.getTime(); })();
   LX.state(fx, t0); const m0 = LX.state(fx, t0).mood;
   const u = (i) => `https://www.bilibili.com/video/BV1x${String(i).padStart(8, '0')}`;
   LX.homeRound(fx, { read: [1, 2, 3].map((i) => ({ title: `t${i}`, url: u(i), depth: 'detail', acts: [], like: '喜欢' })), scanned: 3, note: { title: 't1', url: u(1), source: 'B站', verified: true, line: '好看', note: { tag: '心得', gist: '', depth: 'detail' } } }, t0 + 60_000);
