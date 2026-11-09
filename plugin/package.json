@@ -1,11 +1,11 @@
 {
   "name": "dsh-plugin-yushe",
-  "version": "0.46.0",
+  "version": "0.47.0",
   "repository": { "type": "git", "url": "git+https://github.com/yuna78/dsh-plugin-yushe.git" },
   "homepage": "https://github.com/yuna78/dsh-plugin-yushe#readme",
   "bugs": "https://github.com/yuna78/dsh-plugin-yushe/issues",
   "author": "Yuna",
-  "keywords": ["大肥鱼", "鱼社", "dsh", "dsh-plugin", "deepseek-harness", "ai-pet", "bilibili", "game"],
+  "keywords": ["大肥鱼", "dafeiyu", "鱼社", "yushe", "dsh", "dsh-plugin", "deepseek-harness", "ai-pet", "bilibili", "game"],
   "description": "鱼社 · 大肥鱼虚拟养成系统：点几下就能养一条自己的大肥鱼。可视化引导一键上手，她陪你聊天、替你干活、自己去 B站学习长大，每天写日记汇报，还会写信、拍照片回来给你看",
   "icon": "./icon.webp",
   "type": "module",

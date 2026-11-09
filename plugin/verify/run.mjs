@@ -2151,6 +2151,11 @@ section('笔记本：便利贴、读过清单、不喜欢（F-82）');
   ok(r2.ok && r2.items.length === notes.length && r2.items.every((x) => x.tag !== '明信片'), '出门时也想得起笔记本（B站上的事），明信片不算便利贴');
   // 页面：入口改名、只看不改
   const html = read('src/game/index.html'), mainJs = read('src/game/main.js');
+  // F-91：提示条（toast）必须在弹层上面——点「关注」之类的操作在设置弹层里，反馈不能被盖住
+  {
+    const zi = (sel) => { const m = new RegExp(sel.replace(/[#.]/g, '\\$&') + '\\{[^}]*z-index:(\\d+)').exec(html); return m ? Number(m[1]) : 0; };
+    ok(zi('#toast') > zi('#cfg') && zi('#toast') > zi('#dex') && zi('#toast') > zi('#hud'), `提示条层级最高（toast ${zi('#toast')} > 弹层 ${zi('#cfg')} / 图鉴 ${zi('#dex')} / HUD ${zi('#hud')}）`);
+  }
   // F-90：睡觉窗口可配（默认 00:00–07:30），改设置立刻生效，跨午夜也认
   {
     const M = (hh) => { const d = new Date('2026-11-09T00:00:00'); d.setHours(hh, 0, 0, 0); return d; };
