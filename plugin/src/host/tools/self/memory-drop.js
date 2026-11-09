@@ -13,13 +13,13 @@ export default defineTool({
     proposalId: { type: 'string', description: '上次起草返回的 proposalId（爸妈点头以后才带）' },
     confirm: { type: 'boolean', description: '爸妈听完复述、点头了，才设 true' },
   },
-  async run(a, { pond, life, memory }) {
+  async run(a, { pond, life, memory }, ctx) {
     const f = pond.current(); if (!f) return NO_FISH;
     if (!memory) return { ok: false, error: '记忆还没准备好' };
     const confirmStep = a.proposalId != null && a.proposalId !== '' || a.confirm != null; // 带了单号或者带了 confirm：按确认这一步办
     if (confirmStep) {
       if (a.confirm !== true) return { ok: false, needsConfirmation: true, error: '还没有真的忘掉。要爸妈在这次对话里听完复述、点头了，再设 confirm=true 调一次。' };
-      const r = memory.applyDrop(f, a.proposalId);
+      const r = memory.applyDrop(f, a.proposalId, { from: ctx?.from }); // 修补-2 J：把出口（room / main）交给宿主——房间里要等爸妈再说一句才能办
       if (!r.ok) return { ok: false, error: r.why };
       if (r.kind === '要记的') life?.record?.(f, 'told', `${f.parentCall}让本鱼忘掉一条嘱咐`, {});
       return { ok: true, dropped: r.item, archive: r.archive, hint: '忘掉了，档案页里照旧看得见' };

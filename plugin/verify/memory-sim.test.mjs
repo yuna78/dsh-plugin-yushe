@@ -50,7 +50,7 @@ const nightQuietly = async (sim) => { try { await sim.night(); return true; } ca
 const epOf = (sim, kw) => (sim.mem().episodes || []).find((e) => String(e.text || e.gist || '').includes(kw));
 
 /* ================= 一期-3 S1：种下的事按时间变淡（乖模型，09 的数字） ================= */
-{ // 半衰期（记性适中，基准 30 天）：聊天 imp1 → 9 天、看的视频 imp2 → 18 天、被回 imp4 → 54 天
+{ // 半衰期（记性适中，基准 30 天）：聊天 imp3 → 30 天（修补-3 Q：和日记一样久，原来 imp1 → 9 天）、看的视频 imp2 → 18 天、被回 imp4 → 54 天
   const sim = createSim({ start: START, model: goodModel(), memoryDays: 30 });
   sim.chat('贝壳灯又亮了，里面还在冒细泡', '自述：贝壳灯是这周的新物件');
   sim.seen({ title: '海面探秘：萤火虫罐工厂', url: 'https://example.com/v1', tag: '科普' });
@@ -62,16 +62,16 @@ const epOf = (sim, kw) => (sim.mem().episodes || []).find((e) => String(e.text |
   count(['贝壳灯', '萤火虫', '苔藓绿'].every((kw) => stage(kw) === 'clear'),
     '一期-3 S1.2：正常 第 3 天：聊天 / 视频 / 别人的回复都还清晰（都没过半衰期的一半）');
   sim.advance(264); sim.sync(); // 第 14 天（过了 13 天）
-  count(stage('贝壳灯') === 'fuzzy', '一期-3 S1.3：第 14 天：不清晰了（留存 0.37，落在模糊档）');
+  count(stage('贝壳灯') === 'clear', '一期-3 S1.3：第 14 天：跟爸妈的聊天还清晰（留存 0.74；修补-3 Q 起聊天和日记一样 30 天忘一半，原来这里已经模糊）');
   count((sim.recall('贝壳灯') || []).some((it) => String(it.text || '').includes('贝壳灯')),
-    '一期-3 S1.4：第 14 天：模糊的聊天仍召回得到（recall 结果里有它）');
+    '一期-3 S1.4：第 14 天：那句聊天召回得到（recall 结果里有它）');
   count(stage('萤火虫') === 'clear', '一期-3 S1.5：第 14 天：视频还清晰（留存 0.61）');
   count(stage('苔藓绿') === 'clear', '一期-3 S1.6：第 14 天：别人的回复还清晰（留存 0.85）');
-  sim.advance(744); sim.sync(); // 第 45 天（过了 44 天）
+  sim.advance(2184); sim.sync(); // 第 105 天（过了 104 天；修补-3 Q 起聊天半衰期 30 天，原来是第 45 天）
   count((sim.recall('贝壳灯') || []).length === 0 && !epOf(sim, '贝壳灯'),
-    '一期-3 S1.7：反例 第 45 天：聊天的留存 0.03 已低于 0.1 → 记忆里删掉了，召回不到');
-  count((sim.recall('苔藓绿') || []).some((it) => String(it.text || '').includes('苔藓绿')),
-    '一期-3 S1.8：第 45 天：同包种子里的回复还召回得到（留存 0.57）');
+    '一期-3 S1.7：反例 第 105 天：聊天的留存 0.09 已低于 0.1 → 记忆里删掉了，召回不到');
+  count(Boolean(epOf(sim, '小橘') || epOf(sim, '苔藓绿')),
+    '一期-3 S1.8：第 105 天：同包种子里别人的回复（半衰期 54 天，留存 0.26）还在记忆里');
 }
 
 /* ================= 一期-3 S2：忘掉的不复活（接 S1 的做法，忘掉之后再多 sync 几次） ================= */
@@ -81,9 +81,9 @@ const epOf = (sim, kw) => (sim.mem().episodes || []).find((e) => String(e.text |
   sim.seen({ title: '海面探秘：萤火虫罐工厂', tag: '科普' });
   sim.gotReply({ who: '小橘', mid: '88012', text: '回头我也去挂一盏那样的苔藓绿', mine: true });
   sim.sync();
-  sim.advance(744); sim.sync(); // 到第 45 天：这条聊天着落点留存低于 0.1 → 删
+  sim.advance(2496); sim.sync(); // 到第 105 天：这条聊天留存低于 0.1 → 删（修补-3 Q 起聊天半衰期 30 天，原来第 45 天）
   const gone = () => !epOf(sim, '空缸廊');
-  count(gone() && (sim.recall('空缸廊') || []).length === 0, '一期-3 S2.1：第 45 天：那条聊天确实被删了（对照组：另一句话还召回得到）');
+  count(gone() && (sim.recall('空缸廊') || []).length === 0, '一期-3 S2.1：第 105 天：那条聊天确实被删了');
   for (let i = 0; i < 5; i++) { sim.advance(24); sim.sync(); } // 档案还在，但 sync 多次也不得又回来
   count(gone(), '一期-3 S2.2：反例档案里那句还在：sync 多次也不复活（时间游标 + key 去重挡住）');
   count((sim.recall('空缸廊') || []).length === 0, '一期-3 S2.3：多次 sync 后 recall 也找不到空缸廊贝壳灯');
@@ -253,8 +253,8 @@ const epOf = (sim, kw) => (sim.mem().episodes || []).find((e) => String(e.text |
   count(Boolean(beliefBlank) && (sim2.mem().beliefs || []).length === 1 && beliefBlank.text === '我很爱家门口的那把摇椅',
     '一期-3 S6.14：反例 花光以后不再反思：存档里认识数量停在第 4 晚的水平（只有乖时期那 1 条，一条不多）');
   daily('一期-3 S6.15：花光以后记忆照常同步：第 d 天的事都在记忆里（每天 seen 的那条）', synced, DAYS_14);
-  sim2.advance(744); sim2.sync(); // 到第 46 天：更早种下的聊天照常走完整遗忘流程
-  count(!epOf(sim2, '贝壳灯'), '一期-3 S6.16：反例 遗忘照常：第 1 天的聊天到 40 多天以后从记忆里消失');
+  sim2.advance(2232); sim2.sync(); // 到第 107 天：更早种下的聊天照常走完整遗忘流程（修补-3 Q 起聊天半衰期 30 天，原来第 46 天）
+  count(!(sim2.mem().episodes || []).some((e) => e.kind === 'chat' && Date.parse(e.at) < START.getTime() + 86400e3), '一期-3 S6.16：反例 遗忘照常：第 1 天的聊天到 100 多天以后从记忆里消失');
   count(sim2.calls().diary + sim2.calls().reflect <= 28, `一期-3 S6.17：日记 + 反思 ≤ 28（实际 ${sim2.calls().diary + sim2.calls().reflect}；三期起 total 还含周记 / 章节）`);
 }
 

@@ -11,7 +11,7 @@ import PROMPTS from '../prompts/_all.js';
 
 const DAY = 86400e3;
 export const STAGES = ['clear', 'fuzzy', 'trace', 'forgotten'];
-export const STAGE_TEXT = { clear: '清晰', fuzzy: '模糊', trace: '印象', forgotten: '忘了' };
+export const STAGE_TEXT = { clear: '清晰', fuzzy: '模糊', trace: '只剩印象', forgotten: '忘了' }; // 修补-3 S2：给人看的阶段说法和统计条 / 周记一致（原来是「印象」）
 export const MAX_EPISODES = 1000;
 export const MAX_PEOPLE = 120;
 const IMP_MULT = [0.15, 0.3, 0.6, 1, 1.8, 4];
@@ -44,7 +44,7 @@ export const KINDS = {
   'got-like': { imp: 2, scope: 'public' },
   nap: { imp: 2, scope: 'home' },
   'late-work': { imp: 2, scope: 'home' },
-  chat: { imp: 1, scope: 'home' },
+  chat: { imp: 3, scope: 'home' }, // 修补-3 Q：跟爸妈的聊天记得跟日记一样久（妈妈 11-09 拍板）
   feed: { imp: 1, scope: 'home' },
   dream: { imp: 1, scope: 'home' }, // F-79：梦游看到的，记得最浅、忘得最快
   news: { imp: 1, scope: 'home' },
@@ -115,6 +115,8 @@ export function migrateMemory(raw) {
     beliefs: (Array.isArray(m.beliefs) ? m.beliefs : []).map((b) => (b && typeof b === 'object' && !Array.isArray(b) && b.source === 'parent' && b.scope !== 'home' ? { ...b, scope: 'home' } : b)),
     changes: (Array.isArray(m.changes) ? m.changes : []).map((c) => (c && c.by === 'parent' && c.scope !== 'home' ? { ...c, scope: 'home' } : c)),
   };
+  // 修补-3 Q：和爸妈聊天的经历按现在的重要性收拾（和日记一样 imp 3；经历的重要性是记下那一刻存进去的，老存档里记浅了就补上）。可重复跑，不升版本号。
+  m = { ...m, episodes: (Array.isArray(m.episodes) ? m.episodes : []).map((e) => (e && e.kind === 'chat' && typeof e.imp === 'number' && e.imp < 3 ? { ...e, imp: 3 } : e)) };
   return m;
 }
 
@@ -136,10 +138,18 @@ export function localDay(x) {
  * 防投毒：别人写的字（回复 / 私信 / 标题）抄进记忆前，把像指令的片段换成 …，只换那几个字，不删整句。
  * 模型读记忆时自己只当资料；真正的规矩在 reflectPrompt 里写明。
  */
+/* 匹配用的说法库（修补-2 I2）：两边共用的一组 + defang 额外的一组（记住 / 牢记 / 别忘了 / 忘掉 / 扮演和它们的繁体）。
+ * 英文不分大小写、词之间任意空白；中文关键块的中间空白已经由 defangNorm 规整掉，不需要再写进正则。 */
+const DEFANG_BOTH = String.raw`忽略(?:以上|之前|前面|上面|規則|規矩|规则|规矩)|無視(?:以上|之前|規則|規矩)|无视(?:以上|之前|规则|规矩)|你現在是|你现在是|你是一個|你是一个|越獄|越狱|系統提示|系统提示|(?:新|以下|下面)的?指令|ignore\s+(?:all\s+)?(?:the\s+)?(?:previous|above|prior|earlier)\s+(?:instructions|rules|prompts?)|disregard\s+(?:all\s+)?(?:the\s+)?(?:previous|above|prior)\s+(?:instructions|rules)|you\s+are\s+now|jailbreak|system\s*prompt`;
+const DEFANG_ONLY = String.raw`记住|牢记|别忘了|忘掉|扮演|記住|牢記|別忘了|扮演`; // 繁体也拆（修补-2 审查 2）
+/** 匹配前的规整（修补-2 I2）：去零宽字符（U+200B–U+200F、U+2060、U+FEFF）、去两个汉字之间的空白；规整后的文字就是返回的文字。 */
+const defangNorm = (s) => String(s ?? '')
+  .replace(/[\u200b-\u200f\u2060\ufeff]/g, '') // 零宽字符当没写
+  .replace(/([一-鿿])\s+(?=[一-鿿])/g, '$1'); // 「忽 略」→「忽略」；中英文之间的空格不动（「System Design 入门」不误伤）
 let DEFANG_RE = null;
 export function defang(text) {
-  DEFANG_RE ||= /记住|牢记|别忘了|忘掉|忽略(?:以上|之前|前面|上面)|无视(?:以上|之前|规则|规矩)|你现在是|你是一个|扮演|越狱|system\s*prompt|系统提示|(?:新|以下|下面)的?指令/gi; // 只抓真像指令的说法，标题里正常的 System / 指令 不误伤
-  return String(text ?? '').replace(DEFANG_RE, '…');
+  DEFANG_RE ||= new RegExp(`${DEFANG_ONLY}|${DEFANG_BOTH}`, 'gi'); // 只抓真像指令的说法，标题里正常的 System / 指令 不误伤
+  return defangNorm(text).replace(DEFANG_RE, '…'); // 先规整再匹配（规整后的文字就是返回的文字）
 }
 
 /**
@@ -148,12 +158,24 @@ export function defang(text) {
  */
 let SELF_RE = null;
 export function defangSelf(text) {
-  SELF_RE ||= /忽略(?:以上|之前|前面|上面)|无视(?:以上|之前|规则|规矩)|你现在是|你是一个|越狱|system\s*prompt|系统提示|(?:新|以下|下面)的?指令/gi;
-  return String(text ?? '').replace(SELF_RE, '…');
+  SELF_RE ||= new RegExp(DEFANG_BOTH, 'gi');
+  return defangNorm(text).replace(SELF_RE, '…'); // 先规整再匹配（同 defang）
 }
 
 /* 改动日志：谁动了记忆一目了然（页面 / 出事回查用），最多 200 条，超了丢最老的。 */
 export const MAX_LOG = 200;
+export const MAX_PARENT_LOG = 50; // 修补-3 T：爸妈让办的改动最多保留 50 条——上限挤压时先挤自动的，不让「记牢」两天就被挤出去
+/** 爸妈让办的改动（记牢 / 不再提 / 改错 / 忘掉…）：页面「改动记录」里单独一段。 */
+export const PARENT_OPS = new Set(['tell', 'untell', 'mute', 'unmute', 'pin', 'unpin', 'fix', 'drop']);
+/** 上限挤压：爸妈让办的那几种最多留 50 条，剩下留给自动的（自动的超了丢最老的）。 */
+const trimLog = (log) => {
+  if (log.length <= MAX_LOG) return log;
+  const parent = log.filter((x) => PARENT_OPS.has(x.op));
+  const keep = new Set(parent.length > MAX_PARENT_LOG ? parent.slice(-MAX_PARENT_LOG) : parent);
+  let n = MAX_LOG - keep.size;
+  for (let i = log.length - 1; i >= 0 && n > 0; i -= 1) if (!PARENT_OPS.has(log[i].op)) { keep.add(log[i]); n -= 1; } // 从最新的自动的开始留
+  return log.filter((x) => keep.has(x)).slice(-MAX_LOG);
+};
 const LOG_OPS = new Set(['add', 'forget', 'reflect', 'tell', 'untell', 'confirm', 'supersede', 'retire', 'weekly', 'chapter', 'mute', 'unmute', 'pin', 'unpin', 'fix', 'drop']); // 三期：写下周记 / 章节也记；二期：认识升生效 / 被取代 / 放下也记；四期-2：爸妈说「不再提 / 记牢」也记；四期-3：爸妈说「你记错了 / 忘了吧」也记
 /** 追加一条日志（改 mem）。entry = { at?, op, n?, text? }；op 不认识就不记。 */
 export function logOp(mem, entry) {
@@ -168,7 +190,7 @@ export function logOp(mem, entry) {
     ...(entry.n != null ? { n: entry.n } : {}),
     ...(entry.text ? { text: String(entry.text) } : {}),
   });
-  mem.log = log.slice(-MAX_LOG);
+  mem.log = trimLog(log); // 修补-3 T：挤的时候先挤自动的
 }
 
 /** 新的一条经历（规则补 imp / scope / gist）。e = { at, kind, text, gist?, keys?, url?, scope? } */
@@ -222,9 +244,11 @@ export function gistOf(e) {
 export function halfLife(ep, baseDays = 30) {
   return Math.max(0.05, baseDays * (IMP_MULT[ep.imp] ?? 0.3) * (1 + 0.6 * Math.min(REINFORCE_MAX, ep.reinforced || 0)));
 }
-/** 留存 0–1。 */
+/** 留存 0–1。松开过钉子的经历（修补-2 O）按 max(at, unpinnedAt) 起算：从松开那刻起像一条新的事那样慢慢忘，不会当场删。 */
 export function retention(ep, now, baseDays = 30) {
-  const age = Math.max(0, (now - ms(ep.at)) / DAY);
+  const up = ep.unpinnedAt ? ms(ep.unpinnedAt) : 0;
+  const start = Math.max(ms(ep.at), up); // 松开以前不倒着算老账
+  const age = Math.max(0, (now - start) / DAY);
   return Math.pow(0.5, age / halfLife(ep, baseDays));
 }
 const stageOfR = (r) => (r >= 0.5 ? 0 : r >= 0.25 ? 1 : r >= 0.1 ? 2 : 3);
@@ -265,7 +289,7 @@ export function settleMemory(mem, now, baseDays = 30) {
   // 人
   const people = {};
   for (const [k, p] of Object.entries(mem.people || {})) if (p.parent || personRetention(p, now, baseDays) >= 0.1) people[k] = p; else forgot += 1;
-  const sorted = Object.entries(people).sort((a, b) => (b[1].parent - a[1].parent) || (ms(b[1].lastAt) - ms(a[1].lastAt)));
+  const sorted = Object.entries(people).sort((a, b) => (Number(Boolean(b[1].parent)) - Number(Boolean(a[1].parent))) || (ms(b[1].lastAt) - ms(a[1].lastAt))); // 修补-2 N：按布尔值比，爸妈（parent 没写时是 undefined）排最前，人满了不被挤掉
   mem.people = Object.fromEntries(sorted.slice(0, MAX_PEOPLE));
   return { mem, forgot, faded };
 }
@@ -305,7 +329,8 @@ const STOP = new Set(['本鱼', '爸妈', '妈妈', '爸爸', '一个', '什么'
 /** 说出来的样子（跟阶段走）。 */
 export function phrase(ep, stage) {
   const when = localDay(ep.at);
-  if (stage === 'clear') return `${when ? `${when} ` : ''}${ep.text}${ep.url ? `（${ep.url}）` : ''}`;
+  const already = Boolean(when) && String(ep?.text || '').includes(when); // 修补-3 R：文字里已经写了这一天的日期（比如日记自己写的）就不再加日期，不写成「2026-11-09 写日记（2026-11-09）」
+  if (stage === 'clear') return `${when && !already ? `${when} ` : ''}${ep.text}${ep.url ? `（${ep.url}）` : ''}`;
   if (stage === 'fuzzy') return `好像是前阵子，${ep.text}`;
   return `隐约记得${ep.text}`;
 }
@@ -381,6 +406,8 @@ export function recall(mem, { query = '', scope = 'all', limit = 5, chars = 600,
     cands.push({ ep, st, score });
   }
   cands.sort((a, b) => b.score - a.score);
+  const bare = !tr && !String(restQ).trim() && !ids.length; // 修补-3 R：不带问题（query 空、也没有时间词）——主会话自动带的那段
+  let diaryN = 0;
   const out = []; let used = 0; const seenText = new Set();
   for (const it of memoir) {
     if (out.length >= limit || (used + it.text.length > chars && out.length)) break;
@@ -388,11 +415,13 @@ export function recall(mem, { query = '', scope = 'all', limit = 5, chars = 600,
   }
   for (const { ep, st } of cands) {
     if (out.length >= limit) break;
+    if (bare && ep.kind === 'diary') { if (diaryN >= 1) continue; } // 修补-3 R：不带问题时不让每天的日记占满几个位置，最多 1 条；带问题时不限
     const shown = shownEpisode(ep, quotes);
     const text = phrase(shown, st);
     if (seenText.has(shown.text)) continue;
     if (used + text.length > chars && out.length) break;
     seenText.add(shown.text); used += text.length;
+    if (ep.kind === 'diary') diaryN += 1;
     out.push({ id: ep.id, stage: st, kind: ep.kind, at: ep.at, text, url: st === 'clear' ? ep.url : undefined });
   }
   return out;
@@ -501,7 +530,7 @@ export function reflectCandidates(mem, { now, baseDays = 30, n = 30 } = {}) {
 export function reflectPrompt({ persona = '', call = '爸妈', episodes = [], beliefs = [] }) {
   return dropLines(fill(PROMPTS.reflect, {
     persona: persona || DROP, call,
-    episodes: episodes.map((e) => `- [${e.id}] ${clean(e.at, 10)} ${e.text}`).join('\n') || DROP,
+    episodes: episodes.map((e) => `- [${e.id}] ${localDay(e.at)} ${e.text}`).join('\n') || DROP, // 修补-2 P：日子按本机时区算（localDay），不拿 ISO 前 10 位——凌晨的事不落到前一天
     beliefs: beliefs.length
       ? ['【你已经有的认识】（括号里是它的状态；有想推翻的，就把它的编号填在 replaces 里）', ...beliefs.map((b) => `- [${b.id}] ${b.text}${b.status === '暂定' ? '（还在想）' : '（想明白了）'}`)].join('\n')
       : DROP,
@@ -617,10 +646,12 @@ export function applyReflection(mem, raw, { now, baseDays = 30, at } = {}) {
     if (same) {
       if (negated(same.text) !== negated(text)) { out.rejected.push({ text, why: '意思相反，要推翻旧的请把它的编号填在 replaces 里' }); continue; } // 意思相反的不合并
       same.n = (same.n || 1) + 1; same.lastAt = at; same.from = [...new Set([...(same.from || []), ...cites.map((e) => e.id)])].slice(-8); if (scope === 'home') same.scope = 'home';
-      if (same.status === '暂定') { // 被第二次想到 = 站得住，当时就升生效（不用再等收尾）
-        same.status = '生效'; same.confirmedAt = at;
-        addChange(mem, { kind: '站住了', before: same.text, scope: same.scope || 'home', at });
-        logOp(mem, { op: 'confirm', at, text: same.text });
+      if (same.status === '暂定') { // 修补-2 H：合并加深也要过依据检查——只有「第一次想到的那天不是这次反思的本机日期」并且「并进新依据以后证据够了」才当场升生效，
+        if (localDay(same.at) !== localDay(at) && evidenceOk(mem, same, now, baseDays)) { // 光靠复述不能升「想明白了」；不够的就只加深，还是暂定，交给以后的 settleBeliefs 判
+          same.status = '生效'; same.confirmedAt = at;
+          addChange(mem, { kind: '站住了', before: same.text, scope: same.scope || 'home', at });
+          logOp(mem, { op: 'confirm', at, text: same.text });
+        }
       }
       out.merged.push(same.text); continue;
     }

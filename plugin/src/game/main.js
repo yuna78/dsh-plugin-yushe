@@ -8,7 +8,7 @@ import { PROTOS, PROTO_IDS, BANS, RARITY, ATTRS, ATTR_KEYS, COMMON_TICS, roll, p
 import { allocate, adjust, band, personality, backstory, STORY_FIELDS, renderPersonaV2 } from '../shared/life.js';
 import { poseFor, pickIdlePose } from '../shared/room.js';
 import { tokensText } from '../shared/allowance.js';
-import { nextTip } from '../shared/tips.js';
+import { nextTip, SAY_LINES } from '../shared/tips.js';
 import { HOMES, homeOf } from '../shared/homes.js';
 import { noteKind, DEPTH_NAMES, isFiller } from '../shared/notes.js';
 
@@ -993,7 +993,7 @@ function memPanel(m) {
   const ppl = (m.people || []).filter((p) => p.tier !== '爸妈');
   const pp = ppl.length ? ppl.map((p) => `<span class="up">${esc(p.who)} · ${esc(p.tier)}${p.fuzzy ? '（记不清了）' : ''}</span>`).join('') : '<div class="empty" style="margin-top:6px">B站上还没认识谁</div>';
   const rec = (m.recent || []).length ? m.recent.map((e) => { const flag = flagOf(e); return `<div class="mrow st-${esc(e.stage)}"><i>${esc(e.stage)}</i><span>${esc(e.text)}${flag ? ` <b style="font-weight:600;color:var(--mute)">${esc(flag)}</b>` : ''}</span></div>`; }).join('') : '<div class="empty" style="margin-top:6px">还没记下什么</div>';
-  // 四期-2 F：改动记录（最近 20 条，白话一句；op 不认识的按「整理了一下」说）
+  // 四期-2 F / 修补-3 T：改动记录白话一句（op 不认识的按「整理了一下」说）。现在分两段：爸妈让她办的放最前，自动的合成一天一行
   const opWord = (l) => {
     const t = l.text || '';
     switch (l.op) {
@@ -1016,8 +1016,12 @@ function memPanel(m) {
       default: return '整理了一下';
     }
   };
-  const ops1 = (m.log || []).slice(0, 20);
-  const ops = ops1.length ? `<div class="glog">${ops1.map((l) => `<div><i>${esc(mmdd(l.at))}</i><span>${esc(opWord(l))}</span></div>`).join('')}</div>` : '<div class="empty" style="margin-top:6px">还没有办过什么</div>';
+  // 修补-3 T：改动记录分两段——上面「{爸妈}让她办的 · N 条」（新的在前，最多 20 条，白话沿用现在的说法）、下面「她自己整理的」一天一行
+  const askedN = (m.asked || []).length;
+  const askedHtml = askedN ? `<div class="glog">${(m.asked || []).map((l) => `<div><i>${esc(mmdd(l.at))}</i><span>${esc(opWord(l))}</span></div>`).join('')}</div>` : '<div class="empty" style="margin-top:6px">还没让她办过什么</div>';
+  const dayRow = (d) => [d.add ? `记下 ${d.add} 件` : '', d.forget ? `忘掉 ${d.forget} 件` : '', d.thought ? `想明白 ${d.thought} 条` : '', d.weekly ? (d.weekly === 1 ? '写了一篇周记' : `写了 ${d.weekly} 篇周记`) : '', d.chapter ? (d.chapter === 1 ? '写完一章回忆录' : `写完 ${d.chapter} 章回忆录`) : ''].filter(Boolean).join('、') || (d.reflect ? '睡前想了想，没想出新的' : '整理了一下');
+  const dailyN = (m.daily || []).length;
+  const dailyHtml = dailyN ? `<div class="glog">${(m.daily || []).map((d) => `<div><i>${esc((d.day || '').slice(5))}</i><span>${esc(dayRow(d))}</span></div>`).join('')}</div>` : '<div class="empty" style="margin-top:6px">这几天她还没整理过</div>';
   // 带日子的嘱咐（四期-1 C）：日子在后显示出来，是哪天她一望便知；过了的按「已经过去了」说
   const toldWhen = (x) => {
     if (!x.due) return '';
@@ -1032,15 +1036,16 @@ function memPanel(m) {
   const open = memOpen();
   const chgN = (m.changes || []).slice(0, 8).length;
   return `<div class="her">
-    <h4>${ICON('brain')} 她还记得多少 <small style="font:11px var(--body);color:var(--mute)">（记性：普通的事 ${m.days} 天忘一半）</small></h4>${stat}
+    <h4>${ICON('brain')} 她还记得多少 <small style="font:11px var(--body);color:var(--mute)">聊天、日记、她自己说过的话记得久；刷过的视频、扫一眼的东西忘得快</small></h4>${stat}
     ${memoirHtml(m)}
     ${(m.told || []).length ? memFold('told', 'bookmark', `${call}让她记住的`, m.told.length, m.told.map((x) => { const flag = flagOf(x); const when = toldWhen(x); return `<div class="belief">${esc(x.text)}<small>${when ? `${when} · ` : ''}${flag ? `${esc(flag)} · ` : ''}只在家里说</small></div>`; }).join(''), open) : ''}
     ${memFold('beliefs', 'sparkle', '对自己的认识', sure.length, `${bl}${germRow}`, open)}
     ${chgN ? memFold('changes', 'sparkle', '想法变了', chgN, chg, open) : ''}
     ${memFold('people', 'heart', 'B站上认识的人', ppl.length, pp, open)}
     ${memFold('recent', 'book', '最近记得的事', (m.recent || []).length, `<div class="empty" style="font-size:12px">会慢慢变模糊；档案在「笔记本」「日记」里，一直都在</div>${rec}`, open)}
-    ${(m.log || []).length ? memFold('ops', 'pencil', '改动记录', Math.min(20, (m.log || []).length), ops, open) : ''}
-    <div class="empty" style="font-size:12px">想让她记牢、别再提、改掉记错的、忘掉一件事，直接跟她说就行；她办完会告诉你</div>
+    ${memFold('ops', 'pencil', `${call}让她办的`, askedN, askedHtml, open)}
+    ${dailyN ? memFold('dayrun', 'pencil', '她自己整理的', dailyN, dailyHtml, open) : ''}
+    <div class="empty" style="font-size:12px">想让她记牢、别再提、改掉记错的、忘掉一件事，直接跟她说就行：「${SAY_LINES.join('」「')}」；她办完会告诉你</div>
     <div class="empty" style="font-size:12px">${call}可以在设置里调「记性」：健忘 / 适中 / 好记性</div>
   </div>`;
 }

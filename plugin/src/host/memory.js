@@ -16,7 +16,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { nowMs } from './clock.js';
-import { emptyMemory, migrateMemory, makeEpisode, meet, settleMemory, recall, knownPeople, aboutPerson, memoryText, memoryStats, stageOf, STAGE_TEXT, reflectCandidates, reflectPrompt, applyReflection, settleBeliefs, beliefsFor, activeBeliefs, tell, untell, localDay, defang, logOp, toldDueAge, toldLine, pickWeek, pickMonth, weekMaterial, monthMaterial, checkWeekly, checkChapter, weeklyPrompt, chapterPrompt, settleWeeklies, mergeChapters, recentLines, weeklyStage, weeklyStatus, nextIdFor, WEEKLY_STAGE_TEXT, MAX_PINNED, cleanTold, dueOf, fixBelief, fixLogText, dropItem, dropLogText, findTarget } from '../shared/memory.js';
+import { emptyMemory, migrateMemory, makeEpisode, meet, settleMemory, recall, knownPeople, aboutPerson, memoryText, memoryStats, stageOf, STAGE_TEXT, reflectCandidates, reflectPrompt, applyReflection, settleBeliefs, beliefsFor, activeBeliefs, tell, untell, localDay, defang, logOp, toldDueAge, toldLine, pickWeek, pickMonth, weekMaterial, monthMaterial, checkWeekly, checkChapter, weeklyPrompt, chapterPrompt, settleWeeklies, mergeChapters, recentLines, weeklyStage, weeklyStatus, nextIdFor, WEEKLY_STAGE_TEXT, MAX_PINNED, cleanTold, dueOf, fixBelief, fixLogText, dropItem, dropLogText, findTarget, PARENT_OPS } from '../shared/memory.js';
 import { personaFor } from '../shared/growth.js';
 import { homeMemKind } from '../shared/home.js'; // F-87 在家：读到哪层 → 记多重
 
@@ -30,8 +30,35 @@ const EVENT_KINDS = { born: 'born', mood: 'mood', nap: 'nap', 'late-work': 'late
 const FOOT_KINDS = { comment: 'comment', reply: 'reply', post: 'post', dyncomment: 'dyncomment', dm: 'dm', like: 'like', comment_like: 'comment_like', collect: 'collect', follow: 'follow', unfollow: 'unfollow' };
 const FOOT_WHAT = { comment: '评论了视频', reply: '回复了评论', post: '发了动态', dyncomment: '评论了动态', dm: '回了私信', like: '点赞了视频', comment_like: '给评论点了赞', collect: '收藏了视频', follow: '关注了', unfollow: '取关了' };
 const short = (s, n) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+/** 修补-2 I1：别人的名字（B站上打过交道的）进经历文字、进 people / keys 之前也过 defang——名字一样能夹带指令。 */
+const defangWho = (who, n = 20) => (who ? short(defang(who), n) : who);
 /** 给人看的认识（规格 4）：规则词不出门，state 一律白话。带 id（四期-1 A：她说「别提那条认识」时好对号，页面不显示）。 */
 const shownBelief = (b) => ({ id: b.id, text: b.text, why: b.why || '', effect: b.effect || '', about: b.about, state: b.status === '暂定' ? '还在想' : '想明白了', times: b.n || 1, since: b.at, source: b.source || 'reflect' }); // source 也给页面（四期-3 K：爸妈纠的标「纠正过」，只显示）
+/** 修补-3 S3：给页面的文字用她自己的自称（fish.self），没有自称就说「她」；「本鱼」是接生员的名字，不给爸妈看。 */
+const selfOf = (fish) => { const s = String(fish?.self || '').trim(); return s || '她'; };
+const forPage = (s, self) => String(s ?? '').replaceAll('本鱼', self || '她');
+/** 修补-3 T：改动记录的上半段——爸妈让她办的（新的在前，最多 20 条，每条 { op, at, text }），自动整理的不混进来。 */
+const askedLog = (m) => (Array.isArray(m.log) ? m.log.filter((x) => PARENT_OPS.has(x.op)).slice(-20).reverse() : []).map((x) => ({ op: x.op, at: x.at, text: String(x.text ?? '') }));
+/** 修补-3 T：改动记录的下半段——自动的按本机日期合成一天一条，最近 7 天、新的在前：{ day, add?, forget?, thought?, weekly?, chapter? }。 */
+const dailyLog = (m, now) => {
+  const today = localDay(now), start = localDay(now - 6 * 86400e3); // 最近 7 天（含今天），本机自然日
+  const byDay = new Map();
+  for (const x of Array.isArray(m.log) ? m.log : []) {
+    const d = localDay(x.at);
+    if (!d || d > today || d < start) continue;
+    if (PARENT_OPS.has(x.op)) continue; // 爸妈让办的在 asked 里，不占这行
+    const row = byDay.get(d) || { day: d, add: 0, forget: 0, thought: 0, weekly: 0, chapter: 0 };
+    if (x.op === 'add') row.add += Number(x.n) || 1;
+    else if (x.op === 'forget') row.forget += Number(x.n) || 1;
+    else if (x.op === 'confirm' || x.op === 'supersede' || x.op === 'retire') row.thought += 1; // 睡前想明白 / 想法变了 / 不再这么想
+    else if (x.op === 'weekly') row.weekly += 1;
+    else if (x.op === 'chapter') row.chapter += 1;
+    else if (x.op === 'reflect') row.reflect = (row.reflect || 0) + 1; // 想了一晚没想出新的：也算整理过（审查 3）
+    byDay.set(d, row);
+  }
+  return [...byDay.values()].sort((a, b) => String(b.day).localeCompare(String(a.day)))
+    .map((r) => { const out = { day: r.day }; for (const k of ['add', 'forget', 'thought', 'weekly', 'chapter', 'reflect']) if (r[k]) out[k] = r[k]; return out; }); // 都是 0 的字段不写
+};
 
 /** 档案 → 一串「候选经历」（带去重 key）。纯函数，verify 直接测。 */
 export function archiveItems({ fish, life = {}, footprints = [], inbox = [], dms = [], parentMid = '', chatFrom = '', now = null }) {
@@ -67,8 +94,8 @@ export function archiveItems({ fish, life = {}, footprints = [], inbox = [], dms
       const bvid = String(x.url).match(/BV[0-9A-Za-z]{10}/)?.[0];
       const where = `${bvid ? '在 B站看了' : `在${short(x.source, 10) || '网上'}看到`}《${defang(short(x.title, 50))}》`;
       // F-82：便利贴记得更清楚——「学到的」「好点子」imp 3，带上标签、她的一句话和讲了啥（讲了啥是转述外部内容，防投毒）
-      if (j.note) out.push({ key: `s:${bvid || x.url}`, at: j.at, kind: ['学到的', '好点子'].includes(j.note.tag) ? 'note' : 'seen', text: `${where}，记了一张「${short(j.note.tag, 4)}」：${defang(short(j.text, 50))}${j.note.gist ? `（讲的是：${defang(short(j.note.gist, 40))}）` : ''}`, url: x.url, keys: { bvid, tag: x.tag, who: x.up, mid: x.mid } });
-      else out.push({ key: `s:${bvid || x.url}`, at: j.at, kind: 'seen', text: `${where}${!j.final && j.text ? `，${short(j.text, 40)}` : ''}`, url: x.url, keys: { bvid, tag: x.tag, who: x.up, mid: x.mid } });
+      if (j.note) out.push({ key: `s:${bvid || x.url}`, at: j.at, kind: ['学到的', '好点子'].includes(j.note.tag) ? 'note' : 'seen', text: `${where}，记了一张「${short(j.note.tag, 4)}」：${defang(short(j.text, 50))}${j.note.gist ? `（讲的是：${defang(short(j.note.gist, 40))}）` : ''}`, url: x.url, keys: { bvid, tag: x.tag, who: defangWho(x.up), mid: x.mid } });
+      else out.push({ key: `s:${bvid || x.url}`, at: j.at, kind: 'seen', text: `${where}${!j.final && j.text ? `，${short(j.text, 40)}` : ''}`, url: x.url, keys: { bvid, tag: x.tag, who: defangWho(x.up), mid: x.mid } });
     }
   }
   // F-87 在家-1：清单「刷过的」里点开过的每条都进记忆（读多深定 imp，只扫标题的不进，流水账里查得到）。
@@ -90,7 +117,7 @@ export function archiveItems({ fish, life = {}, footprints = [], inbox = [], dms
       const like = String(x.like || '').slice(0, 4);
       const why = short(x.why, 20);
       const att = like === '不喜欢' ? `，不喜欢${why ? `：${why}` : ''}` : like === '喜欢' ? `，说了喜欢${why ? `，因为${why}` : ''}` : like ? `，觉得${like}` : '';
-      out.push({ key, at: card.at, kind, text: `在家刷 B站点开了《${defang(short(x.title, 50))}》${att}`, url: x.url, keys: { bvid, tag: x.tag, who: x.up } });
+      out.push({ key, at: card.at, kind, text: `在家刷 B站点开了《${defang(short(x.title, 50))}》${att}`, url: x.url, keys: { bvid, tag: x.tag, who: defangWho(x.up) } });
     }
   }
   // F-84/F-85：路上寄回的明信片（没拍成照片的那张）。她说哪种就记成哪种（想你的 / 口信明信片）；见闻照旧带着是看《什么》时写的
@@ -104,7 +131,7 @@ export function archiveItems({ fish, life = {}, footprints = [], inbox = [], dms
     const kind = FOOT_KINDS[f.kind];
     if (!kind || !f.at) continue;
     const t = f.target || {};
-    const who = t.who || null, mid = t.mid || null;
+    const who = defangWho(t.who || null) || null, mid = t.mid || null;
     const what = FOOT_WHAT[kind];
     const text = kind === 'follow' || kind === 'unfollow' ? `在 B站${what} ${short(who || f.text, 20)}` : `在 B站${what}${t.title ? `《${defang(short(t.title, 30))}》` : ''}${['comment', 'reply', 'post', 'dyncomment', 'dm'].includes(kind) ? `：「${short(f.text, 50)}」` : ''}`;
     out.push({ key: `f:${f.id || f.at}`, at: f.at, kind, text, url: f.url || undefined, keys: { bvid: t.bvid, mid, who }, person: (mid || who) && kind !== 'unfollow' ? { mid, who, what: `本鱼${what}${kind === 'follow' ? 'TA' : ''}` } : null });
@@ -113,10 +140,11 @@ export function archiveItems({ fish, life = {}, footprints = [], inbox = [], dms
     const at = x.at || x.got; if (!at) continue;
     if (x.kind === 'reply') {
       const said = defang(x.text), mine = x.mine || ''; // 别人写的字先防投毒；mine 是她自己被回的那句，不过 defang
-      out.push({ key: `i:${x.id}`, at, kind: 'got-reply', text: `${short(x.who, 20)}在 B站回了本鱼${mine ? `那句「${short(mine, 20)}」` : ''}：「${short(said, 50)}」`, url: x.url || undefined, keys: { who: x.who, mid: x.mid }, person: { mid: x.mid, who: x.who, what: `回了本鱼：「${short(said, 20)}」` } });
+      const whoI1 = defangWho(x.who); // 修补-2 I1：对方的名字也过 defang
+      out.push({ key: `i:${x.id}`, at, kind: 'got-reply', text: `${whoI1 ? short(whoI1, 20) : ''}在 B站回了本鱼${mine ? `那句「${short(mine, 20)}」` : ''}：「${short(said, 50)}」`, url: x.url || undefined, keys: { who: whoI1, mid: x.mid }, person: { mid: x.mid, who: whoI1, what: `回了本鱼：「${short(said, 20)}」` } });
     }
-    else if (x.kind === 'follow') out.push({ key: `i:${x.id}`, at, kind: 'got-follow', text: `${short(x.who, 20)}关注了本鱼`, keys: { who: x.who, mid: String(x.id || '').replace(/^f/, '') }, person: { mid: String(x.id || '').replace(/^f/, '') || null, who: x.who, what: '关注了本鱼' } });
-    else if (x.kind === 'like') out.push({ key: `i:${String(x.id).split(':')[0]}`, at, kind: 'got-like', text: `本鱼在 B站说的${x.mine ? `「${short(x.mine, 20)}」` : '话'}被${short(x.who, 20)}${x.count > 1 ? ` 等 ${x.count} 人` : ''}点赞了` });
+    else if (x.kind === 'follow') out.push({ key: `i:${x.id}`, at, kind: 'got-follow', text: `${defangWho(x.who)}关注了本鱼`, keys: { who: defangWho(x.who), mid: String(x.id || '').replace(/^f/, '') }, person: { mid: String(x.id || '').replace(/^f/, '') || null, who: defangWho(x.who), what: '关注了本鱼' } });
+    else if (x.kind === 'like') out.push({ key: `i:${String(x.id).split(':')[0]}`, at, kind: 'got-like', text: `本鱼在 B站说的${x.mine ? `「${short(x.mine, 20)}」` : '话'}被${defangWho(x.who)}${x.count > 1 ? ` 等 ${x.count} 人` : ''}点赞了` });
   }
   for (const c of dms) {
     const parent = Boolean(parentMid) && String(c.mid) === String(parentMid);
@@ -125,7 +153,7 @@ export function archiveItems({ fish, life = {}, footprints = [], inbox = [], dms
       const said = defang(h.text); // 别人写的字先防投毒
       out.push(parent
         ? { key: `m:${c.mid}:${h.at}`, at: h.at, kind: 'dm-parent', text: `${call}在 B站私信本鱼：「${short(said, 40)}」`, person: { mid: c.mid, who: call, what: '发私信', parent: true } }
-        : { key: `m:${c.mid}:${h.at}`, at: h.at, kind: 'dm-in', text: `${short(c.who, 20) || '网友'}给本鱼发私信：「${short(said, 40)}」`, keys: { mid: c.mid, who: c.who }, person: { mid: c.mid, who: c.who, what: `私信说：「${short(said, 20)}」` } });
+        : { key: `m:${c.mid}:${h.at}`, at: h.at, kind: 'dm-in', text: `${defangWho(c.who) || '网友'}给本鱼发私信：「${short(said, 40)}」`, keys: { mid: c.mid, who: defangWho(c.who) }, person: { mid: c.mid, who: defangWho(c.who), what: `私信说：「${short(said, 20)}」` } });
     }
   }
   return out.sort((a, b) => String(a.at).localeCompare(String(b.at)));
@@ -138,9 +166,12 @@ export function archiveItems({ fish, life = {}, footprints = [], inbox = [], dms
  *   cursors.keys = { key: at }，只留窗口内的，能按时间清，不再按条数截。
  * 顺便认人。返回加了几条。
  */
-export function ingest(mem, items) {
+export function ingest(mem, items, { now } = {}) {
   const c = mem.cursors || (mem.cursors = {});
   const lastMs = c.lastAt ? Date.parse(c.lastAt) : NaN; // 已经抄过的最晚一条的时间
+  // 修补-2 K：传了 now 的话，游标最多挪到 now + 10 分钟——一条「明年」（时间戳写错 / 调试时钟）不把游标推到未来、卡住后面几个月的真东西
+  const nowT = now == null ? NaN : (now instanceof Date ? now.getTime() : typeof now === 'number' && Number.isFinite(now) ? now : Date.parse(now));
+  const capMs = Number.isFinite(nowT) ? nowT + 10 * 60e3 : Infinity;
   const floorMs = Number.isFinite(lastMs) ? lastMs - KEY_WINDOW : NaN; // 比这更老的跳过（窗口下限）
   const oldKeys = c.keys;
   const keep = oldKeys && typeof oldKeys === 'object' && !Array.isArray(oldKeys) ? { ...oldKeys } : Object.fromEntries(Array.from(Array.isArray(oldKeys) ? oldKeys : [], (k) => [k, '']));
@@ -154,13 +185,15 @@ export function ingest(mem, items) {
     keep[it.key] = it.at || '';
     mem.episodes.push(makeEpisode(mem, it));
     if (it.person) meet(mem, { ...it.person, at: it.at });
-    added += 1;
+    added += 1; // 更晚（甚至未来）的那条照样记下，去重记号照记
     if (Number.isFinite(t) && (!Number.isFinite(newest) || t > newest)) newest = t;
   }
   const newestMs = Number.isFinite(lastMs) ? Math.max(lastMs, Number.isFinite(newest) ? newest : lastMs) : (Number.isFinite(newest) ? newest : NaN);
-  if (Number.isFinite(newestMs)) { // 游标挪到这批最晚的一条；记号清掉窗口之外的
-    c.lastAt = new Date(newestMs).toISOString();
-    c.keys = Object.fromEntries(Object.entries(keep).filter(([, atv]) => !atv || Date.parse(atv) >= newestMs - KEY_WINDOW));
+  if (Number.isFinite(newestMs)) { // 游标最多挪到 now + 10 分钟（没传 now 时照旧挪到这批最晚的一条，老调用不坏）；记号清掉窗口之外的
+    const capped = Math.min(newestMs, capMs);
+    const cursorMs = Number.isFinite(lastMs) ? Math.max(lastMs, capped) : capped; // 游标只往前走：时钟往回拨时不跟着退，不然窗口外的老档案会被整段重抄（修补-2 审查 1）
+    c.lastAt = new Date(cursorMs).toISOString();
+    c.keys = Object.fromEntries(Object.entries(keep).filter(([, atv]) => !atv || Date.parse(atv) >= cursorMs - KEY_WINDOW));
   }
   return added;
 }
@@ -218,6 +251,7 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
   const recallN = () => Number(habits?.get?.().memoryRecall) || 5;
   const tnow = typeof now === 'function' ? now : nowMs; // 一期-3：可拨的时钟；不传就是宿主时钟，行为和以前一样
   const lastSync = new Map();
+  const thinking = new Set(); // 修补-2 M：正在想的鱼（宿主内存里，不进存档）——两次反思不同时跑，别花两份零花钱
   const proposals = new Map(); // 四期-3：起草单（fix / drop 共用一张：yushe_remember 的 forget 也是这张）：proposalId → { fishId, kind, target, text, at }；30 分钟有效、用一次就删、只对同一条鱼
   let proposalSeq = 0;
   /** 四期-3：单还有没有效（30 分钟内、没过期、属于这条鱼）。不认识 / 不是这条鱼 / 过期 → ok:false，什么都不改。 */
@@ -231,11 +265,20 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
   };
 
   const memory = {
+    /** 修补-2 J：鱼社房间里办「纠正 / 忘掉」要等爸妈再说一句——chat 里要有一条 role 'user'、at 晚于起草时间的话；没有 → 挡住，**单子不作废**（爸妈说了「对」以后同一张单还能用）。 */
+    roomGateOk(fish, p) {
+      const chat = life?.state?.(fish)?.chat;
+      const ok = Array.isArray(chat) && chat.some((c) => c && c.role === 'user' && Number.isFinite(Date.parse(c.at)) && Date.parse(c.at) > p.at);
+      if (!ok) return { ok: false, why: '这张单子还没办：要等爸妈听完复述、在房间里再说一句同意的话（像「对，是这样的」）以后才能办；单子先留着，不用重新起草' };
+      return null;
+    },
+
     /** 抄新的 + 推进遗忘。minGapMs 内重复调直接用存档（读路径上频繁调用）。 */
     sync(fish, { minGapMs = 60_000 } = {}) {
       if (!fish) return emptyMemory();
       const now = tnow();
-      if (now - (lastSync.get(fish.id) || 0) < minGapMs) return load(fish);
+      const gap = now - (lastSync.get(fish.id) || 0);
+      if (gap >= 0 && gap < minGapMs) return load(fish); // 修补-2 L：差是负数（时钟往回拨，现在比上次同步还早）→ 当成该同步了，不跳过
       lastSync.set(fish.id, now);
       const m = load(fish);
       try {
@@ -243,12 +286,18 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
         if (!m.cursors.chatFrom) m.cursors.chatFrom = new Date(now).toISOString(); // 0.29.0 已经从事件抄过的聊天不再抄一遍
         const parentMid = habits?.get?.().parentMid || '';
         const items = archiveItems({ fish, life: s, footprints: gate?.footprints?.() || [], inbox: inbox?.all?.() || [], dms: dms?.view?.().convs || [], parentMid, chatFrom: m.cursors.chatFrom, now });
-        const added = ingest(m, items);
+        const added = ingest(m, items, { now }); // 修补-2 K：游标最多挪到 now + 10 分钟，一条未来时间不卡住后面几个月的抄写
         // 修补-1 D：设了爸妈 B站号以后，以前分不清、记成网友私信（dm-in）的爸妈私信改回家里；认人里那个人也标成爸妈
         if (parentMid) {
           const pm = String(parentMid).replace(/\D/g, '');
+          const call = fish?.parentCall || '爸妈';
           for (const e of m.episodes || []) {
-            if (e && e.kind === 'dm-in' && String(e.keys?.mid || '').replace(/\D/g, '') === pm) { e.kind = 'dm-parent'; e.scope = 'home'; }
+            if (e && e.kind === 'dm-in' && String(e.keys?.mid || '').replace(/\D/g, '') === pm) {
+              e.kind = 'dm-parent'; e.scope = 'home';
+              // 修补-3 S5：文字也改成新记的爸妈私信那样（原来是接生员记的网友口吻）；引号里的话不变
+              const q = String(e.text || '').match(/发私信：「([^」]*)」/);
+              e.text = q ? `${call}在 B站私信本鱼：「${q[1]}」` : String(e.text || '').replace('给本鱼发私信', `在 B站私信本鱼`);
+            }
           }
           for (const p of Object.values(m.people || {})) if (p && p.mid && String(p.mid).replace(/\D/g, '') === pm && pm) p.parent = true;
         }
@@ -318,27 +367,31 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
      */
     async reflect(fish, wallet, { day, force = false } = {}) {
       if (!fish || !wallet?.say) return { ok: false, why: '没有模型' };
-      let m = memory.sync(fish, { minGapMs: 0 });
-      if (!force && day && m.cursors.reflectDay === day) return { ok: false, why: '今天想过了' };
-      const now = tnow();
-      const settled = settleBeliefs(m, { now, baseDays: days(), day }); // 调模型之前先收尾：暂定的去留不交给模型（规则 3.4）
-      save(fish, m); // 站住了 / 放下的这步先落盘
-      const settledN = settled.confirmed.length + settled.retired.length + settled.superseded.length + settled.dropped.length;
-      if (settledN) log?.info?.(`[dsh-yushe] 认识收尾：站住了 ${settled.confirmed.length} 条、换成新说法 ${settled.superseded.length} 条、放下 ${settled.dropped.length + settled.retired.length} 条`);
-      const eps = reflectCandidates(m, { now, baseDays: days() });
-      if (eps.length < 3) return { ok: false, why: '还记得的事太少，先不想' };
-      const s = life?.state?.(fish) || {};
-      const persona = (() => { try { return personaFor(fish, s.growth) || fish.personaText || ''; } catch { return fish.personaText || ''; } })();
-      let raw = '';
-      try { raw = (await wallet.say('reflect', reflectPrompt({ persona, call: fish.parentCall, episodes: eps, beliefs: activeBeliefs(m, { limit: 30 }).filter((b) => !b.muted) }), null, 60_000)).text; } // 不再提的认识不进反思提示词（四期-2 补 R2）
-      catch (e) { return { ok: false, why: e?.broke ? '零花钱花光了，先不想' : `没想出来：${String(e?.message || e).slice(0, 60)}` }; }
-      m = load(fish); // 等模型的时候可能又同步过
-      const r = applyReflection(m, raw, { now: tnow(), baseDays: days(), at: new Date(tnow()).toISOString() });
-      m.cursors.reflectDay = day || m.cursors.reflectDay;
-      if (r.parsed) logOp(m, { op: 'reflect', at: new Date(tnow()).toISOString(), text: `新 ${r.added.length} 条，加深 ${r.merged.length} 条，放下 ${r.dropped.length} 条` }); // 改动日志
-      save(fish, m);
-      log?.info?.(`[dsh-yushe] 睡前反思：新认识 ${r.added.length} 条，加深 ${r.merged.length} 条，放下 ${r.dropped.length} 条${r.rejected.length ? `，没依据丢掉 ${r.rejected.length} 条` : ''}`);
-      return { ok: r.parsed, ...r };
+      if (thinking.has(String(fish.id))) return { ok: false, why: '正在想，等一下' }; // 修补-2 M：正在想时再来 → 不调模型、不花零花钱
+      thinking.add(String(fish.id));
+      try {
+        let m = memory.sync(fish, { minGapMs: 0 });
+        if (!force && day && m.cursors.reflectDay === day) return { ok: false, why: '今天想过了' };
+        const now = tnow();
+        const settled = settleBeliefs(m, { now, baseDays: days(), day }); // 调模型之前先收尾：暂定的去留不交给模型（规则 3.4）
+        save(fish, m); // 站住了 / 放下的这步先落盘
+        const settledN = settled.confirmed.length + settled.retired.length + settled.superseded.length + settled.dropped.length;
+        if (settledN) log?.info?.(`[dsh-yushe] 认识收尾：站住了 ${settled.confirmed.length} 条、换成新说法 ${settled.superseded.length} 条、放下 ${settled.dropped.length + settled.retired.length} 条`);
+        const eps = reflectCandidates(m, { now, baseDays: days() });
+        if (eps.length < 3) return { ok: false, why: '还记得的事太少，先不想' };
+        const s = life?.state?.(fish) || {};
+        const persona = (() => { try { return personaFor(fish, s.growth) || fish.personaText || ''; } catch { return fish.personaText || ''; } })();
+        let raw = '';
+        try { raw = (await wallet.say('reflect', reflectPrompt({ persona, call: fish.parentCall, episodes: eps, beliefs: activeBeliefs(m, { limit: 30 }).filter((b) => !b.muted) }), null, 60_000)).text; } // 不再提的认识不进反思提示词（四期-2 补 R2）
+        catch (e) { return { ok: false, why: e?.broke ? '零花钱花光了，先不想' : `没想出来：${String(e?.message || e).slice(0, 60)}` }; }
+        m = load(fish); // 等模型的时候可能又同步过
+        const r = applyReflection(m, raw, { now: tnow(), baseDays: days(), at: new Date(tnow()).toISOString() });
+        m.cursors.reflectDay = day || m.cursors.reflectDay;
+        if (r.parsed) logOp(m, { op: 'reflect', at: new Date(tnow()).toISOString(), text: `新 ${r.added.length} 条，加深 ${r.merged.length} 条，放下 ${r.dropped.length} 条` }); // 改动日志
+        save(fish, m);
+        log?.info?.(`[dsh-yushe] 睡前反思：新认识 ${r.added.length} 条，加深 ${r.merged.length} 条，放下 ${r.dropped.length} 条${r.rejected.length ? `，没依据丢掉 ${r.rejected.length} 条` : ''}`);
+        return { ok: r.parsed, ...r };
+      } finally { thinking.delete(String(fish.id)); } // 修补-2 M：想完（成功、失败、出错）都要清掉记号
     },
     /**
      * 三期 · 回忆录（写完日记、反思之后调，一晚一次）：最多写一篇周记 + 一章。规则挑哪周 / 哪个月、算统计、验收，
@@ -447,10 +500,11 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
       proposals.set(id, { fishId: String(fish.id), kind, target: fnd.item.id, text: after, at: now, atIso: at });
       return { ok: true, proposalId: id, before, after, what: after, kind: fnd.kind.what, log: kind === 'fix' ? fixKindLog(pfx) : fnd.kind.log };
     },
-    /** 四期-3 I：确认改（认识 / 爸妈让记的）。返回 { ok, id, text } 或 { ok: false, why }；单用一次就删。 */
-    applyFix(fish, proposalId) {
+    /** 四期-3 I：确认改（认识 / 爸妈让记的）。返回 { ok, id, text } 或 { ok: false, why }；单用一次就删。修补-2 J：from 'room' 时房间里要等爸妈再说一句才办。 */
+    applyFix(fish, proposalId, { from } = {}) {
       const t = takeProposal(fish, proposalId);
       if (!t.ok) return t;
+      if (from === 'room') { const gate = memory.roomGateOk(fish, t.p); if (gate) return gate; } // 先过房间这道关；没过就不删单（爸妈再点头还能用同一张）
       proposals.delete(String(proposalId ?? '').trim()); // 用一次就删：办没办成都算用过
       const m = load(fish), now = tnow(), at = new Date(now).toISOString();
       if (t.p.kind !== 'fix') return { ok: false, why: '这张单子是「忘掉」用的，不是「改」，重新起草' }; // 确认只办起草时说的那件事（reviewer 11-09）
@@ -472,10 +526,11 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
       save(fish, m);
       return { ok: true, id: fnd.item.id, text: t.p.text, kind: '爸妈让记的', changed: t.p.text, fixedAt: at };
     },
-    /** 四期-3 J：确认忘掉（M / B / T / W）。档案（日记、笔记本、足迹…）一个字都不动，返回里说明。 */
-    applyDrop(fish, proposalId) {
+    /** 四期-3 J：确认忘掉（M / B / T / W）。档案（日记、笔记本、足迹…）一个字都不动，返回里说明。修补-2 J：from 'room' 时房间里要等爸妈再说一句才办。 */
+    applyDrop(fish, proposalId, { from } = {}) {
       const t = takeProposal(fish, proposalId);
       if (!t.ok) return t;
+      if (from === 'room') { const gate = memory.roomGateOk(fish, t.p); if (gate) return gate; } // 先过房间这道关；没过就不删单（爸妈再点头还能用同一张）
       proposals.delete(String(proposalId ?? '').trim()); // 用一次就删
       if (t.p.kind !== 'drop') return { ok: false, why: '这张单子是「改」用的，不是「忘掉」，重新起草' }; // 确认只办起草时说的那件事（reviewer 11-09）
       const m = load(fish);
@@ -517,7 +572,11 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
             + (m.beliefs || []).filter((b) => b.pinned && (!b.status || ['生效', '暂定'].includes(b.status))).length; // 退役 / 被取代的认识不占（四期-2 补 R7）
           if (nPinned >= MAX_PINNED) return { ok: false, error: `钉住的已经有 ${MAX_PINNED} 条了，先松开一条` };
           item.pinned = true; item.pinnedAt = at;
-        } else { delete item.pinned; delete item.pinnedAt; }
+        } else { // 修补-2 O：松开钉子——经历记 unpinnedAt（遗忘从松开那刻按 max(at, unpinnedAt) 起算），认识把 lastAt 记成松开的时间（算「又想到一次」）
+          delete item.pinned; delete item.pinnedAt;
+          if (pfx === 'M') item.unpinnedAt = at;
+          else if (pfx === 'B') item.lastAt = at;
+        }
       }
       logOp(m, { op: cmd, at, text: `${k.name}「${String(item.text || item.headline || '').slice(0, 20)}」` }); // 改动记录：种类 + 前 20 字，爸妈好核对办的是哪条
       save(fish, m);
@@ -533,12 +592,21 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
     },
     view(fish) {
       const m = memory.sync(fish, { minGapMs: 0 }), now = tnow();
+      // 修补-3 S1：各阶段都有——最新清晰 ≤ 8 + 模糊 ≤ 6 + 只剩印象 ≤ 6，合起来时间新的在前（原来只是最新 20 条，几乎全是「清晰」）
+      const self = selfOf(fish);
+      const staged = (m.episodes || []).map((e) => ({ e, stage: STAGE_TEXT[stageOf(e, now, days())] })).sort((a, b) => (Date.parse(a.e.at) || 0) - (Date.parse(b.e.at) || 0)); // 按时间排好再挑「最新的」（晚到的条目不按存的先后算） // 钉住的永远「清晰」（stageOf 四期-2 E）
+      const pickStage = (label, n) => staged.filter((x) => x.stage === label).slice(-n); // 某一档不够就少几条，不拿别的档补
+      const page = (s) => forPage(s, self); // 修补-3 S3：只换给页面的文字，存档和注入给模型的不动
       return {
         days: days(), recallN: recallN(), ...memoryStats(m, { now, baseDays: days() }),
-        recent: m.episodes.slice(-20).reverse().map((e) => ({ id: e.id, at: e.at, kind: e.kind, scope: e.scope, stage: STAGE_TEXT[stageOf(e, now, days())], text: e.text, pinned: Boolean(e.pinned), muted: Boolean(e.muted) })), // 钉住的永远「清晰」（stageOf 四期-2 E）；pinned / muted 给页面标「记牢了」「不再提」
-        people: knownPeople(m, { now, baseDays: days(), limit: 20 }),
+        recent: [...pickStage('只剩印象', 6), ...pickStage('模糊', 6), ...pickStage('清晰', 8)]
+          .sort((a, b) => (Date.parse(b.e.at) || 0) - (Date.parse(a.e.at) || 0)).slice(0, 20)
+          .map(({ e, stage }) => ({ id: e.id, at: e.at, kind: e.kind, scope: e.scope, stage, text: page(e.text), pinned: Boolean(e.pinned), muted: Boolean(e.muted) })), // pinned / muted 给页面标「记牢了」「不再提」
+        people: knownPeople(m, { now, baseDays: days(), limit: 20 }).map((p) => ({ ...p, last: (p.last || []).map(page) })), // 修补-3 S3：people 里的「话」也不用接生员的名字
         told: (m.told || []).slice().reverse().map((x) => { const age = toldDueAge(x, localDay(now)); return { id: x.id, text: x.text, at: x.at, ...(x.due ? { due: x.due } : {}), past: age != null && age > 0, muted: Boolean(x.muted), pinned: Boolean(x.pinned) }; }), // 四期-1：带 id、due、past（页面给带日子的那条显示日子）；四期-2：带 pinned / muted
-        log: (m.log || []).slice(-20).reverse(), // 改动日志：最近的 20 条，新的在前
+        log: (m.log || []).slice(-20).reverse(), // 改动日志：最近的 20 条，新的在前（老页面 / 老检查用，照旧保留）
+        asked: askedLog(m).map((x) => ({ ...x, text: page(x.text) })), // 修补-3 T：爸妈让办的新的在前最多 20 条；文字也换自称（审查 2）
+        daily: dailyLog(m, now), // 修补-3 T：自动的合成一天一条，最近 7 天
         beliefs: activeBeliefs(m, { limit: 30 }).map((b) => ({ ...shownBelief(b), home: b.scope === 'home', pinned: Boolean(b.pinned), muted: Boolean(b.muted) })), // 四期-2：带 pinned / muted（页面标「记牢了」「不再提」；muted 的在这块还看得到，只是不注入）
         changes: (m.changes || []).slice(-30).reverse().map((x) => ({ kind: x.kind, before: x.before, after: x.after, why: x.why, at: x.at })).slice(0, 20), // 想法怎么变的：最近 20 条，新的在前
         reflectDay: m.cursors.reflectDay || null,

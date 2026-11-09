@@ -13,13 +13,13 @@ export default defineTool({
     proposalId: { type: 'string', description: '上次起草返回的 proposalId（爸妈说对了才带）' },
     confirm: { type: 'boolean', description: '爸妈听完复述、说记的对了，才设 true' },
   },
-  async run(a, { pond, life, memory }) {
+  async run(a, { pond, life, memory }, ctx) {
     const f = pond.current(); if (!f) return NO_FISH;
     if (!memory) return { ok: false, error: '记忆还没准备好' };
     const confirmStep = a.proposalId != null && a.proposalId !== '' || a.confirm != null; // 带了单号或者带了 confirm：按确认这一步办
     if (confirmStep) {
       if (a.confirm !== true) return { ok: false, needsConfirmation: true, error: '还没有真的改成。要爸妈在这次对话里听完复述、明确说记的是对的，再设 confirm=true 调一次。' };
-      const r = memory.applyFix(f, a.proposalId);
+      const r = memory.applyFix(f, a.proposalId, { from: ctx?.from }); // 修补-2 J：把出口（room / main）交给宿主——房间里要等爸妈再说一句才能办
       if (!r.ok) return { ok: false, error: r.why };
       life?.record?.(f, 'told', `${f.parentCall}纠正本鱼一处记错的（${r.kind}）：「${String(r.text ?? '').slice(0, 20)}」`, {});
       return { ok: true, fixed: r.text, id: r.id, ...(r.fixedAt ? { fixedAt: r.fixedAt } : {}), hint: '改好了，以后按新的说；旧的那个说法不再提了' };
