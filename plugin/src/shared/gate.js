@@ -8,7 +8,7 @@
  */
 export const KINDS = {
   comment: { name: '评论', min: 2, max: 80 },
-  post: { name: '动态', min: 5, max: 200 },
+  post: { name: '动态', min: 5, max: 500 }, // 公告要能写完整（0.36–0.38 一条 342 字）
   dm: { name: '私信', min: 1, max: 120 }, // 任务 46：只回别人先发来的；爸妈专线放宽「家里的事」
 };
 

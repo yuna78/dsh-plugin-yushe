@@ -64,9 +64,35 @@ export function createBiliWrite(storage, fetchImpl = fetch, { sign = null, block
       if (r.status === 'sent') r.url = `https://www.bilibili.com/video/${bvid}#reply${r.data?.rpid_str || r.data?.rpid || ''}`;
       return r;
     },
-    async post({ text }) {
+    /** 传一张图到 B站图床，返回 { img_src, img_width, img_height }；失败返回 { status:'rejected', reason }。 */
+    async uploadImage({ data, filename = 'image.png', mime = 'image/png' }) {
+      const c = cred(); if (!c) return { status: 'rejected', reason: '她还没有登录 B站' };
+      if (blocked()) return { status: 'rejected', reason: 'B站正在风控，先不发' };
+      const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      if (buf.length > 20 * 1024 * 1024) return { status: 'rejected', reason: '图片太大（超过 20MB）' };
+      const form = new FormData();
+      form.append('file_up', new Blob([buf], { type: mime }), filename);
+      form.append('category', 'daily'); form.append('biz', '3'); form.append('csrf', c.bili_jct || '');
+      const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 60_000);
+      try {
+        const res = await fetchImpl('https://api.bilibili.com/x/dynamic/feed/draw/upload_bfs', {
+          method: 'POST', signal: ctl.signal, body: form,
+          headers: { Cookie: `SESSDATA=${c.sessdata}; bili_jct=${c.bili_jct}; DedeUserID=${c.dedeuserid || ''}; buvid3=${c.buvid3 || ''}`, 'User-Agent': UA, Referer: 'https://t.bilibili.com/' },
+        });
+        const j = await res.json().catch(() => null);
+        if (!j) return { status: 'uncertain', reason: `图床没回正常结果（HTTP ${res.status}）` };
+        if (j.code !== 0) return { status: 'rejected', reason: `图床拒绝了（${j.code}）：${String(j.message || '').slice(0, 60)}` };
+        const d = j.data || {};
+        return { status: 'sent', pic: { img_src: d.image_url, img_width: d.image_width, img_height: d.image_height } };
+      } catch (e) {
+        return { status: 'uncertain', reason: `传图出问题（${String(e?.name || e).slice(0, 40)}），不重试` };
+      } finally { clearTimeout(timer); }
+    },
+    async post({ text, pics = null }) {
       const c = cred();
+      // 带图：pics 要放在 dyn_req 这一层（放 content 里会被静默忽略，发出去只有字）
       const payload = { dyn_req: { content: { contents: [{ raw_text: String(text), type: 1, biz_id: '' }] }, scene: 1 } };
+      if (Array.isArray(pics) && pics.length) payload.dyn_req.pics = pics.slice(0, 9);
       const r = await post(`https://api.bilibili.com/x/dynamic/feed/create/dyn?csrf=${encodeURIComponent(c?.bili_jct || '')}`, { body: JSON.stringify(payload), contentType: 'application/json', referer: 'https://t.bilibili.com/' });
       if (r.status === 'sent') r.url = r.data?.dyn_id_str ? `https://t.bilibili.com/${r.data.dyn_id_str}` : 'https://t.bilibili.com/';
       return r;

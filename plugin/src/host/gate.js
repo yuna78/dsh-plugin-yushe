@@ -59,7 +59,7 @@ export function createGate({ storage, life, habits, biliRead, biliWrite, log, ga
       if (!r) r = await biliWrite.comment({ aid, bvid: d.target?.bvid, text });
     } else if (d.kind === 'dm') r = await biliWrite.dm({ mid: d.target?.mid, text });
     else if (senders[d.kind]) { try { r = await senders[d.kind]({ ...d, text }, { biliRead, biliWrite }); } catch (e) { r = { status: 'uncertain', reason: `发的时候出错（${String(e?.message || e).slice(0, 60)}），不重试` }; } }
-    else r = await biliWrite.post({ text });
+    else r = await biliWrite.post({ text, pics: d.image ? [d.image] : null });
     d.status = r.status === 'sent' ? 'sent' : r.status === 'uncertain' ? 'uncertain' : 'failed';
     if ((d.status === 'sent' || d.status === 'uncertain') && d.target?.mid && !parent) person?.notePerson(d.target.mid); // G4：对这个人又互动了一次
     d.result = { reason: r.reason || null, url: r.url || null }; d.sentAt = nowDate().toISOString();
@@ -78,7 +78,7 @@ export function createGate({ storage, life, habits, biliRead, biliWrite, log, ga
     usePerson(p) { person = p; },
     kinds: () => K,
     /** 她申请发一条：过规矩 → 进信箱。返回 { ok, id? , problems? }。 */
-    propose(fish, { kind, text, target = null }) {
+    propose(fish, { kind, text, target = null, image = null }) {
       if (!K[kind]) return { ok: false, problems: ['不认识的类型'] };
       if (!biliWrite.ready()) return { ok: false, problems: ['她还没登录 B站'] };
       const parent = kind === 'dm' && Boolean(target?.parent);
@@ -96,7 +96,7 @@ export function createGate({ storage, life, habits, biliRead, biliWrite, log, ga
       }
       if (target?.key && list.some((d) => d.kind === kind && d.target?.key === target.key && ['pending', 'queued', 'sending', 'sent'].includes(d.status))) return { ok: false, problems: ['这条已经回过 / 在排队'] };
       if (kind === 'comment' && list.some((d) => d.kind === 'comment' && d.target?.bvid === target?.bvid && ['pending', 'queued', 'sending', 'sent'].includes(d.status))) return { ok: false, problems: ['这个视频已经评论过 / 在排队'] };
-      const d = { id: `D${Date.now().toString(36)}${randomUUID().slice(0, 4)}`, kind, text: String(text).trim(), target, fishId: fish?.id || null, status: auto ? 'queued' : 'pending', createdAt: nowDate().toISOString() };
+      const d = { id: `D${Date.now().toString(36)}${randomUUID().slice(0, 4)}`, kind, text: String(text).trim(), target, image: image || null, fishId: fish?.id || null, status: auto ? 'queued' : 'pending', createdAt: nowDate().toISOString() };
       save('drafts.json', [...list, d].slice(-200));
       if (fish && !auto) life.record(fish, 'draft', `想发一条${K[kind].name}，寄到信箱等${fish.parentCall}批准`, {});
       if (auto && kind === 'dm') { const l2 = all(); const d2 = l2.find((x) => x.id === d.id); sendDraft(l2, d2, d2.text, fish).catch(() => {}); return { ok: true, id: d.id, sending: true }; } // 私信不等发言间隔

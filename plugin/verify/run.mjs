@@ -1453,6 +1453,7 @@ section('说话：主会话只给意图、她自己写（G2 证据）、回复�
   const spHabits = { get: () => spH };
   const spLife = { record: () => {}, state: () => ({ mood: 70, events: [{ day: LE.dayOf(), kind: 'chat', text: '和妈妈聊天：「公司项目好难」' }, { day: LE.dayOf(), kind: 'back', text: '逛完回家了' }], journal: [] }) };
   const spFish = { id: 'f', name: '小试', parentCall: '妈妈', personaText: '我是小鱼' };
+  const { checkDraft: spCheckDraft } = await import(pathToFileURL(join(plugin, 'src/shared/gate.js')).href);
   const spGate = GATE2.createGate({ storage: spDir, life: spLife, habits: spHabits, biliRead: spBR, biliWrite: spBW, kinds: TL2.draftKindsOf(), senders: TL2.sendersOf(), capKeys: TL2.capKeysOf() });
   const spActs = ACTS2.createActs({ storage: spDir, habits: spHabits, life: spLife, gate: spGate, pond: { current: () => spFish } });
   spGate.usePerson(spActs);
@@ -1509,6 +1510,32 @@ section('说话：主会话只给意图、她自己写（G2 证据）、回复�
   ok(!(await S('bili_reply', { bvid: 'BV1aaaaaaaaa', rpid: '8', intent: '再接一句' })).ok, 'G4：说话也算进对同一个人每天上限');
   ok(TL2.TOOLS.filter((t) => t.kind === 'speak').length === 5 && TL2.toolsFor('main').filter((t) => t.kind === 'speak').every((t) => t.parameters.properties.intent && !t.parameters.properties.text) && TL2.toolsFor('trip').filter((t) => t.kind === 'speak').every((t) => t.tripParameters.properties.text), '说话工具 5 个：主会话参数只有意图，出门参数是正文');
   ok(spGate.kinds().reply?.name === '回复' && spGate.kinds().dyncomment?.max === 80, '闸门类型由工具表并进来（没改 shared/gate.js 的表）');
+  // 动态要能写完整：公告一条三四百字很常见，120 会把细节挤掉（0.36–0.38 那条 342 字）
+  ok(spGate.kinds().post?.max >= 400 && TL2.draftKindsOf().post.max >= 400
+     && TL2.TOOLS.find((t) => t.name === 'bili_post').draft.max >= 400
+     && prompts.some((x) => /不超过 400 个字/.test(x)), '动态能写长：闸门 / 草稿 / 提示词都放到 ≥400');
+  ok(spCheckDraft('post', 'x'.repeat(400), { kinds: spGate.kinds() }).ok === true
+     && spCheckDraft('post', 'x'.repeat(600), { kinds: spGate.kinds() }).ok === false, '动态 400 字能过、600 字拦住');
+
+  // 带图动态：pics 必须放在 dyn_req 这一层（放 content 里会被静默忽略，发出去只有字）
+  {
+    const TP = await import(pathToFileURL(join(plugin, 'src/host/bili-write.js')).href);
+    const sent = [];
+    const bw = TP.createBiliWrite(spDir, async (url, init) => {
+      if (String(url).includes('upload_bfs')) return { json: async () => ({ code: 0, data: { image_url: 'http://i0.hdslb.com/x.png', image_width: 1080, image_height: 810 } }) };
+      sent.push(JSON.parse(init.body));
+      return { json: async () => ({ code: 0, data: { dyn_id_str: '999' } }) };
+    }, {});
+    // 造一份凭证，让 createBiliWrite 认为已登录
+    wfs(join(spDir, 'bili_credential.json'), JSON.stringify({ sessdata: 'S', bili_jct: 'J', dedeuserid: '1', buvid3: 'B' }));
+    const up = await bw.uploadImage({ data: Buffer.from('x'), filename: 'a.png', mime: 'image/png' });
+    ok(up.status === 'sent' && up.pic.img_width === 1080, '图床：传一张图拿回 img_src / 宽高');
+    await bw.post({ text: '带图', pics: [up.pic] });
+    const body = sent.at(-1) || {};
+    ok(body?.dyn_req?.pics?.[0]?.img_src === 'http://i0.hdslb.com/x.png' && body.dyn_req.content.contents[0].raw_text === '带图', '带图动态：pics 放 dyn_req 这一层，正文照旧');
+    await bw.post({ text: '纯文字' });
+    ok(!(sent.at(-1) || {}).dyn_req?.pics, '不带图时不塞 pics 字段');
+  }
   wfs(join(spClock, 'dev.json'), JSON.stringify({ offsetMinutes: 0 })); utimesSync(join(spClock, 'dev.json'), new Date(), new Date(Date.now() + 10000)); CK.initClock(spClock);
 }
 

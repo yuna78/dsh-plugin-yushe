@@ -17,7 +17,7 @@ export function speakReady({ biliRead, biliWrite, gate, pond }) {
  * 说一条：from='main' 用 intent 让她自己写；from='trip' 用 text。
  * material：给她写的公开资料；ledger：读账（主会话里由工具自己读资料时记，出门用 deps.ledger）；bvid：这条话针对的视频。
  */
-export async function speak(deps, from, { kind, what, max, target, args, material = [], ledger = null, bvid = null, rules = [] }) {
+export async function speak(deps, from, { kind, what, max, target, args, material = [], ledger = null, bvid = null, rules = [], image = null }) {
   const led = ledger || deps.ledger || createLedger();
   let text;
   if (from === 'trip') {
@@ -34,7 +34,7 @@ export async function speak(deps, from, { kind, what, max, target, args, materia
     if (!w.ok) return { ok: false, skipped: w.skipped || undefined, error: w.why };
     text = w.text;
   }
-  const r = deps.gate.propose(deps.pond.current(), { kind, text, target });
+  const r = deps.gate.propose(deps.pond.current(), { kind, text, target, image });
   if (!r.ok) return { ok: false, error: `闸门没让过：${(r.problems || []).join('、')}`, text };
   return { ok: true, status: r.sending ? 'sending' : r.queued ? 'queued' : 'pending', text, hint: r.queued ? '过了规矩，排队按发言间隔自己发（发出去会进足迹）' : r.sending ? '在发了' : '寄到信箱等爸妈批准' };
 }
