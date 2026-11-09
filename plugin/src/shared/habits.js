@@ -34,9 +34,16 @@ export const HABIT_FIELDS = {
   dreamPerNight: { label: '一晚最多梦游几次', type: 'int', min: 0, max: 2, def: 1, chat: true, group: 'out' },
   dreamBudget: { label: '梦游一次最多花多少零花钱', type: 'int', min: 30000, max: 200000, def: 30000, chat: true, group: 'out' },
 
+  // —— 在家上网（F-87，docs/设计/15-在家上网.md §7）：醒着在家她定期自己刷一轮，出门不再管「每天学东西」——
+  autoHome: { label: '她在家会自己刷 B站', type: 'bool', def: true, ui: true, chat: true, group: 'read' },
+  homeEvery: { label: '在家多久刷一次（分钟）', type: 'int', min: 20, max: 180, def: 45, chat: true, group: 'read' },
+  homePerDay: { label: '一天最多在家刷几次', type: 'int', min: 0, max: 30, def: 14, chat: true, group: 'read' },
+  homeCalls: { label: '在家每次最多点几下', type: 'int', min: 3, max: 16, def: 8, chat: true, group: 'read' },
+  homeCards: { label: '笔记本里「刷过的」最多留几张', type: 'int', min: 20, max: 200, def: 100, chat: true, group: 'read' },
+
   // —— 细配置：读多深 ——
   readBudget: { label: '每天读 B站次数', type: 'int', min: 50, max: 1000, def: 300, chat: true, group: 'read' },
-  tripToolCalls: { label: '每趟出门最多调几次工具', type: 'int', min: 3, max: 30, def: 12, chat: true, group: 'read' },
+  tripToolCalls: { label: '每趟出门最多调几次工具', type: 'int', min: 3, max: 30, def: 16, chat: true, group: 'read' },
   notesPerTrip: { label: '每趟最多往笔记本贴几张', type: 'int', min: 1, max: 12, def: 6, chat: true, group: 'read' }, // F-82
   subtitle: { label: '看字幕', type: 'bool', def: true, chat: true, group: 'read' },
   subtitleChars: { label: '字幕最多读多少字', type: 'int', min: 0, max: 6000, def: 1500, chat: true, group: 'read' },
@@ -72,7 +79,7 @@ export const HABIT_FIELDS = {
 /** 三个粗档位：每档对应一组细项的值（顺序和 levels 一致）。默认档 = 各细项的默认值。 */
 export const KNOBS = {
   out: { label: '爱不爱出门', levels: ['宅', '看性格', '爱逛'], fields: { outBias: [0.5, 1, 1.8], tripsPerDay: [2, 0, 0], restBias: [1.5, 1, 0.6] } },
-  depth: { label: '读多深', levels: ['浅', '中', '深'], fields: { readBudget: [150, 300, 600], tripToolCalls: [6, 12, 20], notesPerTrip: [4, 6, 10], subtitle: [false, true, true], subtitleChars: [0, 1500, 4000], danmaku: [false, false, true], threads: [false, true, true], commentsPerVideo: [3, 5, 10] } },
+  depth: { label: '读多深', levels: ['浅', '中', '深'], fields: { readBudget: [150, 300, 600], tripToolCalls: [8, 16, 24], notesPerTrip: [4, 6, 10], subtitle: [false, true, true], subtitleChars: [0, 1500, 4000], danmaku: [false, false, true], threads: [false, true, true], commentsPerVideo: [3, 5, 10], homeEvery: [60, 45, 30], homePerDay: [8, 14, 22], homeCalls: [5, 8, 12] } },
   memory: { label: '记性', levels: ['健忘', '适中', '好记性'], fields: { memoryDays: [10, 30, 60], memoryRecall: [3, 5, 8] } },
   interact: { label: '互动多少', levels: L3, fields: { commentsPerDay: [4, 12, 20], repliesPerDay: [4, 12, 20], dynCommentsPerDay: [1, 3, 6], postsPerDay: [1, 2, 3], dmsPerDay: [1, 3, 6], likesPerDay: [5, 15, 30], commentLikesPerDay: [5, 15, 30], collectsPerDay: [2, 5, 10], followsPerDay: [1, 2, 4], unfollowsPerDay: [0, 1, 2], perPersonPerDay: [2, 4, 6], replyToReplies: [false, true, true] } },
 };
@@ -93,6 +100,7 @@ export function schemaWith(caps = []) {
   return { fields, knobs };
 }
 
+const OLD_TRIP_CALLS = { 6: 8, 12: 16, 20: 24 }; // F-87：出门工具额度老档位 → 新档位
 export const defaultHabits = (fields = HABIT_FIELDS) => Object.fromEntries(Object.entries(fields).map(([k, f]) => [k, Array.isArray(f.def) ? [...f.def] : f.def]));
 
 /** 一个值按字段规则收拾好；不认得返回 undefined。 */
@@ -118,6 +126,9 @@ const same = (a, b) => JSON.stringify(fix(a)) === JSON.stringify(fix(b));
 export function normalizeHabits(h, fields = HABIT_FIELDS) {
   const out = defaultHabits(fields);
   if (!h || typeof h !== 'object') return out;
+  // F-87 迁移：在家上网之前存的整份配置里，出门工具额度是老档位 6 / 12 / 20 → 换成新档位 8 / 16 / 24，
+  // 否则老用户升级后「读多深」会被认成「自定义」。没有 homeEvery 这一项 = F-87 之前存的；手动改过的别的数不动
+  if (h.homeEvery === undefined && OLD_TRIP_CALLS[h.tripToolCalls] !== undefined) h = { ...h, tripToolCalls: OLD_TRIP_CALLS[h.tripToolCalls] };
   for (const [k, f] of Object.entries(fields)) {
     if (h[k] === undefined) continue;
     const v = coerce(f, h[k]);

@@ -15,7 +15,7 @@ import { acceptNotes, readList, dislikedFrom, recentNoteUrls } from '../shared/n
 import { entriesFrom } from '../shared/seen.js';
 import { moodTone } from '../shared/mood.js';
 import { nowMs, nowDate } from './clock.js';
-import { dayOf, snapshot, asleepAt, lifeSection } from './life-engine.js';
+import { dayOf, snapshot, asleepAt, lifeSection, TRIP_OUT_ENERGY } from './life-engine.js';
 import { NEWS_SOURCES } from './sources.js';
 import { readJsonBody } from './game-routes.js';
 import { leanOnce } from '../shared/growth.js';
@@ -61,7 +61,7 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
       const hb = habits?.get() || {};
       const k = Math.max(1, newsSourcesFor(hb.lean) + ge.extraSource - (ge.preferBili ? 1 : 0)); // 上网习惯「更爱看什么」+ 装备
       const energyAtStart = snapshot(s).energy;
-      life.record(f, 'out', reason === 'self' ? '自己背上小书包出门闲逛了' : '背上小书包出门闲逛了', { energy: -15 });
+      life.record(f, 'out', reason === 'self' ? '自己背上小书包出门闲逛了' : '背上小书包出门闲逛了', { energy: TRIP_OUT_ENERGY });
       if (reason === 'asked') life.grow(f, (g) => leanOnce(g, 'cling', -1, dayOf()));
       if (reason === 'self') life.grow(f, (g) => leanOnce(g, 'cling', -1, dayOf()));
       life.setTrip(f, { id, startedAt: nowMs(), state: 'roaming', reason, gear, note: noteLine(f, gear), cards: [], returnAt: nowMs() + 4 * 3600_000 });
@@ -196,6 +196,7 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
       const hb = habits?.get();
       if (hb && !hb.autoOut) return false; // 上网习惯：不让她自己出门
       if (G.closed('out')) return false; // 出口闸（F-79）：出门要醒着 + 不安静
+      if (life.isBrowsing?.(f)) return false; // 在家正刷着 B站（F-87）：这一轮先不出门，等她刷完
       const s = life.state(f), snap = snapshot(s), day = dayOf();
       const tripsToday = (s.events || []).filter((e) => e.day === day && e.kind === 'out').length;
       const go = wantsToLeave({ fishId: f.id, now: nowMs(), asleep: asleepAt() || snap.where === 'sleep', out: life.isOut(f), broke: wallet.view().broke, energy: snap.energy, mood: snap.mood, outgoing: outgoingness(s.growth?.pts || f.pts, s.growth?.lean).score, tripsToday, maxPerDay: hb?.tripsPerDay ? hb.tripsPerDay : Infinity, lastBackAt: s.lastBackAt || 0, bias: hb?.outBias ?? 1, restBias: hb?.restBias ?? 1 });

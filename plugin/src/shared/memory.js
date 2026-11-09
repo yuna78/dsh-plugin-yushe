@@ -35,6 +35,8 @@ export const KINDS = {
   'got-follow': { imp: 3, scope: 'public' },
   'dm-in': { imp: 3, scope: 'public' },
   seen: { imp: 2, scope: 'public' },
+  glance: { imp: 1, scope: 'public' }, // F-87 在家：点开看了，没读多深（记得最浅）
+  'seen-deep': { imp: 3, scope: 'public' }, // F-87 在家：读了字幕 / 楼中楼，记得最牢
   note: { imp: 3, scope: 'public' }, // F-82：笔记本里「学到的」「好点子」
   'got-like': { imp: 2, scope: 'public' },
   nap: { imp: 2, scope: 'home' },
@@ -178,7 +180,7 @@ export function gistOf(e) {
   const tag = e.keys?.tag ? `讲${clean(e.keys.tag, 8)}的` : '';
   const who = e.keys?.who ? clean(e.keys.who, 12) : '有人';
   switch (e.kind) {
-    case 'seen': return e.keys?.bvid ? `在 B站看过一个${tag}视频` : `看过一条${tag}新闻`;
+    case 'seen': case 'glance': case 'seen-deep': return e.keys?.bvid ? `在 B站看过一个${tag}视频` : `看过一条${tag}新闻`;
     case 'note': return e.keys?.bvid ? `看一个${tag}视频时记过笔记` : `看一条${tag}新闻时记过笔记`;
     case 'postcard': return '出门逛过一趟，给爸妈寄过明信片';
     case 'comment': return `在 B站给一个${tag}视频留过言`;

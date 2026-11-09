@@ -85,6 +85,10 @@ export function moodWord(mood) {
  */
 /** 午睡每小时回多少精力：30 分钟 = +15（F-34 / 06 文档 2.8）。 */
 export const NAP_PER_HOUR = 30;
+/** 累倒（F-82）：精力 < 15 撑不住、就地睡着；睡到 40 才起（passedOut 做迟滞，免得 15 上下反复睡醒）。 */
+export const EXHAUST_FROM = 15, EXHAUST_UNTIL = 40, EXHAUST_PER_HOUR = 6;
+/** 出门 / 回家各扣多少精力（原来 −15 / −8，一天两趟 −46，占掉半管血）。 */
+export const TRIP_OUT_ENERGY = -10, TRIP_BACK_ENERGY = -5;
 
 export function settle(state, now = nowMs()) {
   const s = { ...state };
@@ -97,9 +101,16 @@ export function settle(state, now = nowMs()) {
     const at = new Date(t + step / 2);
     const night = asleepAt(at);
     const napping = !night && s.napUntil && at.getTime() < s.napUntil;
-    const resting = night || napping; // 夜里睡 / 午睡
+    // 累倒（F-82）：< 15 撑不住就地睡着，睡到 40 才起；迟滞避免在 15 上下反复睡醒
+    if (!night && !napping) {
+      if (s.passedOut) { if (s.energy >= EXHAUST_UNTIL) s.passedOut = false; }
+      else if (s.energy < EXHAUST_FROM) s.passedOut = true;
+    }
+    const exhausted = !night && !napping && Boolean(s.passedOut);
+    const resting = night || napping || exhausted; // 夜里睡 / 午睡 / 累倒
     if (napping) s.energy = clampF(s.energy + NAP_PER_HOUR * hrs);
-    else if (resting) s.energy = clampF(s.energy + 12 * hrs);
+    else if (night) s.energy = clampF(s.energy + 12 * hrs);
+    else if (exhausted) s.energy = clampF(s.energy + EXHAUST_PER_HOUR * hrs);
     else s.energy = clampF(s.energy - 4 * hrs);
     if (!resting && t + step - (s.lastVisitAt || s.bornAt || now) > 6 * 3600_000) s.mood = clampF(s.mood - 0.75 * hrs);
     t += step;
@@ -149,7 +160,7 @@ export function tickTrip(fish, s, now) {
   const names = got.map((id) => souvenirById(id)?.name).filter(Boolean);
   const day = dayOf(new Date(now));
   s.events = [...(s.events || []), { at: new Date(tr.returnAt).toISOString(), day, kind: 'back', text: tr.failed ? '出门转了一圈，没带回什么就回家了' : `逛完回家了，${tr.notes ? `往笔记本贴了 ${tr.notes.length} 张便利贴` : `记下 ${(tr.cards || []).length + (tr.postcard ? 1 : 0)} 条见闻`}${tr.postcards?.length ? `、路上寄回 ${tr.postcards.length} 张明信片` : ''}${allPhotos.length ? `、拍了${allPhotos[0].ref?.title ? `一张《${allPhotos[0].ref.title}》的照片` : '一张照片'}${allPhotos.length > 1 ? `等 ${allPhotos.length} 张` : ''}` : ''}${names.length ? `，带回了${names.join('、')}` : ''}` }].slice(-MAX_EVENTS);
-  if (!tr.failed) { s.mood = clamp(s.mood + 5); s.energy = clampF(s.energy - 8); }
+  if (!tr.failed) { s.mood = clamp(s.mood + 5); s.energy = clampF(s.energy + TRIP_BACK_ENERGY); }
   if (s.growth && !tr.failed) {
     s.growth = gainXp(s.growth, 'back', { ageDays: Math.floor((now - (s.bornAt || now)) / 86400e3), at: new Date(now).toISOString() });
     const bad = new Set([...(tr.notes || []).filter((x) => x.note?.tag === '踩雷').map((x) => x.url), ...(tr.read || []).filter((x) => x.like === '不喜欢').map((x) => x.url)]);
@@ -247,6 +258,46 @@ export function createLife(dir) {
       s.dreamTries = s.dreamTries?.day === day ? { day, n: (s.dreamTries.n || 0) + 1 } : { day, n: 1 };
       save(s);
       return s.dreamTries;
+    },
+    /** 在家刷一轮（F-87，docs/设计/15-在家上网.md §3.4）：清单卡一张、0–1 张便利贴、今天一条事件、精力 −2；不涨五维。 */
+    homeRound(fish, { read = [], scanned = 0, note = null, cap = 100 } = {}, now = nowMs()) {
+      const s = settle(load(fish), now);
+      const day = dayOf(new Date(now));
+      const at = new Date(now).toISOString();
+      const card = { at, read: (read || []).slice(0, 30), scanned: Number(scanned) || 0 };
+      // 最多留 cap 张，多了丢最早的；单独存 homeCards，不挤占 journal
+      s.homeCards = [...(s.homeCards || []), card].slice(-Math.max(1, Number(cap) || 100));
+      if (note) s.journal = [...(s.journal || []), { ...noteEntry(note, null, now), home: true }].slice(-JOURNAL_MAX);
+      // 看了喜欢的东西心情好，一天在家最多 +5；events 会被裁，这一格自己记
+      const liked = card.read.some((x) => x.like === '喜欢');
+      const gained = (s.homeMood || {})[day] || 0;
+      const gain = liked && gained < 5 ? 1 : 0; // 一轮最多 +1，一天最多 +5
+      if (gain > 0) { s.mood = clamp(s.mood + gain); s.homeMood = { [day]: gained + gain }; }
+      s.energy = clampF(s.energy - 2);
+      s.events = [...(s.events || []), { at, day, kind: 'home', text: `刷了一会儿 B站，点开 ${card.read.length} 条${note ? `，记了一张《${String(note.title || '').slice(0, 30)}》` : ''}` }].slice(-MAX_EVENTS);
+      s.lastHomeAt = Number(now);
+      save(s);
+      return card;
+    },
+    /** 记一次在家刷的尝试（一轮没成也算试过，免得每 10 分钟重试）。 */
+    homeTry(fish, now = nowMs()) {
+      const s = settle(load(fish), now);
+      s.lastHomeAt = Number(now);
+      save(s);
+      return s.lastHomeAt;
+    },
+    /** 在家刷开始（F-87）：这几分钟就显示「在刷 B站」，别等跑完才显示。 */
+    homeStart(fish, minutes = 5, now = nowMs()) {
+      const s = settle(load(fish), now);
+      s.browse = { at: new Date(now).toISOString(), until: now + minutes * 60_000 };
+      save(s);
+      return s.browse;
+    },
+    /** 在家刷结束：把「在刷 B站」收掉。 */
+    homeEnd(fish, now = nowMs()) {
+      const s = settle(load(fish), now);
+      if (s.browse) { s.browse = null; save(s); }
+      return s.browse;
     },
     /** 聊天记录（给模型当上下文，也给 UI 显示）。 */
     pushChat(fish, role, text, now = nowMs()) {
@@ -351,6 +402,8 @@ export function createLife(dir) {
   api.setOut = (fish, jobId) => { if (jobId) outing.set(fish.id, jobId); else outing.delete(fish.id); };
   // 出门 = 有一趟还没回家（规则定的 returnAt 之前），或者 headless 还在跑
   api.isOut = (fish) => { const tr = load(fish).trip; if (tr && (tr.state === 'roaming' || nowMs() < (tr.returnAt || 0))) return true; const id = outing.get(fish.id); if (!id) return false; const st = roamStatus(id); if (st?.state === 'running') return true; outing.delete(fish.id); return false; };
+  /** 在家正刷着 B站（F-87）：这一轮里不出门（trips.autoTick 用）。 */
+  api.isBrowsing = (fish) => { const s = load(fish); return Boolean(s.browse && s.browse.until > nowMs()); };
   /** 她现在在做什么（三态 + 正在干的事）。busy 来自钱包（哪个 AI 调用正在跑）。 */
   api.activity = (fish, s, busy = null, now = nowDate()) => {
     const snap = snapshot(s, now);
@@ -364,15 +417,17 @@ export function createLife(dir) {
 export function snapshot(s, now = nowDate()) {
   const napping = Boolean(s.napUntil && now.getTime() < s.napUntil);
   const dreaming = Boolean(s.dream && s.dream.until && now.getTime() < s.dream.until); // F-79：梦游那二十几分钟
-  const sleeping = asleepAt(now) || s.energy < 8 || napping;
+  const browsing = Boolean(s.browse && s.browse.until > now.getTime()); // F-87：在家正刷着 B站的这几分钟
+  const sleeping = asleepAt(now) || s.energy < 8 || napping || Boolean(s.passedOut); // 累倒也算睡着（F-82）
   const [word, moodIcon] = moodWord(s.mood);
   const today = dayOf(now);
   const todayEvents = (s.events || []).filter((e) => e.day === today);
   return {
     mood: Math.round(s.mood), energy: Math.round(s.energy), moodWord: word, moodIcon,
     where: sleeping ? 'sleep' : 'home',
-    whereText: dreaming ? '在梦游' : sleeping ? (asleepAt(now) ? '在睡觉' : napping ? '在午睡' : '累得睡着了') : '在家',
-    napping, dreaming, unreadLetters: (s.letters || []).filter((l) => !l.read).length,
+    whereText: dreaming ? '在梦游' : sleeping ? (asleepAt(now) ? '在睡觉' : napping ? '在午睡' : '累得睡着了') : browsing ? '在刷 B站' : '在家', // 梦游 / 睡着优先，醒着正刷着才说在刷
+    exhausted: Boolean(s.passedOut),
+    napping, dreaming, browsing, unreadLetters: (s.letters || []).filter((l) => !l.read).length,
     today: { chats: todayEvents.filter((e) => e.kind === 'chat').length, feeds: todayEvents.filter((e) => e.kind === 'feed').length, greets: todayEvents.filter((e) => e.kind === 'greet').length },
     lastDiary: (s.diary || []).at(-1) || null,
   };

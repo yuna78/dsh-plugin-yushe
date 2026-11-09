@@ -109,16 +109,19 @@ export function createDreams({ life, wallet, pond, habits, biliRead, memory = nu
         memoryText: (() => { try { return memory?.section?.(f, { scope: 'public', query: Object.keys(g.interests || {}).join(' '), limit: 3, title: '【你在 B站上的记忆】', tail: '模糊的就别说得很肯定；记不清的人当新认识。' }) || ''; } catch { return ''; } })(),
       });
       let r;
+      const meter = { totalTokens: 0 }; // 边跑边记花了多少：外层超时 / 模型出错也照样记账（F-87 实测发现的漏账）
       try {
         r = await Promise.race([
           runToolLoop({
           llm: m.llm, provider: m.provider, model: m.model, system,
           prompt: '闭上眼，梦里接着刷 B站。随便逛逛，看到有意思的多看两眼。',
-            tools: list, maxCalls: DREAM_TOOL_CALLS, maxTokens: Number(hb.dreamBudget) || DREAM_BUDGET_MIN,
+            tools: list, maxCalls: DREAM_TOOL_CALLS, maxTokens: Number(hb.dreamBudget) || DREAM_BUDGET_MIN, meter, timeoutMs: 180_000,
           }),
-          new Promise((_, rej) => setTimeout(() => rej(new Error('梦游超时（3 分钟）')), 180_000).unref?.()),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('梦游超时')), 270_000).unref?.()),
         ]);
       } catch (e) {
+        try { if (meter.totalTokens) wallet.chargeTokens('dream', meter.totalTokens); } // 没梦成也是花了钱的，照记
+        catch (e2) { log?.warn?.(`[dsh-yushe] 梦游的钱没记上：${String(e2?.message || e2).slice(0, 80)}`); }
         try { life.dreamEnd(f); } catch { /* 忽略 */ }
         logSeen(f, catalog, []); // 循环中断也把刷到的留下（F-86：拿到 catalog 就记）
         log?.warn?.(`[dsh-yushe] 梦游没成：${String(e?.message || e).slice(0, 140)}`);

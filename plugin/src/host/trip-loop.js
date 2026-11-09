@@ -89,6 +89,41 @@ export function dreamSystem({ persona, moodText = '', interests = [], maxCalls =
   ].filter((x) => x !== '').join('\n');
 }
 
+/** 在家刷这一轮的系统提示（F-87）：平日在家里随便刷，感兴趣的点开，最多一张便利贴；这一期不说话、不写专题。 */
+export function homeSystem({ persona, moodText = '', memoryText = '', interests = [], ups = [], dislikes = [], maxCalls = 8, todayTitles = [] }) {
+  const extras = [
+    interests.length ? `你最近的爱好：${interests.join('、')}。` : '',
+    ups.length ? `你常看的 UP 主：${ups.join('、')}。` : '',
+    dislikes.length ? `你最近不太喜欢：${dislikes.join('、')}（遇到了可以绕开，也可以再给一次机会）。` : '',
+  ].filter((x) => x !== '').join('\n');
+  const titles = (todayTitles || []).slice(0, 15);
+  return dropLines(fill(PROMPTS['home-browse'], {
+    persona: persona || DROP, moodText: moodText || DROP, memoryText: memoryText || DROP, extras: extras || DROP,
+    maxCalls: Number(maxCalls) || 8,
+    today: titles.length ? [`你今天已经点开过这些（都是看过的，别又点开一遍）：`, ...titles.map((t) => `- ${t}`)].join('\n') : DROP,
+  }));
+}
+
+/** 在家这一轮她交的卷（最后一段文字里的 JSON）→ read 全收（交给 readList 验收），note 只收一张（链接从 catalog 核实）。 */
+export function parseHome(text, catalog) {
+  const raw = String(text || '');
+  const m = raw.match(/```(?:json)?\s*([\s\S]*?)```/) || raw.match(/(\{[\s\S]*\})/);
+  let j = null; try { j = JSON.parse(m ? m[1] : raw); } catch { j = null; }
+  // F-82 的态度，格式照搬：links 验收在 notes.js readList（这里只收形状，编的不用在这里挡）
+  const verdict = (Array.isArray(j?.read) ? j.read.slice(0, 30) : []).map((v) => ({ bvid: String(v?.bvid || '').match(/BV[0-9A-Za-z]{10}/)?.[0] || '', like: CLEAN(v?.like, 4), why: CLEAN(v?.why, 40) })).filter((v) => v.bvid);
+  // 便利贴：最多一张（数组只取第一个）；链接必须是这轮工具真给过的（bvid 或 url），否则丢掉记 dropped
+  const rawNote = Array.isArray(j?.note) ? j.note[0] : j?.note;
+  let note = null;
+  const dropped = [];
+  if (rawNote && typeof rawNote === 'object') {
+    const key = /^BV[0-9A-Za-z]{10}$/.test(String(rawNote.bvid || '')) ? rawNote.bvid : String(rawNote.url || '');
+    const hit = key ? (catalog.get(key) || [...catalog.values()].find((c) => c.url === key)) : null;
+    if (!hit) dropped.push(key || '(空)');
+    else note = { title: hit.title, url: hit.url, source: hit.source, tag: hit.tag, up: hit.up || undefined, mid: hit.mid || undefined, gist: CLEAN(rawNote.gist, 100) || undefined, label: CLEAN(rawNote.label, 6) || undefined, line: CLEAN(rawNote.line, 80), verified: true };
+  }
+  return { parsed: Boolean(j), verdict, note, dropped };
+}
+
 /** 这趟出门的系统提示（只有她自己的东西）。 */
 export function tripSystem({ persona, moodText = '', interests = [], ups = [], favZones = [], avoidWords = [], maxCalls, caps = {}, memoryText = '', commented = [], dislikes = [], maxNotes = 6, recentSays = [] }) {
   // 「有就加一行、没有就不加」的那几行：先拼成一个块（没有就空串）填进 md
@@ -111,9 +146,10 @@ export function tripSystem({ persona, moodText = '', interests = [], ups = [], f
 /**
  * 跑循环。llm = { stream(opts) }（宿主的 llm 服务，测试时给假的）；tools = [{ name, description, parameters, execute(args) }]。
  * 返回 { text, said, calls: [{ name, ok }], usage: { totalTokens }, turns, stoppedBy }。
+ * F-87：可选 meter（{ totalTokens }）——边跑边写花了多少 token；外层超时或模型出错时 run 抛错拿不到 usage，靠它照样记账。
  * F-86 见闻-2：可选 onDelta(text)——模型每来一段 text-delta 就调一次（所有轮都推，包括调工具之前那句）；said = 所有轮的话按顺序连起来。
  */
-export async function runToolLoop({ llm, provider, model, system, prompt, tools, maxCalls = 12, maxTurns = null, timeoutMs = 4 * 60_000, maxTokens = null, onCall = null, onDelta = null, beforeCall = null, overNote = '这趟的工具额度用完了，该回家写游记了（只输出 JSON）' }) {
+export async function runToolLoop({ llm, provider, model, system, prompt, tools, maxCalls = 12, maxTurns = null, timeoutMs = 4 * 60_000, maxTokens = null, maxBody = 6000, meter = null, onCall = null, onDelta = null, beforeCall = null, overNote = '这趟的工具额度用完了，该回家写游记了（只输出 JSON）' }) {
   const schemas = tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
   const byName = new Map(tools.map((t) => [t.name, t]));
   const messages = [{ role: 'user', content: [{ type: 'text', text: prompt }] }];
@@ -129,7 +165,7 @@ export async function runToolLoop({ llm, provider, model, system, prompt, tools,
       for await (const ch of llm.stream({ provider, model, system, messages, tools: schemas, signal: controller.signal })) { // 额度用完也照样给工具表（历史里有工具调用），工具会回「额度用完」
         if (ch?.type === 'block-end' && ch.block) blocks.push(ch.block);
         else if (ch?.type === 'text-delta') onDelta?.(ch.text || ''); // F-86 见闻-2：字一边来一边推
-        else if (ch?.type === 'usage') totalTokens += Number(ch.usage?.totalTokens ?? ((ch.usage?.inputTokens || 0) + (ch.usage?.outputTokens || 0))) || 0;
+        else if (ch?.type === 'usage') { totalTokens += Number(ch.usage?.totalTokens ?? ((ch.usage?.inputTokens || 0) + (ch.usage?.outputTokens || 0))) || 0; if (meter) meter.totalTokens = totalTokens; } // meter：外面超时 / 出错时也知道花了多少（F-87 实测：超时那轮漏账）
         else if (ch?.type === 'finish') { finish = ch.reason; replayState = ch.replayState; break; }
       }
     } finally { clearTimeout(timer); }
@@ -150,7 +186,7 @@ export async function runToolLoop({ llm, provider, model, system, prompt, tools,
         else if (args === null) result = { ok: false, error: '参数不是合法 JSON' };
         else { try { beforeCall?.(tc.name, args); } catch { /* 显示失败不影响调工具 */ } result = await tool.execute(args); calls.push({ name: tc.name, ok: result?.ok !== false }); onCall?.(tc.name, args, result); }
       }
-      let body = ''; try { body = JSON.stringify(result).slice(0, 6000); } catch { body = '{"ok":false}'; }
+      let body = ''; try { body = JSON.stringify(result).slice(0, maxBody); } catch { body = '{"ok":false}'; }
       messages.push({ id: randomUUID(), role: 'tool', source: { kind: 'tool', callId: tc.id }, toolCallId: tc.id, content: [{ type: 'text', text: body }], isError: result?.ok === false });
     }
     if (maxTokens && totalTokens > maxTokens) { stoppedBy = 'budget'; break; } // F-79：梦游单次 token 上限（钱不能只靠「开跑前余额」兜）

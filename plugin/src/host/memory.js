@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { nowMs } from './clock.js';
 import { emptyMemory, migrateMemory, makeEpisode, meet, settleMemory, recall, knownPeople, aboutPerson, memoryText, memoryStats, stageOf, STAGE_TEXT, reflectCandidates, reflectPrompt, applyReflection, settleBeliefs, beliefsFor, activeBeliefs, tell, untell, localDay, defang, logOp, pickWeek, pickMonth, weekMaterial, monthMaterial, checkWeekly, checkChapter, weeklyPrompt, chapterPrompt, settleWeeklies, mergeChapters, recentLines, weeklyStage, weeklyStatus, nextId, WEEKLY_STAGE_TEXT } from '../shared/memory.js';
 import { personaFor } from '../shared/growth.js';
+import { homeMemKind } from '../shared/home.js'; // F-87 在家：读到哪层 → 记多重
 
 export const MEMORY_PATH = '/api/dsh-yushe/memory';
 const KEY_WINDOW = 3 * 86400e3; // 记号窗口：只留游标前 3 天内的 key，按时间清，不按条数截（一期-2 E）
@@ -32,6 +33,7 @@ const shownBelief = (b) => ({ text: b.text, why: b.why || '', effect: b.effect |
 export function archiveItems({ fish, life = {}, footprints = [], inbox = [], dms = [], parentMid = '', chatFrom = '' }) {
   const call = fish?.parentCall || '爸妈';
   const out = [];
+  const dedup = new Set(); // F-87：同一天同一条视频只出一条（key 按视频 + 本地日子去重，取第一次）
   // 和爸妈聊天：爸妈一句 + 她回的一句，记成一条（第二步：不再只记前 30 字）
   const chat = life.chat || [];
   for (let i = 0; i < chat.length; i++) {
@@ -60,6 +62,28 @@ export function archiveItems({ fish, life = {}, footprints = [], inbox = [], dms
       // F-82：便利贴记得更清楚——「学到的」「好点子」imp 3，带上标签、她的一句话和讲了啥（讲了啥是转述外部内容，防投毒）
       if (j.note) out.push({ key: `s:${bvid || x.url}`, at: j.at, kind: ['学到的', '好点子'].includes(j.note.tag) ? 'note' : 'seen', text: `${where}，记了一张「${short(j.note.tag, 4)}」：${defang(short(j.text, 50))}${j.note.gist ? `（讲的是：${defang(short(j.note.gist, 40))}）` : ''}`, url: x.url, keys: { bvid, tag: x.tag, who: x.up, mid: x.mid } });
       else out.push({ key: `s:${bvid || x.url}`, at: j.at, kind: 'seen', text: `${where}${!j.final && j.text ? `，${short(j.text, 40)}` : ''}`, url: x.url, keys: { bvid, tag: x.tag, who: x.up, mid: x.mid } });
+    }
+  }
+  // F-87 在家-1：清单「刷过的」里点开过的每条都进记忆（读多深定 imp，只扫标题的不进，流水账里查得到）。
+  // 带态度：喜欢 / 不喜欢（带理由）照抄她的话，踩雷也是她。别人写的标题先防投毒。
+  // 在家写了便利贴的那条，便利贴已经记过一次（note / seen），清单卡里同一天同一条不再记
+  const homeNoted = new Set((life.journal || []).filter((j) => j?.home && j.note && j.at).flatMap((j) => (j.seen || []).map((x) => `${String(x?.url || '').match(/BV[0-9A-Za-z]{10}/)?.[0] || x?.url}:${localDay(j.at)}`)));
+  for (const card of life.homeCards || []) {
+    if (!card?.at) continue;
+    const day = localDay(card.at);
+    if (!day) continue;
+    for (const x of card.read || []) {
+      if (!x?.url) continue;
+      const kind = homeMemKind(x.depth, x.acts);
+      if (!kind) continue;
+      const bvid = String(x.url).match(/BV[0-9A-Za-z]{10}/)?.[0];
+      const key = `h:${bvid || x.url}:${day}`;
+      if (dedup.has(key) || homeNoted.has(`${bvid || x.url}:${day}`)) continue;
+      dedup.add(key);
+      const like = String(x.like || '').slice(0, 4);
+      const why = short(x.why, 20);
+      const att = like === '不喜欢' ? `，不喜欢${why ? `：${why}` : ''}` : like === '喜欢' ? `，说了喜欢${why ? `，因为${why}` : ''}` : like ? `，觉得${like}` : '';
+      out.push({ key, at: card.at, kind, text: `在家刷 B站点开了《${defang(short(x.title, 50))}》${att}`, url: x.url, keys: { bvid, tag: x.tag, who: x.up } });
     }
   }
   // F-84/F-85：路上寄回的明信片（没拍成照片的那张）。她说哪种就记成哪种（想你的 / 口信明信片）；见闻照旧带着是看《什么》时写的
