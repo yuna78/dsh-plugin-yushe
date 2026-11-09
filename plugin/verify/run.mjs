@@ -178,7 +178,7 @@ ok(LE.settle({ ...day1, lastTickAt: at(22) }, at(22) + 10 * 3600e3).energy > 80,
   const t0 = Date.parse('2026-11-08T14:00:00');
   const base = { mood: 80, bornAt: t0, lastVisitAt: t0 };
   const s1 = LE.settle({ ...base, energy: 10, lastTickAt: t0 }, t0 + 2 * 3600e3);
-  ok(s1.passedOut === true && Math.round(s1.energy) === 22, `累倒：<15 就地睡着，按 +6/小时回（10 → ${Math.round(s1.energy)}）`);
+  ok(s1.passedOut === true && Math.round(s1.energy) === 30, `累倒：<15 就地睡着，按 +10/小时回（10 → ${Math.round(s1.energy)}）`);
   ok(LE.snapshot(s1, new Date(t0 + 2 * 3600e3)).whereText === '累得睡着了', '累倒时房间说「累得睡着了」，和结算一致（原来是显示在睡、结算不给回）');
   let cur = s1, flips = 0, prevOut = s1.passedOut, peak = s1.energy;
   for (let h = 3; h <= 8; h++) { cur = LE.settle(cur, t0 + h * 3600e3); peak = Math.max(peak, cur.energy); if (prevOut && !cur.passedOut) flips += 1; prevOut = cur.passedOut; }

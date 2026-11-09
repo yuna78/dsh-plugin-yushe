@@ -86,7 +86,7 @@ export function moodWord(mood) {
 /** 午睡每小时回多少精力：30 分钟 = +15（F-34 / 06 文档 2.8）。 */
 export const NAP_PER_HOUR = 30;
 /** 累倒（F-82）：精力 < 15 撑不住、就地睡着；睡到 40 才起（passedOut 做迟滞，免得 15 上下反复睡醒）。 */
-export const EXHAUST_FROM = 15, EXHAUST_UNTIL = 40, EXHAUST_PER_HOUR = 6;
+export const EXHAUST_FROM = 15, EXHAUST_UNTIL = 40, EXHAUST_PER_HOUR = 10;
 /** 出门 / 回家各扣多少精力（原来 −15 / −8，一天两趟 −46，占掉半管血）。 */
 export const TRIP_OUT_ENERGY = -10, TRIP_BACK_ENERGY = -5;
 
