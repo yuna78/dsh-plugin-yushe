@@ -72,23 +72,27 @@ export const restAfterTrip = (score, bias = 1) => Math.round((1 + (1 - score) * 
  * 她想不想自己出门（宿主每 10 分钟问一次）。不设次数上限（除非爸妈在设置里限了），出不出门按性格掷骰子：
  * 睡着 / 已在外面 / 没钱 / 太累 / 回家还没歇够 → 不走；否则 概率 = 性格（爱出门程度）× 精力 × 心情。
  * 同一个 10 分钟段结果固定（可复现）。
+ * 心情那一位（二期-1b）：给了 outBias（behaviorOf(s.feel).outBias）就替换掉心情系数；没给照旧看 mood（老调用方不变）。
  */
-export function wantsToLeave({ fishId = '', now = Date.now(), asleep = false, out = false, broke = false, energy = 70, mood = 60, outgoing = 0.4, tripsToday = 0, maxPerDay = Infinity, lastBackAt = 0, bias = 1, restBias = 1 } = {}) {
+export function wantsToLeave({ fishId = '', now = Date.now(), asleep = false, out = false, broke = false, energy = 70, mood = 60, outBias = null, outgoing = 0.4, tripsToday = 0, maxPerDay = Infinity, lastBackAt = 0, bias = 1, restBias = 1 } = {}) {
   if (asleep || out || broke) return false;
   if (energy < 40 || tripsToday >= maxPerDay) return false;
   if (now - lastBackAt < restAfterTrip(outgoing, restBias)) return false;
   // bias：细配置 outBias（「爱不爱出门」档位：宅 0.5 / 看性格 1 / 爱逛 1.8），乘在性格算出的概率上
-  const p = Math.max(0.003, Math.min(0.6, (0.005 + 0.25 * outgoing ** 1.5) * (0.6 + (energy - 40) / 100) * (0.8 + (mood - 50) / 250) * bias));
+  const p = Math.max(0.003, Math.min(0.6, (0.005 + 0.25 * outgoing ** 1.5) * (0.6 + (energy - 40) / 100) * (outBias != null && Number.isFinite(Number(outBias)) ? Number(outBias) : 0.8 + (mood - 50) / 250) * bias));
   return (hashOf(fishId, 'leave', Math.floor(now / 600_000)) % 1000) / 1000 < p;
 }
 
+/** 她说「逛多久」换算的时长倍数（二期-1b，游记 JSON 的 stay；tripPlan 里夹在 0.6–1.3）。 */
+export const STAY_SCALE = { 早点回: 0.7, 照常: 1, 多逛会儿: 1.25 };
+
 /**
- * 这一趟的安排：走多久（1–3 小时，潜水镜 ×0.6）、明信片几张、什么时候寄到。
+ * 这一趟的安排：走多久（1–3 小时，潜水镜 ×0.6；她说逛多久 → STAY_SCALE 的倍数，夹 0.6–1.3）、明信片几张、什么时候寄到。
  * seen：她这趟真看了的（已核实）条目；energy：出门前的精力（≥ 80 多寄一张）。
  */
-export function tripPlan({ tripId = '', startedAt = Date.now(), seen = [], energy = 70, gear = null, items = 2 } = {}) {
+export function tripPlan({ tripId = '', startedAt = Date.now(), seen = [], energy = 70, gear = null, items = 2, scale = 1 } = {}) {
   const ge = gearEffects(gear);
-  const hours = (1 + (hashOf(tripId, 'len') % 200) / 100) * (ge.shorter ? 0.6 : 1);
+  const hours = (1 + (hashOf(tripId, 'len') % 200) / 100) * (ge.shorter ? 0.6 : 1) * Math.max(0.6, Math.min(1.3, Number(scale) || 1));
   const durationMs = Math.round(hours * 3600_000);
   const want = items + (energy >= 80 ? 1 : 0) + ge.extraCard; // items：上网习惯「每趟记几条见闻」
   const picks = seen.filter((x) => x.verified).slice(0, want);

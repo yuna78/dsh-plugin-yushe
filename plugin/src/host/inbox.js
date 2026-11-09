@@ -1,11 +1,11 @@
 /**
- * 收件箱（M5 任务 45）：每小时看一眼她的 B站——有人回她、给她点赞、关注她。只读。
+ * 收件箱（M5 任务 45 / F-81）：15 分钟看一眼她的 B站——有人回她、给她点赞、关注她。只读。
  *
- *   inbox.poll(fish)              宿主 10 分钟定时器调；自己控制成一小时一次、醒着才看
+ *   inbox.poll(fish)              宿主 2 分钟互动定时器调；自己控制成 15 分钟一次、醒着才看
  *   GET  /api/dsh-yushe/inbox     最近的回复 / 点赞 / 新粉丝 + 没看过几条 + 粉丝数 + 每条足迹的赞和回复
  *   POST /api/dsh-yushe/inbox     {seen:true} 打开信箱时标成看过了
  *
- * 省读次数：每轮 unread + stat 两次；回复 / 点赞有未读或 6 小时没看才拉；粉丝列表只在粉丝数变多时拉。
+ * 省读次数：稳态每轮只拉 unread 一次；回复 / 点赞有未读或 6 小时没看才拉；粉丝数 2 小时拉一次，粉丝列表只在变多时拉。
  * 外面的人写的字只展示、只当资料（截短、加引号进「今天」），她不照着做。存 <storage>/inbox.json。
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -17,7 +17,9 @@ import { nowDate, nowMs } from './clock.js';
 import { emptyInbox, mergeInbox, newsEvents, footStats, whatToFetch, newestFirst } from '../shared/inbox.js';
 
 export const INBOX_PATH = '/api/dsh-yushe/inbox';
-const EVERY = 60 * 60_000;
+// F-81：留言（回复 / @ / 赞）优先——15 分钟看一眼；粉丝数 2 小时拉一次就够。
+const EVERY = 15 * 60_000, STAT_EVERY = 2 * 3600_000;
+export const INBOX_EVERY = EVERY;
 
 export function createInbox({ storage, life, biliRead, gate, log, gates = null }) {
   const file = () => accountFile(storage, 'inbox.json'); // G5：按号分开存，换号从零开始
@@ -32,17 +34,20 @@ export function createInbox({ storage, life, biliRead, gate, log, gates = null }
       if (busy) return { ok: false, why: '正在看' };
       if (!biliRead?.loggedIn?.()) return { ok: false, why: '她还没登录 B站' };
       const st = load();
-      if (!force && st.lastPoll && nowMs() - Date.parse(st.lastPoll) < EVERY) return { ok: false, why: '一小时看一次' };
+      if (!force && st.lastPoll && nowMs() - Date.parse(st.lastPoll) < EVERY) return { ok: false, why: '15 分钟看一次' };
       if (!force && G.closed('act')) return { ok: false, why: G.open('act').why }; // 出口闸（F-79）
       busy = true;
       try {
-        const [unread, stat] = await Promise.all([biliRead.unread().catch(() => null), biliRead.myStat().catch(() => null)]);
+        // 稳态只拉 unread（1 次读）；粉丝数 2 小时才拉，省下来的给私信
+        const statStale = force || !st.lastFetch?.stat || st.fanCount == null || nowMs() - Date.parse(st.lastFetch.stat) > STAT_EVERY;
+        const [unread, stat] = await Promise.all([biliRead.unread().catch(() => null), statStale ? biliRead.myStat().catch(() => null) : null]);
         const want = whatToFetch(st, { unread, fanCount: stat?.follower ?? null }, nowMs());
         const got = { fanCount: stat?.follower ?? null };
         if (want.reply) got.replies = await biliRead.repliesToMe().catch(() => null);
         if (want.like) got.likes = await biliRead.likesToMe().catch(() => null);
         if (want.fans && stat) got.fans = await biliRead.followers().catch(() => null);
         const { state, news } = mergeInbox(st, got, nowDate().toISOString());
+        if (stat) state.lastFetch.stat = state.lastPoll;
         save(state);
         if (fish) for (const e of newsEvents(news)) life.record(fish, e.kind, e.text, { mood: e.mood });
         const n = news.reply.length + news.like.length + news.follow.length;
@@ -52,6 +57,8 @@ export function createInbox({ storage, life, biliRead, gate, log, gates = null }
     },
     unseen: () => load().items.filter((x) => !x.seen).length,
     all: () => load().items.slice(), // 记忆从这里抄（F-76）
+    /** 别人最近回她 / @ 她的（带 rpid 的）：出门先回留言用（F-81）。 */
+    pendingReplies: (n = 3) => load().items.filter((x) => x.kind === 'reply' && x.reply?.rpid).slice(-n).reverse(),
     markSeen() { const st = load(); let n = 0; for (const x of st.items) if (!x.seen) { x.seen = true; n += 1; } if (n) save(st); return n; },
     view() {
       const st = load();

@@ -163,7 +163,9 @@ export function registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, ga
     const before = life.state(f);
     const history = (before.chat || []).slice(-12).map((c) => `${c.role === 'user' ? f.parentCall : '你'}：${c.text}`);
     life.pushChat(f, 'user', text);
+    const wasAsleep = snapshot(before).where === 'sleep'; // 心情二期-1a C：这话来的时候她本来在睡
     const s = life.record(f, 'chat', `和${f.parentCall}聊天：「${text.slice(0, 30)}」`, { mood: 3, visit: true });
+    if (wasAsleep) life.record(f, 'woken', `睡得正香被${f.parentCall || '妈妈'}叫醒了`, {}); // 睡着被叫醒 → 烦躁（对自己）
     const snap = snapshot(s);
     // F-86 见闻-2：有 wallet.loop + 房间工具 → 聊天走工具循环（先翻流水账再答）；从上面拿的就是「能不能起循环」
     const roomTools = (() => { try { if (typeof wallet?.loop !== 'function') return null; const defs = typeof chatTools === 'function' ? chatTools() : null; return Array.isArray(defs) && defs.length ? defs : null; } catch { return null; } })();

@@ -1,7 +1,8 @@
 // S3 · 问她想不想出门（她可以拒绝，规则决定）
 import { nowMs } from '../../clock.js';
 import { snapshot, asleepAt } from '../../life-engine.js';
-import { goOutAnswer, REFUSE_TEXT } from '../../../shared/room.js';
+import { goOutAnswer, refusedRecently, REFUSE_TEXT } from '../../../shared/room.js';
+import { behaviorOf } from '../../../shared/feel.js';
 import { defineTool, NO_FISH } from '../define.js';
 
 export default defineTool({
@@ -12,8 +13,11 @@ export default defineTool({
   async run(_a, { pond, life, wallet, trips }) {
     const f = pond.current(); if (!f) return NO_FISH;
     if (life.isOut(f)) return { ok: false, refused: true, line: '本鱼已经在外面啦～' };
-    const snap = snapshot(life.state(f));
-    const ans = goOutAnswer({ fishId: f.id, call: f.parentCall, energy: snap.energy, mood: snap.mood, asleep: asleepAt() || snap.where === 'sleep', broke: wallet.view().broke, now: nowMs() });
+    const st = life.state(f), snap = snapshot(st);
+    // 心情二期-1c：心里有事会拒绝并且说得出由头；30 分钟内刚拒过同一由头再问就松口
+    const b = behaviorOf(st.feel);
+    const tNow = nowMs(); // 骰子段和「刚拒过」的 30 分钟窗用同一刻
+    const ans = goOutAnswer({ fishId: f.id, call: f.parentCall, energy: snap.energy, mood: snap.mood, asleep: asleepAt() || snap.where === 'sleep', broke: wallet.view().broke, now: tNow, behavior: b, refusedRecently: refusedRecently(st.events, b.refuse?.reason, tNow) });
     if (!ans.go) { life.record(f, 'ask-out', `${f.parentCall}在 DSH 里问要不要出门，本鱼说不去（${REFUSE_TEXT[ans.reason] || ans.reason}）`, { visit: true }); return { ok: false, refused: true, reason: ans.reason, line: ans.line }; }
     const { id } = trips.start(f, 'asked');
     return { ok: true, tripId: id, line: ans.line, hint: '出门了。见闻会陆续记进鱼社右上角「见闻」，回家后有信和小东西。' };

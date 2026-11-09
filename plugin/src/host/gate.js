@@ -19,12 +19,16 @@ import { randomUUID } from 'node:crypto';
 import { readJsonBody } from './game-routes.js';
 import { nowDate, nowMs } from './clock.js';
 import { checkDraft, capCheck, trustOf, KINDS } from '../shared/gate.js';
+import { behaviorOf } from '../shared/feel.js';
 import { createGates } from './gates.js';
 
 export const DRAFTS_PATH = '/api/dsh-yushe/drafts';
 export const FOOTPRINTS_PATH = '/api/dsh-yushe/footprints';
 const MAX_PENDING = 5;
 const QUEUE_TTL = 24 * 3600_000; // 排队超过一天的草稿就不发了（话题已经过时）
+const HOLD_MAX_MS = 6 * 3600_000; // 心情二期-2a：同一段情绪最多拦 6 小时，过了就放开
+const HOLD_TEXT = '本鱼现在有点烦，先不在 B站说话了';  // 记进「今天」的（她的口气，不带负的 mood）
+const HOLD_WHY = '本鱼现在有点烦，先不在 B站说话了，过会儿再说';  // 给模型 / 爸妈看的一句话（不带数字和机制词）
 
 /**
  * 任务 50：说话工具表（tools/speak/*.js）声明的类型（kinds）、发法（senders）、每天上限字段（capKeys）并进来，
@@ -44,6 +48,31 @@ export function createGate({ storage, life, habits, biliRead, biliWrite, log, ga
   const lastSpokeAt = () => Math.max(0, ...all().filter((d) => d.kind !== 'dm' && ['sent', 'uncertain'].includes(d.status)).map((d) => Date.parse(d.sentAt) || 0));
   const everyMs = () => Number(habits.get().speakEvery || 60) * 60_000;
 
+  /** 心情二期-2a：烦躁 / 受挫时先不对外说话。起点存在 <storage>/hold.json（FishId + since），同一段只记一次 voice-hold。 */
+  let hold = null, holdRead = false;
+  const readHold = () => { if (!holdRead) { hold = load('hold.json', null) || null; holdRead = true; } return hold; }; // 读一次就记住（之后只认内存，不白读文件）
+  const writeHold = () => save('hold.json', hold);
+
+  /** 心情二期-2a A：(fish) → { held, why }——她该不该先不在 B站公开说话。life 没有.state / .feel（老的假 life）→ 不拦。 */
+  const held = (fish) => {
+    if (!fish) return { held: false, why: '' };
+    const feel = life?.state?.(fish)?.feel;
+    if (!feel) return { held: false, why: '' };
+    if (!behaviorOf(feel).voiceHold) { // 情绪淡下去了 → 清掉起点，放开
+      if (readHold()) { hold = null; writeHold(); }
+      return { held: false, why: '' };
+    }
+    const h = readHold();
+    if (h && h.fishId === fish.id) { // 同一段情绪：最多拦 6 小时，过了就放开（起点清掉，下次再拦重新算）
+      if (nowMs() - Number(h.since) > HOLD_MAX_MS) return { held: false, why: '' }; // 拦满 6 小时就放开；起点留着，等情绪真的淡下去才清（不然连着烦就每 6 小时重拦一次、重记一条）
+      return { held: true, why: HOLD_WHY };
+    }
+    // 这一拦刚开始：记下起点，并记一条「今天」的事件（同一段只记一次）
+    hold = { fishId: fish.id, since: nowMs() }; writeHold();
+    life?.record?.(fish, 'voice-hold', HOLD_TEXT, {});
+    return { held: true, why: HOLD_WHY };
+  };
+
   /** 真的发一条（批准或自动都走这里）：再过一遍规矩和上限 → 发 → 足迹。改的是 list 里的 d，调用方负责传最新 list。 */
   async function sendDraft(list, d, text, fish) {
     const parent = Boolean(d.target?.parent);
@@ -61,6 +90,7 @@ export function createGate({ storage, life, habits, biliRead, biliWrite, log, ga
     else if (senders[d.kind]) { try { r = await senders[d.kind]({ ...d, text }, { biliRead, biliWrite }); } catch (e) { r = { status: 'uncertain', reason: `发的时候出错（${String(e?.message || e).slice(0, 60)}），不重试` }; } }
     else r = await biliWrite.post({ text, pics: d.image ? [d.image] : null });
     d.status = r.status === 'sent' ? 'sent' : r.status === 'uncertain' ? 'uncertain' : 'failed';
+    if (fish && !parent && d.status === 'failed') life?.record?.(fish, 'voice-rejected', '在 B站说的一句话没发出去', {}); // 心情二期-2a C：平台拒了 → 对 B站受挫（uncertain 不算，爸妈专线不记）
     if ((d.status === 'sent' || d.status === 'uncertain') && d.target?.mid && !parent) person?.notePerson(d.target.mid); // G4：对这个人又互动了一次
     d.result = { reason: r.reason || null, url: r.url || null }; d.sentAt = nowDate().toISOString();
     save('drafts.json', list);
@@ -78,16 +108,18 @@ export function createGate({ storage, life, habits, biliRead, biliWrite, log, ga
     /** 对同一个人每天上限（G4）用互动账本：宿主建好 acts 后接上（acts 也要用闸门记足迹，所以后接）。 */
     usePerson(p) { person = p; },
     kinds: () => K,
+    held,
     /** 她申请发一条：过规矩 → 进信箱。返回 { ok, id? , problems? }。 */
     propose(fish, { kind, text, target = null, image = null }) {
       if (!K[kind]) return { ok: false, problems: ['不认识的类型'] };
       if (!biliWrite.ready()) return { ok: false, problems: ['她还没登录 B站'] };
       const parent = kind === 'dm' && Boolean(target?.parent);
+      if (!parent && held(fish).held) return { ok: false, held: true, problems: [HOLD_WHY] }; // 心情二期-2a B：拦着时先不进草稿箱（爸妈专线私信不拦）
       if (!limitOf(kind, parent)) return { ok: false, problems: ['上网习惯里这一项是 0'] };
       const chk = checkDraft(kind, text, { parent, kinds: K });
       if (chk.ok && target?.mid && !parent && person) { const pa = person.personAllows(target.mid); if (!pa.ok) return { ok: false, problems: [pa.why] }; } // G4
       const list = all();
-      if (!chk.ok) { log?.info?.(`[dsh-yushe] 草稿被闸门拦下（${chk.problems.join('、')}）`); return { ok: false, problems: chk.problems }; }
+      if (!chk.ok) { log?.info?.(`[dsh-yushe] 草稿被闸门拦下（${chk.problems.join('、')}）`); if (fish && !parent) life?.record?.(fish, 'voice-rejected', '想说的一句话没过鱼社的规矩', {}); return { ok: false, problems: chk.problems }; } // 心情二期-2a C：规矩没过 → 对 B站受挫（上限 / 排队 / 重复不算）
       const auto = parent || habits.get().speakMode !== 'approve';
       if (!(auto && kind === 'dm') && list.filter((d) => d.status === (auto ? 'queued' : 'pending') && d.kind !== 'dm').length >= MAX_PENDING) return { ok: false, problems: [auto ? '想说的话排太多了' : '信箱里等批准的太多了'] }; // 私信不排队（马上发），不占公开发言的队
       if (kind === 'dm' && !parent) { // 还在路上的也算进今天的上限，免得一下子回超了

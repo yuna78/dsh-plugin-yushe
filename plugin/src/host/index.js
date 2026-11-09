@@ -46,7 +46,7 @@ import { createWorkspaces, registerWorkspaceRoutes } from './workspaces.js';
 export const name = 'dsh-plugin-yushe'; // 包名；存档目录、路由前缀仍叫 dsh-yushe（老存档不丢）
 // 人设注入要用 systemPrompt（所有带 dsh-base 的 profile 都有）
 export const inject = ['systemPrompt'];
-export const VERSION = '0.45.0';
+export const VERSION = '0.46.0';
 export const STATUS_PATH = '/api/dsh-yushe/status';
 export const SAY_PATH = '/api/dsh-yushe/probe/say';
 export const ROAM_PATH = '/api/dsh-yushe/probe/roam';
@@ -133,7 +133,7 @@ export function apply(ctx) {
   const dms = createDms({ storage: storageDir(), life, wallet, habits, biliRead, gate, log, gates });
   const memory = createMemory({ storage: storageDir(), life, gate, inbox, dms, habits, log }); // F-76：从档案抄成会慢慢忘的记忆
   const seenLog = createSeenLog({ storage: storageDir(), log }); // F-86：看过的每一条都留底的流水账（和会慢慢忘的记忆分开）
-  const trips = createTrips({ life, wallet, pond, storage: storageDir(), log, habits, biliRead, gate, memory, gates, seenLog });
+  const trips = createTrips({ life, wallet, pond, storage: storageDir(), log, habits, biliRead, gate, memory, gates, seenLog, inbox });
   const toolDeps = { pond, life, wallet, habits, trips, log, biliRead, biliWrite, inbox, dms, gate, acts, memory, seenLog };
   registerYusheTools(ctx, toolDeps);
   // 任务 51：出门 = 她自己调工具（同一张工具表的「出门」出口，带读账给 G2 证据检查）；宿主模型拿不到就走 headless 老路
@@ -148,7 +148,9 @@ export function apply(ctx) {
     try { if (back.trip.wantComment) gate.propose(f, { kind: 'comment', text: back.trip.wantComment.text, target: back.trip.wantComment.target }); if (back.trip.wantPost) gate.propose(f, { kind: 'post', text: back.trip.wantPost }); } catch { /* 不影响回家 */ }
     if (!back.trip.failed) letters.maybe(f, 'trip', `【这趟看到的】\n${(back.trip.seen || []).slice(0, 6).map((x) => `- ${x.title}`).join('\n')}\n【明信片上写的】${String(back.trip.postcard || '').slice(0, 200)}`); };
   // 她自己决定要不要出门：DSH 开着时每 10 分钟问一次（也顺手推进寄明信片 / 回家）
-  ctx.effect(() => { const t = setInterval(() => { try { trips.autoTick(); } catch (e) { log?.warn?.(`[dsh-yushe] autoTick: ${e?.message || e}`); } gate.flush(pond.current() || pond.list().fish.at(-1)).catch(() => {}); try { dreams.tick(); } catch (e) { log?.warn?.(`[dsh-yushe] dream tick: ${e?.message || e}`); } try { homes.tick(); } catch (e) { log?.warn?.(`[dsh-yushe] home tick: ${e?.message || e}`); } planner.tick(pond.current() || pond.list().fish.at(-1)).catch(() => {}); inbox.poll(pond.current() || pond.list().fish.at(-1)).catch(() => {}); dms.poll(pond.current() || pond.list().fish.at(-1)).catch(() => {}); try { memory.sync(pond.current() || pond.list().fish.at(-1), { minGapMs: 0 }); } catch { /* 记忆同步失败不影响 */ } }, 10 * 60_000); return () => clearInterval(t); }, 'dsh-yushe: wander timer');
+  ctx.effect(() => { const t = setInterval(() => { try { trips.autoTick(); } catch (e) { log?.warn?.(`[dsh-yushe] autoTick: ${e?.message || e}`); } gate.flush(pond.current() || pond.list().fish.at(-1)).catch(() => {}); try { dreams.tick(); } catch (e) { log?.warn?.(`[dsh-yushe] dream tick: ${e?.message || e}`); } try { homes.tick(); } catch (e) { log?.warn?.(`[dsh-yushe] home tick: ${e?.message || e}`); } try { letters.tick(pond.current() || pond.list().fish.at(-1)); } catch (e) { log?.warn?.(`[dsh-yushe] letter tick: ${e?.message || e}`); } planner.tick(pond.current() || pond.list().fish.at(-1)).catch(() => {}); inbox.poll(pond.current() || pond.list().fish.at(-1)).catch(() => {}); dms.poll(pond.current() || pond.list().fish.at(-1)).catch(() => {}); try { memory.sync(pond.current() || pond.list().fish.at(-1), { minGapMs: 0 }); } catch { /* 记忆同步失败不影响 */ } }, 10 * 60_000); return () => clearInterval(t); }, 'dsh-yushe: wander timer');
+  // F-81：私信 / 留言单独一个 1 分钟的钟（各自按冷热节奏节流）；出门还是 10 分钟一次，免得多了就总想出门
+  ctx.effect(() => { const t = setInterval(() => { const f = pond.current() || pond.list().fish.at(-1); dms.poll(f).catch(() => {}); inbox.poll(f).catch(() => {}); }, 60_000); return () => clearInterval(t); }, 'dsh-yushe: 私信 / 留言 timer');
   // DSH 的工作区表（她在哪个工作区上工，F-64）：有就拿，没有（老宿主）就当「所有工作区」
   let wsRegistry = null;
   if (typeof ctx.inject === 'function') { try { ctx.inject(['workspaceRegistry'], (scope) => { wsRegistry = scope.workspaceRegistry; scope.effect(() => () => { wsRegistry = null; }, 'dsh-yushe: workspace registry'); }); } catch { /* 没有工作区服务 */ } }

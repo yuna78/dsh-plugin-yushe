@@ -19,6 +19,12 @@ export function speakReady({ biliRead, biliWrite, gate, pond }) {
  */
 export async function speak(deps, from, { kind, what, max, target, args, material = [], ledger = null, bvid = null, rules = [], image = null }) {
   const led = ledger || deps.ledger || createLedger();
+  // 心情二期-2a：烦躁 / 受挫时先不对外说话——主会话这条路在写草稿（调模型）之前、出门这条路在证据检查之前就挡；
+  // 爸妈专线私信（kind 'dm' 且 target.parent）不拦。
+  if (!(kind === 'dm' && target?.parent)) {
+    const hd = deps.gate?.held?.(deps.pond?.current?.() || null);
+    if (hd?.held) return { ok: false, held: true, error: hd.why };
+  }
   let text;
   if (from === 'trip') {
     text = String(args.text ?? '').trim();

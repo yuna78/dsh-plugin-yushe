@@ -1,7 +1,8 @@
 /**
- * 信箱（F-37）：她有由头时主动给爸妈写信，信的内容全由模型写，规则只决定「什么时候写、一天最多几封」。
+ * 信箱（F-37）：她心里有由头时主动给爸妈写信，信的内容全由模型写，规则只决定「什么时候写、一天最多几封」。
  *
- * 由头：trip 出门回来 / money 零花钱快花光 / low 心情跌到谷底 / high 心情爆棚 / reflect 晚上的感悟。
+ * 由头：trip 出门回来 / money 零花钱快花光 / miss 想你了 / share 想跟你炫耀 / comfort 想找你说说 / reflect 晚上的感悟
+ *   （心情-二期-2b：谷底 / 爆棚退役，检查挪到宿主 10 分钟定时器 letters.tick，onMood 只是顺手再看一眼）。
  *   GET  /api/dsh-yushe/letters        信（新的在前）+ 未读数
  *   POST /api/dsh-yushe/letters/read   全部标成已读
  * 写信在后台跑，不阻塞任何请求；同一条鱼同时只写一封。
@@ -9,6 +10,7 @@
 import { nowDate } from './clock.js';
 import { dayOf, lifeSection } from './life-engine.js';
 import { shouldWrite, letterPrompt, LETTER_KINDS } from '../shared/mood.js';
+import { behaviorOf, feelSection, temperOf } from '../shared/feel.js';
 import { createGates } from './gates.js';
 
 export const LETTERS_PATH = '/api/dsh-yushe/letters';
@@ -25,13 +27,18 @@ export function createLetters({ life, wallet, pond, log, habits, gates = null })
       const s = life.state(fish);
       const now = nowDate();
       const day = dayOf(now);
-      const visitedToday = (s.events || []).some((e) => e.day === day && ['chat', 'feed', 'pat', 'greet', 'nap'].includes(e.kind));
+      // 「来过」：今天房间里有互动，或在主会话里帮爸妈干过活；走廊里 (life-routes) 还有 dm-parent（爸妈的私信）
+      const visitedToday = (s.events || []).some((e) => e.day === day && ['chat', 'feed', 'pat', 'greet', 'nap', 'dm-parent'].includes(e.kind))
+        || (typeof life.workToday === 'function' && (life.workToday(s, fish) || 0) > 0);
       if (!shouldWrite(kind, { letters: s.letters || [], day, hour: now.getHours(), visitedToday, broke: wallet.view().broke })) return false;
       writing.add(fish.id);
       (async () => {
         try {
           const events = life.eventsOf(s, day).slice(-12).map((e) => e.text);
-          const prompt = letterPrompt({ fish, kind, lifeText: lifeSection(fish, s, now), events, wallet: wallet.view(), extra });
+          const prompt = letterPrompt({
+            fish, kind, lifeText: lifeSection(fish, s, now), events, wallet: wallet.view(), extra,
+            feelText: feelSection(s.feel, { call: fish.parentCall, temper: temperOf(s.growth), scene: 'home' }),
+          });
           const r = await wallet.say('letter', prompt, null, 60_000);
           life.addLetter(fish, { day, at: nowDate().toISOString(), kind, kindText: LETTER_KINDS[kind], text: r.text.slice(0, 600) });
           life.record(fish, 'letter', `给${fish.parentCall}写了一封信（${LETTER_KINDS[kind]}）`, {});
@@ -39,12 +46,15 @@ export function createLetters({ life, wallet, pond, log, habits, gates = null })
       })();
       return true;
     },
-    /** 心情越过谷底 / 爆棚的线就写一封。before / after 是变化前后的心情。 */
-    onMood(fish, before, after) {
-      if (before >= 25 && after < 25) return letters.maybe(fish, 'low');
-      if (before < 92 && after >= 92) return letters.maybe(fish, 'high');
-      return false;
+    /** 心里有没有「想找爸妈」的事：behaviorOf 的由头到了强度线就交给 maybe（谷底 / 爆棚的老由头退役，二期-2b）。
+     *  醒着 / 不安静 / 有钱 / 频率这些资格由 maybe 判，这里只认由头；没由头返回 false。宿主 10 分钟定时器里调。 */
+    tick(fish) {
+      if (!fish) return false;
+      const k = behaviorOf(life.state(fish).feel).reachOut;
+      return k ? letters.maybe(fish, k) : false;
     },
+    /** 心情变化后顺手再看一眼由头（不再判谷底 / 爆棚；before / after 只是老调用方留下来的位置）。 */
+    onMood(fish) { return letters.tick(fish); },
   };
   // 零花钱从「够」掉到「快没了」（心情-一期-3 C）：**先**给当前上工的鱼记一条 money-low 情绪事件
   // （EVENT_FEELS.money-low → 担心，about self；一天一次，不重复记），再走写信由头——

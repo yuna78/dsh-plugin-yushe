@@ -17,6 +17,8 @@ import PROMPTS from '../prompts/_all.js';
 // 三种明信片（F-85）的词表在 shared/postcard.js（和页面、记忆共用一份）；这里只做契约验收（say 是不是这三种、text 多长）。
 // 怎么选、怎么写全在 prompts/trip-report.md（原则 6：表达不进代码，这个文件里不出现那三个词）。
 import { POSTCARD_SAYS } from '../shared/postcard.js';
+// 二期-1b：她说「逛多久」就这三档；别的（没写、乱写）回来照常
+import { STAY_SCALE } from '../shared/trip.js';
 
 const CLEAN = (s, n = 120) => String(s ?? '').replace(/[\u0000-\u001f<>`]/g, ' ').replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, '').replace(/\s+/g, ' ').trim().slice(0, n);
 
@@ -58,7 +60,10 @@ export function parseReport(text, catalog) {
   }
   // F-85：她的话最多 120 字（和明信片正面一格写得下的长度一致），她说哪种是不是这三种、不对就当见闻（词表来自 shared/postcard.js）
   const pc = rawPc && typeof rawPc === 'object' && POSTCARD_SAYS.includes(rawPc.say) ? rawPc.say : '见闻';
-  return { postcard: CLEAN(pcText, 120), postcardSay: pc, seen: seen.slice(0, 12), verdict, dropped, parsed: Boolean(j), photo };
+  // 二期-1b：这趟她想逛多久（她自己在游记里说）；不是 STAY_SCALE 里那三档（没写 / 乱写）就当「照常」
+  const stayRaw = typeof j?.stay === 'string' ? j.stay.replace(/[\s。.！!，,]/g, '') : '';
+  const stay = STAY_SCALE[stayRaw] != null ? stayRaw : '照常'; // 带了标点 / 空格也认（「早点回。」）
+  return { postcard: CLEAN(pcText, 120), postcardSay: pc, seen: seen.slice(0, 12), verdict, dropped, parsed: Boolean(j), photo, stay };
 }
 
 /** 她交的梦（最后一段文字里的 JSON）→ 只留真的看过的链接（和游记同一套核实）。 */
@@ -125,9 +130,10 @@ export function parseHome(text, catalog) {
 }
 
 /** 这趟出门的系统提示（只有她自己的东西）。 */
-export function tripSystem({ persona, moodText = '', interests = [], ups = [], favZones = [], avoidWords = [], maxCalls, caps = {}, memoryText = '', commented = [], dislikes = [], maxNotes = 6, recentSays = [] }) {
+export function tripSystem({ persona, moodText = '', interests = [], ups = [], favZones = [], avoidWords = [], maxCalls, caps = {}, memoryText = '', commented = [], dislikes = [], maxNotes = 6, recentSays = [], replies = [] }) {
   // 「有就加一行、没有就不加」的那几行：先拼成一个块（没有就空串）填进 md
   const extras = [
+    replies.length ? `出门前先看留言：${replies.map((r) => `${r.who || '有人'} 回了你`).join('、')}。先去 bili_inbox 看「回复」，能用 bili_reply 回一句就回（要 rpid / oid / type，消息里带着就回；不回也行）。` : '', // F-81：留言优先
     interests.length ? `你最近的爱好：${interests.join('、')}。` : '',
     ups.length ? `你常看的 UP 主：${ups.join('、')}。` : '',
     favZones.length ? `爸妈说你可以多看：${favZones.join('、')}。` : '',

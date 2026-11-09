@@ -51,6 +51,7 @@ export const EMOTIONS = {
   down:       { name: '低落', sign: -1, half: 6 },
   worried:    { name: '担心', sign: -1, half: 12 },
   cranky:     { name: '烦躁', sign: -1, half: 3 },
+  bored:      { name: '无聊', sign: -1, half: 12 },   // 二期-1a：只从「24 小时没新鲜事」来，一点新鲜事就清掉
 };
 export const MAX_EMOTIONS = 3;
 
@@ -66,6 +67,7 @@ const FEEL_WORDS = {
   down:       { strong: '很低落',     mild: '有点低落' },
   worried:    { strong: '很担心',     mild: '有点担心' },
   cranky:     { strong: '很烦躁',     mild: '有点烦躁' },
+  bored:      { strong: '好无聊',     mild: '有点无聊' },
 };
 /** about 的说法（写名字的来历）。 */
 const ABOUT_TEXT = { parent: '是家里的事', web: '是 B站上的事', world: '是外面看到的', self: '是你自己的处境' };
@@ -146,8 +148,20 @@ export const EVENT_FEELS = {
   'draft-no':      { up: 'frustrated', about: 'self', n: 12 },
   'late-work':     { up: 'cranky', about: 'self', n: 10 },
   'money-low':     { up: 'worried', about: 'self', n: 10 },
+  // 二期-1a B：新的情绪来源（发不出去的只在本单定义，2a 才去记它）
+  woken:           { up: 'cranky', about: 'self', n: 18 },      // 睡着被叫醒聊天（单独一次只是有点烦）
+  drained:         { up: 'cranky', about: 'self', n: 16 },      // 醒着精力见底（引擎每 3 小时过一次）
+  'voice-rejected': { up: 'frustrated', about: 'web', n: 20 },  // 评论 / 动态没发出去（单独一条不至于闭嘴）
+  bored:           { up: 'bored', about: 'self', n: 14 },       // 24 小时没新鲜事（一天一次）
   nap:             null,
 };
+
+/**
+ * 「新鲜事」的种类（二期-1a A）：过了这些事她就不无聊了；引擎同时拿它更新 lastFreshAt。
+ * 只收外面的收获（回家、刷到喜欢的、B站有动静）和爸妈的互动；深夜干活、发不出去这些不算。
+ */
+export const FRESH_KINDS = ['back', 'home-liked', 'inbox-reply', 'inbox-like', 'inbox-follow', 'dm-in', 'dm-parent', 'posted', 'act-follow', 'chat', 'pat', 'feed', 'greet', 'news'];
+const FRESH_SET = new Set(FRESH_KINDS);
 
 /** 老存档 / 别处来的 feel 补全并深拷贝：不改传入的对象。 */
 const normalizeFeel = (feel) => ({
@@ -182,6 +196,8 @@ export function feelEvent(inputFeel, event, ctx = {}) {
   if (!spec) return { feel: f, changes: [], reconciled: false, reunion: false };
 
   const atMs = tsOf(event.at) || f.lastAt;
+  // 一点新鲜事就不无聊了（心情二期-1a A）：回家、刷到喜欢的、爸妈搭理她这些清掉；不新鲜的（深夜干活、发不出去）清不掉
+  if (FRESH_SET.has(event.kind)) f.emotions = f.emotions.filter((e) => e.kind !== 'bored');
   const temper = ctx.temper && typeof ctx.temper === 'object' ? ctx.temper : {};
   const call = ctx.call || '妈妈';
   const re = Number.isFinite(Number(temper.reactivity)) ? Number(temper.reactivity) : 1;
@@ -428,7 +444,66 @@ export function feelSection(feel, { call = '妈妈', temper = {}, scene = 'home'
   return '';
 }
 
-/* ---------------- H. 迁移 ---------------- */
+/* ---------------- H. 行为系数（二期-1a D，docs/设计/16-心情.md 8.2 B） ---------------- */
+
+/**
+ * 心情 → 她做事的几个系数，都是可复现的规则，二期各处只读这一个纯函数（1b 出门 / 1c 拒绝 / 1d 姿势 / 2a 闸门 / 2b 写信）。
+ * 纯函数：不改传入的 feel、不读时钟、不用随机数。台词由头不在这里（1c 的事），频率不在这里（2b 的事）。
+ */
+
+/** 门槛都写成导出的常量（不散在代码里）：拒绝出门 / 先不对外说话 / 姿势 / 主动找爸妈各自的强度线。 */
+export const REFUSE_AT = { hurt: 50, cranky: 40, down: 50 }; // 拒绝出门：对爸妈委屈 ≥ 50、烦躁 ≥ 40、低落 ≥ 50
+export const HOLD_AT = 40;           // 先不对外说话：烦躁 ≥ 40，或 about web 的受挫 ≥ 40
+export const POSE_AT = 30;           // 姿势只用够强的主导情绪
+export const REACH_AT = { miss: 40, share: 50, comfort: 50 }; // 主动找爸妈的由头
+const OUT_BASE = 0.84;               // 没有情绪时 = 现在心情 60 分的系数（0.8 + (60 − 50) / 250），默认出门频率不变
+const OUT_MAX = 1.6, OUT_MIN = 0.5;
+/** 出门倾向：每 1 点情绪强度推多少。对 B站的受挫稍 ↑（换换心情）；about self 的不动。 */
+const OUT_WEIGHTS = {
+  joy: 0.004, proud: 0.003, curious: 0.003, bored: 0.004, 'frustrated@web': 0.001,
+  loved: -0.0012, down: -0.004, worried: -0.004, cranky: -0.004, miss: -0.003,
+};
+/** 主导情绪 → 在家的姿势（只能是 room.js 的 ALL_POSES 里有的名字；1d 接进 snapshot）。 */
+const POSE_OF = {
+  hurt: 'sulk', down: 'sad', frustrated: 'sad', cranky: 'yawn', worried: 'think', miss: 'think',
+  joy: 'cheer', proud: 'cheer', loved: 'shy', curious: 'read', bored: 'phone',
+};
+const REFUSE_ORDER = ['hurt', 'cranky', 'down']; // 都到门槛时比强度，强度相同按这个顺序取
+
+export function behaviorOf(feel) {
+  const list = (feel && Array.isArray(feel.emotions) ? feel.emotions : [])
+    .filter((e) => e && EMOTIONS[e.kind])
+    .map((e) => ({ kind: e.kind, about: ABOUT_TEXT[e.about] ? e.about : 'self', intensity: clampN(Number(e.intensity) || 0, 0, 100), cause: String(e.cause || '') }));
+  const I = (kind, about) => list.filter((e) => e.kind === kind && (!about || e.about === about)).reduce((n, e) => n + e.intensity, 0);
+
+  // 出门倾向：基线上按每个情绪推
+  const outBias = round2(clampN(list.reduce((b, e) => b + (OUT_WEIGHTS[e.kind] ?? (e.kind === 'frustrated' && e.about === 'web' ? OUT_WEIGHTS['frustrated@web'] : 0)) * e.intensity, OUT_BASE), OUT_MIN, OUT_MAX));
+
+  // 拒绝出门：同时满足取最强的（先比强度，一样强按 REFUSE_ORDER）
+  const refuseKind = REFUSE_ORDER.filter((k) => I(k) >= REFUSE_AT[k])
+    .slice().sort((a, b) => I(b) - I(a) || REFUSE_ORDER.indexOf(a) - REFUSE_ORDER.indexOf(b))[0];
+  const refuse = refuseKind ? { reason: refuseKind, cause: list.find((e) => e.kind === refuseKind)?.cause || '' } : null;
+
+  // 先不对外说话：烦躁，或对 B站的受挫（草稿被否这种自己的受挫不算，不迁怒）
+  const voiceHold = I('cranky') >= HOLD_AT || I('frustrated', 'web') >= HOLD_AT;
+
+  // 姿势：主导情绪够强才给
+  const [top] = list.slice().sort((a, b) => b.intensity - a.intensity || (a.kind < b.kind ? -1 : 1));
+  const pose = top && top.intensity >= POSE_AT ? POSE_OF[top.kind] || null : null;
+
+  // 主动找爸妈：说说（受挫 / 低落）> 想念 > 炫耀（对 B站的得意）
+  const reachOut = list.some((e) => (e.kind === 'frustrated' || e.kind === 'down') && e.intensity >= REACH_AT.comfort)
+    ? 'comfort'
+    : I('miss') >= REACH_AT.miss
+      ? 'miss'
+      : I('proud', 'web') >= REACH_AT.share
+        ? 'share'
+        : null;
+
+  return { outBias, refuse, voiceHold, pose, reachOut };
+}
+
+/* ---------------- I. 迁移 ---------------- */
 
 /**
  * 老存档只有 mood 数：折回 valence，让 moodOf(migrateFeel(m)) 尽量等于 m（情绪为空）。

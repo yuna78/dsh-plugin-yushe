@@ -1,13 +1,13 @@
 /**
- * 私信 + 爸妈专线（M5 任务 46）：她醒着时每 20 分钟看一眼 B站私信，有人先找她就回。
+ * 私信 + 爸妈专线（M5 任务 46）：她醒着时冷 8 分钟看一次，聊起来 3 分钟一轮；夜里只给爸妈专线回。
  *
- *   dms.poll(fish)               宿主 10 分钟定时器调；自己控制成 20 分钟一次（爸妈专线要回得快一点）
+ *   dms.poll(fish)               宿主 2 分钟互动定时器调；自己控制节奏（冷 / 热 / 夜里）
  *   GET  /api/dsh-yushe/dms      最近的对话（谁、说了什么、她回了什么、是不是爸妈）+ 没看过几条
  *   POST /api/dsh-yushe/dms      {seen:true} 打开信箱时标成看过；{refresh:true} 马上看一眼
  *
  * 规矩（shared/dm.js）：只回真人的文字私信、只回对方先说的；第一次只记进度不回旧消息；
  * 爸妈专线不占上限、马上发；陌生人占「每天最多回几条」、按「在 B站说话」的方式（自己发 / 要我批准）。
- * 回的话走闸门（gate.propose kind 'dm'）。一轮最多处理 3 个人，省读次数和零花钱。存 <storage>/dms.json。
+ * 回的话走闸门（gate.propose kind 'dm'）。一轮最多处理 5 个人，省读次数和零花钱。存 <storage>/dms.json。
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -15,11 +15,13 @@ import { accountFile } from './account.js';
 import { readJsonBody } from './game-routes.js';
 import { createGates } from './gates.js';
 import { nowDate, nowMs } from './clock.js';
-import { lifeSection } from './life-engine.js';
+import { asleepAt, lifeSection } from './life-engine.js';
 import { pendingTalkers, newTexts, dmPrompt, parseDmReply } from '../shared/dm.js';
 
 export const DMS_PATH = '/api/dsh-yushe/dms';
-const EVERY = 20 * 60_000, PER_POLL = 3, KEEP = 12;
+// F-81：私信优先——冷 8 分钟、聊起来 3 分钟；夜里只给爸妈专线留 20 分钟一轮（陌生人不打扰睡觉）。
+const COLD = 8 * 60_000, HOT = 3 * 60_000, NIGHT = 20 * 60_000, HOT_WINDOW = 20 * 60_000, PER_POLL = 5, KEEP = 12;
+export const DMS_EVERY = { cold: COLD, hot: HOT, night: NIGHT, perPoll: PER_POLL };
 
 export function createDms({ storage, life, wallet, habits, biliRead, gate, log, gates = null }) {
   const file = () => accountFile(storage, 'dms.json'); // G5：按号分开存，换号从零开始
@@ -50,20 +52,26 @@ export function createDms({ storage, life, wallet, habits, biliRead, gate, log, 
       if (busy) return { ok: false, why: '正在看' };
       if (!biliRead?.loggedIn?.()) return { ok: false, why: '她还没登录 B站' };
       const st = load();
-      if (!force && st.lastPoll && nowMs() - Date.parse(st.lastPoll) < EVERY) return { ok: false, why: '20 分钟看一次' };
-      if (!force && G.closed('act')) return { ok: false, why: G.open('act').why }; // 出口闸（F-79）
+      const asleep = asleepAt();
+      const parentMid = habits.get().parentMid;
+      if (!force && G.closed('act') && !parentMid) return { ok: false, why: G.open('act').why }; // 出口闸（F-79）：睡着不看别人的私信
+      // 醒了第一眼：上一轮还在睡觉，这一轮不按冷热节奏等
+      const wasAsleep = st.lastPoll ? asleepAt(new Date(st.lastPoll)) : false;
+      const hot = Object.values(st.talkers || {}).some((c) => c.at && nowMs() - Date.parse(c.at) < HOT_WINDOW);
+      const every = asleep ? NIGHT : hot ? HOT : COLD; // 夜里只给爸妈专线留 20 分钟一轮
+      if (!force && st.lastPoll && nowMs() - Date.parse(st.lastPoll) < every && !(wasAsleep && !asleep)) return { ok: false, why: asleep ? '夜里 20 分钟看一次（只回爸妈）' : hot ? '聊着天，3 分钟看一次' : '8 分钟看一次' };
       busy = true;
       try {
         const sessions = await biliRead.dmSessions();
         const me = biliRead.myMid();
-        const parentMid = habits.get().parentMid;
         st.lastPoll = nowDate().toISOString();
-        const todo = pendingTalkers(sessions, me, st.talkers);
+        let todo = pendingTalkers(sessions, me, st.talkers);
         if (!st.seeded) { // 第一次：只记进度，不回旧消息
           for (const s of sessions || []) if (s?.session_type === 1 && !s.system_msg_type) st.talkers[String(s.talker_id)] = { who: null, lastSeqno: Number(s.max_seqno) || 0, history: [], seen: true };
           st.seeded = true; save(st);
           return { ok: true, seeded: true, handled: 0 };
         }
+        if (asleep) todo = todo.filter((t) => t.mid === parentMid); // 睡觉时只回爸妈专线
         // 爸妈先回
         todo.sort((a, b) => (b.mid === parentMid) - (a.mid === parentMid));
         let handled = 0;
@@ -71,6 +79,10 @@ export function createDms({ storage, life, wallet, habits, biliRead, gate, log, 
           const conv = st.talkers[t.mid] || (st.talkers[t.mid] = { who: null, lastSeqno: 0, history: [] });
           conv.who = t.who || conv.who || '网友';
           const parent = Boolean(parentMid) && t.mid === parentMid;
+          if (!parent) { // 心情二期-2a B3：她烦躁 / 受挫时先不回陌生人——拉消息之前就跳过，不推进 lastSeqno、不记 dm-in、不算处理过，情绪过了再拉到再回
+            const hd = gate?.held?.(fish);
+            if (hd?.held) { conv.note = '她现在有点烦，过会儿再回'; continue; }
+          }
           const msgs = await biliRead.dmMessages(t.mid).catch(() => []);
           const incoming = newTexts(msgs, t.mid, conv.lastSeqno);
           conv.lastSeqno = Math.max(conv.lastSeqno, t.maxSeqno, ...incoming.map((m) => m.seqno));
@@ -86,8 +98,9 @@ export function createDms({ storage, life, wallet, habits, biliRead, gate, log, 
         if (handled) log?.info?.(`[dsh-yushe] 私信：处理了 ${handled} 个人`);
         return { ok: true, handled };
       } catch (e) {
-        log?.warn?.(`[dsh-yushe] 私信：${String(e?.message || e).slice(0, 80)}`);
-        return { ok: false, why: String(e?.message || e).slice(0, 80) };
+        const why = String(e?.message || e).slice(0, 80);
+        if (!/用完了|歇歇眼睛|这一小时|风控/.test(why)) log?.warn?.(`[dsh-yushe] 私信：${why}`); // 预算 / 风控不算故障，别每 2 分钟刷一条日志
+        return { ok: false, why };
       } finally { busy = false; }
     },
     unseen: () => Object.values(load().talkers).filter((c) => c.seen === false).length,

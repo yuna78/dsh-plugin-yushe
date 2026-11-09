@@ -17,7 +17,7 @@ export default defineTool({
     if (a.what === '回复') return { ok: true, items: await biliRead.repliesToMe(n), usage: biliRead.usage() };
     if (a.what === '点赞') return { ok: true, items: await biliRead.likesToMe(n), usage: biliRead.usage() };
     if (a.what === '@') {
-      const d = await biliRead.raw('/x/msgfeed/at', { platform: 'web', build: 0, mobi_app: 'web' });
+      const d = await biliRead.raw('/x/msgfeed/at', { platform: 'web', build: 0, mobi_app: 'web' }, { kind: 'interact' });
       return { ok: true, items: (d?.items || []).slice(0, n).map((x) => ({ who: clean(x.user?.nickname, 20) || '有人', mid: x.user?.mid ? String(x.user.mid) : null, text: clean(x.item?.source_content, 140), where: clean(x.item?.title, 60), url: safeBiliUrl(x.item?.uri), at: isoOf(x.at_time) })), usage: biliRead.usage() };
     }
     return { ok: false, error: 'what 只能是 回复 / @ / 点赞 / 未读' };

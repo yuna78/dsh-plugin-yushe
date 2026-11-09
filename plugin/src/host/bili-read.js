@@ -28,6 +28,9 @@ const VC_PATHS = new Set(['/session_svr/v1/session_svr/get_sessions', '/svr_sync
 export const DAILY_BUDGET = 300;
 export const PER_MINUTE = 6;
 export const PER_HOUR = 60;
+// F-81：读预算拆两个池子——互动（私信 / 收件箱）先留够，内容（刷视频 / 新闻）用剩下的，还能借互动当天没用的。
+export const INTERACT_SHARE = 0.8;
+export const poolsOf = (total) => { const cap = Math.max(2, Number(total) || DAILY_BUDGET); const interact = Math.max(1, Math.round(cap * INTERACT_SHARE)); return { interact, content: Math.max(1, cap - interact), total: cap }; };
 const BACKOFF_BASE = 30 * 60_000, BACKOFF_MAX = 8 * 3600_000, STREAK_WINDOW = 6 * 3600_000;
 const RISK_CODES = new Set([-352, -412, -401, -509, 412, 429]);
 
@@ -71,24 +74,37 @@ export function createBiliRead(storage, fetchImpl = fetch, { extraPaths = null, 
     if (!existsSync(credFile)) return '';
     try { const c = JSON.parse(readFileSync(credFile, 'utf8')); return c.sessdata ? `SESSDATA=${c.sessdata}; bili_jct=${c.bili_jct || ''}; DedeUserID=${c.dedeuserid || ''}; buvid3=${c.buvid3 || ''}` : ''; } catch { return ''; }
   };
-  /** 今天还能不能读：预算 + 风控退避 + 小时窗口。 */
-  const gate = () => {
+  /** 今天的两个池子各用了多少；老存档只有一个总数，都算内容。 */
+  const countsOf = (s) => {
+    if (s.day !== today()) return { interact: 0, content: 0 };
+    if (s.counts) return { interact: Number(s.counts.interact) || 0, content: Number(s.counts.content) || 0 };
+    return { interact: 0, content: Number(s.count || 0) || 0 };
+  };
+  /** 今天还能不能读（kind = interact 互动 / content 内容）：总预算 + 分池 + 风控退避 + 小时窗口。 */
+  const gate = (kind = 'content') => {
     const s = state();
     if (s.backoffUntil && nowMs() < s.backoffUntil) return { ok: false, why: 'B站暂时不让读（风控），过一会儿再试' };
-    const cap = Math.max(1, Number(budget()) || DAILY_BUDGET);
-    if (s.day === today() && (s.count || 0) >= cap) return { ok: false, why: `今天 B站已经读了 ${cap} 次，歇歇眼睛` };
+    const p = poolsOf(budget()), c = countsOf(s);
+    if (c.interact + c.content >= p.total) return { ok: false, why: `今天 B站已经读了 ${p.total} 次，歇歇眼睛` };
+    if (kind === 'interact') {
+      if (c.interact >= p.interact) return { ok: false, why: `今天互动读 B站 ${p.interact} 次用完了（私信 / 收件箱），歇一会儿` };
+    } else {
+      const capC = p.content + Math.max(0, p.interact - c.interact); // 互动没用完的额度，内容可以借
+      if (c.content >= capC) return { ok: false, why: `今天看内容读 B站 ${capC} 次用完了（互动优先），歇歇眼睛` };
+    }
     if ((s.recent || []).filter((t) => nowMs() - t < 3600_000).length >= perHour) return { ok: false, why: `这一小时 B站已经读了 ${perHour} 次，慢一点` };
     return { ok: true };
   };
   /** 放行一次读：过 gate；分钟窗口满了就等到有空位（最多等一分钟）；放行时就计数（失败也算）。串行，免得并发绕过窗口。 */
   let queue = Promise.resolve();
-  const admit = () => {
+  const admit = (kind = 'content') => {
     const run = queue.then(async () => {
-      let g = gate(); if (!g.ok) throw new Error(g.why);
+      let g = gate(kind); if (!g.ok) throw new Error(g.why);
       const inMinute = (state().recent || []).filter((t) => nowMs() - t < 60_000).sort((a, b) => a - b);
-      if (inMinute.length >= perMinute) { await sleep(Math.max(0, 60_000 - (nowMs() - inMinute[inMinute.length - perMinute]))); g = gate(); if (!g.ok) throw new Error(g.why); }
-      const s = state();
-      saveState({ ...s, day: today(), count: (s.day === today() ? s.count || 0 : 0) + 1, recent: [...(s.recent || []).filter((t) => nowMs() - t < 3600_000), nowMs()] });
+      if (inMinute.length >= perMinute) { await sleep(Math.max(0, 60_000 - (nowMs() - inMinute[inMinute.length - perMinute]))); g = gate(kind); if (!g.ok) throw new Error(g.why); }
+      const s = state(), c = countsOf(s);
+      c[kind] = (c[kind] || 0) + 1;
+      saveState({ ...s, day: today(), count: c.interact + c.content, counts: c, recent: [...(s.recent || []).filter((t) => nowMs() - t < 3600_000), nowMs()] });
     });
     queue = run.catch(() => {});
     return run;
@@ -111,13 +127,13 @@ export function createBiliRead(storage, fetchImpl = fetch, { extraPaths = null, 
     const sg = wbiSign(params, wbi.img, wbi.sub);
     return `${sg.query}&w_rid=${sg.w_rid}`;
   }
-  async function get(path, params = {}, { signed = false, as = 'json' } = {}) {
+  async function get(path, params = {}, { signed = false, as = 'json', kind = 'content' } = {}) {
     const vc = isVc(path);
     if (!isApi(path) && !vc) throw new Error('不认识的 B站接口');
     let query;
     if (signed) query = await signQuery(params);
     else query = Object.keys(params).map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(String(params[k]))}`).join('&');
-    await admit();
+    await admit(kind);
     const headers = { 'User-Agent': UA, Referer: vc ? 'https://message.bilibili.com/' : 'https://www.bilibili.com/', Origin: vc ? 'https://message.bilibili.com' : 'https://www.bilibili.com', Accept: 'application/json' };
     const ck = cookie(); if (ck) headers.Cookie = ck;
     const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 12_000);
@@ -148,14 +164,14 @@ export function createBiliRead(storage, fetchImpl = fetch, { extraPaths = null, 
     /** 风控退避中：写操作也要停（bili-write 问这个）。 */
     blocked: () => { const s = state(); return Boolean(s.backoffUntil && nowMs() < s.backoffUntil); },
     /** 工具用的通用读：只认白名单（宿主的 + 工具表声明的），照样过预算 / 窗口 / 风控。返回 B站的 data。 */
-    raw: (path, params = {}, { signed = false } = {}) => get(path, params, { signed }),
+    raw: (path, params = {}, { signed = false, kind = 'content' } = {}) => get(path, params, { signed, kind }),
     /** 通用读，返回文本（弹幕 xml）。 */
-    rawText: (path, params = {}) => get(path, params, { as: 'text' }),
+    rawText: (path, params = {}, { kind = 'content' } = {}) => get(path, params, { as: 'text', kind }),
     /** 字幕文件（播放器接口给的地址，只认 B站 CDN）：返回 [{from, to, content}]。照样占读次数。 */
     async subtitleFile(url) {
       const u = String(url || '').startsWith('//') ? `https:${url}` : String(url || '');
       if (!SUB_HOST.test(u)) throw new Error('字幕地址不是 B站的');
-      await admit();
+      await admit('content');
       const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 12_000);
       try {
         const res = await fetchImpl(u, { headers: { 'User-Agent': UA, Referer: 'https://www.bilibili.com/' }, redirect: 'manual', signal: ctl.signal });
@@ -168,30 +184,39 @@ export function createBiliRead(storage, fetchImpl = fetch, { extraPaths = null, 
     /** 她和某个人的关系：0 没关注、2 关注了、6 互关、128 拉黑。 */
     async relationTo(mid) { if (!/^\d{1,20}$/.test(String(mid))) throw new Error('UID 不对'); const d = await get('/x/relation', { fid: mid }); return Number(d?.attribute) || 0; },
     /** 私信会话列表（原样给 shared/dm.js 的 pendingTalkers 挑）。 */
-    async dmSessions() { const d = await get('/session_svr/v1/session_svr/get_sessions', { session_type: 1, group_fold: 1, unfollow_fold: 0, sort_rule: 2, build: 0, mobi_app: 'web' }); return d?.session_list || []; },
+    async dmSessions() { const d = await get('/session_svr/v1/session_svr/get_sessions', { session_type: 1, group_fold: 1, unfollow_fold: 0, sort_rule: 2, build: 0, mobi_app: 'web' }, { kind: 'interact' }); return d?.session_list || []; },
     /** 和某个人最近的消息（原样给 newTexts 挑）。 */
-    async dmMessages(mid, n = 20) { if (!/^\d{1,20}$/.test(String(mid))) throw new Error('UID 不对'); const d = await get('/svr_sync/v1/svr_sync/fetch_session_msgs', { talker_id: mid, session_type: 1, size: Math.min(30, n), build: 0, mobi_app: 'web' }); return d?.messages || []; },
+    async dmMessages(mid, n = 20) { if (!/^\d{1,20}$/.test(String(mid))) throw new Error('UID 不对'); const d = await get('/svr_sync/v1/svr_sync/fetch_session_msgs', { talker_id: mid, session_type: 1, size: Math.min(30, n), build: 0, mobi_app: 'web' }, { kind: 'interact' }); return d?.messages || []; },
     /** 收件箱未读数（回复 / 点赞 / @）。 */
-    async unread() { const d = await get('/x/msgfeed/unread'); return { reply: Number(d?.reply) || 0, like: Number(d?.like) || 0, at: Number(d?.at) || 0 }; },
-    /** 别人回她的（最近一页）。 */
+    async unread() { const d = await get('/x/msgfeed/unread', {}, { kind: 'interact' }); return { reply: Number(d?.reply) || 0, like: Number(d?.like) || 0, at: Number(d?.at) || 0 }; },
+    /** 别人回她的（最近一页）。reply 里是回这条评论要的 rpid / oid / type（字段待真号验证；解析不到就不给，工具会拒绝，不会发错）。 */
     async repliesToMe(n = 20) {
-      const d = await get('/x/msgfeed/reply', MSG);
-      return (d?.items || []).slice(0, n).map((x) => ({ id: `r${x.id}`, who: clean(x.user?.nickname, 20) || '有人', mid: x.user?.mid ? String(x.user.mid) : undefined, text: clean(x.item?.source_content, 120), mine: clean(x.item?.target_reply_content || x.item?.root_reply_content || x.item?.title, 80), title: clean(x.item?.title, 60), url: safeBiliUrl(x.item?.uri), at: isoOf(x.reply_time) })).filter((x) => x.text);
+      const d = await get('/x/msgfeed/reply', MSG, { kind: 'interact' });
+      return (d?.items || []).slice(0, n).map((x) => {
+        const it = x.item || {};
+        const oid = /^\d{1,20}$/.test(String(it.subject_id ?? it.oid ?? '')) ? String(it.subject_id ?? it.oid) : null;
+        const rpid = /^\d{1,20}$/.test(String(it.source_id ?? it.rpid ?? '')) ? String(it.source_id ?? it.rpid) : null;
+        const type = [1, 11, 12, 17].includes(Number(it.business_id)) ? Number(it.business_id) : 1; // 1 视频 / 11 相簿 / 12 专栏 / 17 动态
+        return { id: `r${x.id}`, who: clean(x.user?.nickname, 20) || '有人', mid: x.user?.mid ? String(x.user.mid) : undefined, text: clean(it.source_content, 120), mine: clean(it.target_reply_content || it.root_reply_content || it.title, 80), title: clean(it.title, 60), url: safeBiliUrl(it.uri), at: isoOf(x.reply_time), reply: oid && rpid ? { oid, rpid, type } : null };
+      }).filter((x) => x.text);
     },
     /** 别人给她点的赞（累计那一页；同一条被多人赞是一条，count = 人数）。 */
     async likesToMe(n = 20) {
-      const d = await get('/x/msgfeed/like', MSG);
+      const d = await get('/x/msgfeed/like', MSG, { kind: 'interact' });
       return (d?.total?.items || []).slice(0, n).map((x) => ({ id: `l${x.id}`, who: (x.users || []).slice(0, 2).map((u) => clean(u.nickname, 20)).filter(Boolean).join('、') || '有人', count: Number(x.counts) || (x.users || []).length || 1, mine: clean(x.item?.title || x.item?.desc, 80), url: safeBiliUrl(x.item?.uri), at: isoOf(x.like_time) }));
     },
     /** 她的粉丝（最新的一页）。 */
     async followers(n = 20) {
       const mid = myMid(); if (!mid) throw new Error('还没登录 B站');
-      const d = await get('/x/relation/followers', { vmid: mid, ps: Math.min(50, n), pn: 1, order: 'desc' });
+      const d = await get('/x/relation/followers', { vmid: mid, ps: Math.min(50, n), pn: 1, order: 'desc' }, { kind: 'interact' });
       return (d?.list || []).filter((x) => x?.mid).map((x) => ({ mid: String(x.mid), who: clean(x.uname, 20) || '有人', at: isoOf(x.mtime) }));
     },
     /** 粉丝数 / 关注数。 */
-    async myStat() { const mid = myMid(); if (!mid) throw new Error('还没登录 B站'); const d = await get('/x/relation/stat', { vmid: mid }); return { follower: Number(d?.follower) || 0, following: Number(d?.following) || 0 }; },
-    usage: () => { const s = state(); return { today: s.day === today() ? s.count || 0 : 0, budget: Math.max(1, Number(budget()) || DAILY_BUDGET), thisHour: (s.recent || []).filter((t) => nowMs() - t < 3600_000).length, perHour, backoffUntil: s.backoffUntil || 0 }; },
+    async myStat() { const mid = myMid(); if (!mid) throw new Error('还没登录 B站'); const d = await get('/x/relation/stat', { vmid: mid }, { kind: 'interact' }); return { follower: Number(d?.follower) || 0, following: Number(d?.following) || 0 }; },
+    usage: () => {
+      const s = state(), p = poolsOf(budget()), c = countsOf(s);
+      return { today: c.interact + c.content, budget: p.total, pools: { interact: { used: c.interact, cap: p.interact }, content: { used: c.content, cap: p.content + Math.max(0, p.interact - c.interact) } }, thisHour: (s.recent || []).filter((t) => nowMs() - t < 3600_000).length, perHour, backoffUntil: s.backoffUntil || 0 };
+    },
     /** 首页推荐（用她的号，越刷越像她）。 */
     async homeFeed(n = 10) {
       const d = await get('/x/web-interface/wbi/index/top/feed/rcmd', { fresh_type: 4, ps: Math.min(20, n + 4), fresh_idx: 1, fresh_idx_1h: 1, brush: 1 }, { signed: true });

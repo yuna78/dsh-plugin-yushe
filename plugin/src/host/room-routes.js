@@ -12,7 +12,8 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSy
 import { join } from 'node:path';
 import { startRoam, roamStatus } from './probe.js';
 import { nowDate, nowMs } from './clock.js';
-import { goOutAnswer, REFUSE_TEXT } from '../shared/room.js';
+import { goOutAnswer, refusedRecently, REFUSE_TEXT } from '../shared/room.js';
+import { behaviorOf } from '../shared/feel.js';
 import { markNow, templatePlan } from '../shared/plan.js';
 import { napAnswer } from '../shared/mood.js';
 import { imageApiReady, PHOTO_PREFIX, generatePhoto } from './photos.js';
@@ -129,7 +130,10 @@ export function registerRoomRoutes({ ctx, scope, pond, life, wallet, letters, tr
     if (!f) return writeJson(res, 200, { ok: false, error: '还没有鱼' });
     if (life.isOut(f)) return writeJson(res, 200, { ok: false, refused: true, line: '本鱼已经在外面啦～' });
     const s0 = life.state(f), snap0 = snapshot(s0);
-    const ans = goOutAnswer({ fishId: f.id, call: f.parentCall, energy: snap0.energy, mood: snap0.mood, asleep: asleepAt() || snap0.where === 'sleep', broke: wallet.view().broke, now: nowMs() });
+    // 心情二期-1c：她心里有事（behaviorOf）会拒绝并且说得出由头；30 分钟内刚拒过同一由头再问就松口
+    const b0 = behaviorOf(s0.feel);
+    const tNow = nowMs(); // 骰子段和「刚拒过」的 30 分钟窗用同一刻
+    const ans = goOutAnswer({ fishId: f.id, call: f.parentCall, energy: snap0.energy, mood: snap0.mood, asleep: asleepAt() || snap0.where === 'sleep', broke: wallet.view().broke, now: tNow, behavior: b0, refusedRecently: refusedRecently(s0.events, b0.refuse?.reason, tNow) });
     if (!ans.go) { life.record(f, 'ask-out', `${f.parentCall}问要不要出门，本鱼说不去（${REFUSE_TEXT[ans.reason] || ans.reason}）`, { visit: true }); return writeJson(res, 200, { ok: false, refused: true, reason: ans.reason, line: ans.line }); }
     // 闲逛正式版：这一趟在游戏里持续 1–3 小时，明信片按时间一张张寄回（shared/trip.js + host/trips.js）
     const { id } = trips.start(f, 'asked');

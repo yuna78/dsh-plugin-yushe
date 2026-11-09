@@ -764,6 +764,19 @@ const budDir = mkdtempSync(join(tmpdir(), 'yushe-bud-'));
 wfs(join(budDir, 'bili-read.json'), JSON.stringify({ day: new Date().toISOString().slice(0, 10), count: BR.DAILY_BUDGET }));
 let over = false; try { await BR.createBiliRead(budDir, brFetch, noWait).popular(3); } catch (e) { over = /歇歇眼睛/.test(e.message); }
 ok(over, `一天读 B站有上限（${BR.DAILY_BUDGET} 次）`);
+ok(BR.poolsOf(300).interact === 240 && BR.poolsOf(300).content === 60 && BR.poolsOf(600).interact === 480 && BR.poolsOf(600).content === 120, '读预算拆两个池子：互动先留 80%，内容用剩下的（F-81）');
+const poolDir = mkdtempSync(join(tmpdir(), 'yushe-pool-'));
+wfs(join(poolDir, 'bili_credential.json'), JSON.stringify({ sessdata: 'S', bili_jct: 'J', dedeuserid: '7' }));
+wfs(join(poolDir, 'bili-read.json'), JSON.stringify({ day: new Date().toISOString().slice(0, 10), counts: { interact: BR.poolsOf(BR.DAILY_BUDGET).interact, content: 0 } }));
+const PR = BR.createBiliRead(poolDir, async () => ({ status: 200, json: async () => ({ code: 0, data: { list: [] } }) }), noWait);
+let poolHit = false; try { await PR.dmSessions(); } catch (e) { poolHit = /互动读 B站/.test(e.message); }
+let contentOk = false; try { await PR.popular(1); contentOk = true; } catch { contentOk = false; }
+ok(poolHit && contentOk, '互动池用完了私信就停，内容读还能借互动没用的额度（F-81）');
+const rpDir = mkdtempSync(join(tmpdir(), 'yushe-rp-'));
+wfs(join(rpDir, 'bili_credential.json'), JSON.stringify({ sessdata: 'S', bili_jct: 'J', dedeuserid: '7' }));
+const rpBR = BR.createBiliRead(rpDir, async () => ({ status: 200, json: async () => ({ code: 0, data: { items: [{ id: 9, user: { nickname: '甲', mid: 42 }, reply_time: 1, item: { subject_id: 12345, source_id: 67890, business_id: 1, source_content: '回你的', target_reply_content: '你说的', title: '视频', uri: 'https://www.bilibili.com/video/BV1aaaaaaaaa' } }] } }) }), { ...noWait, perMinute: 100, perHour: 100 });
+const rp = await rpBR.repliesToMe();
+ok(rp[0].reply?.rpid === '67890' && rp[0].reply?.oid === '12345' && rp[0].reply?.type === 1, '留言带上回复要的 rpid / oid / type（字段待真号验证，解析不到就不给）');
 ok(read('src/host/trips.js').includes("biliRead.homeFeed(ge.preferBili ? 10 : 6)") && read('src/host/trips.js').includes("biliRead.upVideos(up[1].mid, 2)") && read('src/host/trips.js').includes('biliRead.search(fav, 3)'), '出门逛她自己的 B站：首页推荐 + 常看的 UP 主 + 搜最爱的');
 ok(GRW.feedInterests(GRW.freshGrowth(gfish_g, 'd'), [{ tag: 'x', up: 'UP甲', mid: 11 }], { day: 'd' }).ups['UP甲'].mid === 11, '记住 UP 主时也记下 id（下次能直接看他的新视频）');
 ok(['bili_search', 'bili_video', 'bili_comments', 'bili_feed', 'bili_user_videos'].every((n) => byName[n]?.kind === 'read'), '读 B站拆成 5 个工具（原 yushe_bili 的 search / video / feed / up + 评论）');
@@ -915,7 +928,7 @@ const ibRec = [];
 const IBX = IBH.createInbox({ storage: ibDir, life: { record: (f, k, txt, e) => ibRec.push({ k, txt, e }) }, biliRead: fakeBR, gate: { footprints: () => [{ id: 'D1', text: '第一句' }] } });
 const p1x = await IBX.poll({ id: 'f' });
 ok(p1x.ok && !ibRec.length && IBX.unseen() === 0, '第一次看收件箱：不发事件、不算未读');
-ok((await IBX.poll({ id: 'f' })).why === '一小时看一次', '一小时最多看一次');
+ok((await IBX.poll({ id: 'f' })).why === '15 分钟看一次', '留言优先：15 分钟最多看一次（F-81）');
 ibFans = [...ibFans, { mid: '12', who: '新朋友' }];
 fakeBR.repliesToMe = async () => { ibCalls.push('reply'); return [{ id: 'r2', who: '乙', text: '同感', mine: '第一句' }, { id: 'r1', who: '甲', text: '你好呀', mine: '第一句' }]; };
 ibCalls = [];
@@ -955,6 +968,7 @@ ok(!GT2.checkDraft('dm', '我妈妈今天加班').ok && GT2.checkDraft('dm', '�
 ok(HB2.normalizeHabits({ parentMid: ' 12345 ' }).parentMid === '12345' && HB2.normalizeHabits({ parentMid: 'abc' }).parentMid === '' && HB2.normalizeHabits({}).dmsPerDay === 3 && !HB2.HABIT_FIELDS.dmsPerDay.later, '上网习惯：私信上限开放（默认 3），爸妈 UID 只收数字');
 // 宿主：dms + gate 走一遍（假 B站）
 const DMH = await import(pathToFileURL(join(plugin, 'src/host/dms.js')).href);
+ok(DMH.DMS_EVERY.cold === 8 * 60_000 && DMH.DMS_EVERY.hot === 3 * 60_000 && DMH.DMS_EVERY.night === 20 * 60_000 && DMH.DMS_EVERY.perPoll === 5 && IBH.INBOX_EVERY === 15 * 60_000, '私信冷 8 分钟 / 聊起来 3 分钟 / 夜里 20 分钟，一轮 5 人；收件箱 15 分钟（F-81）');
 const GH2 = await import(pathToFileURL(join(plugin, 'src/host/gate.js')).href);
 const dmDir = mkdtempSync(join(tmpdir(), 'yushe-dm-'));
 const dmClock = mkdtempSync(join(tmpdir(), 'yushe-dmclk-'));
@@ -978,7 +992,7 @@ dmSess = [{ ...dmSess[0], max_seqno: 6 }, { talker_id: 500, session_type: 1, sys
 dmMsgs[100].push({ sender_uid: 100, msg_type: 1, msg_seqno: 6, content: JSON.stringify({ content: '小鱼你好' }), timestamp: 2 });
 dmMsgs[500] = [{ sender_uid: 500, msg_type: 1, msg_seqno: 2, content: JSON.stringify({ content: '宝贝今天乖不乖' }), timestamp: 3 }];
 dmMsgs[600] = [{ sender_uid: 600, msg_type: 1, msg_seqno: 1, content: JSON.stringify({ content: '在吗' }), timestamp: 4 }];
-ok((await DMX.poll(dmf)).why === '20 分钟看一次', '20 分钟最多看一次');
+ok((await DMX.poll(dmf)).why === '8 分钟看一次', '私信优先：不熟时 8 分钟最多看一次（F-81）');
 await DMX.poll(dmf, { force: true });
 await new Promise((r) => setTimeout(r, 60));
 ok(dm_sent.length === 2 && dm_sent[0].mid === '500' && dm_sent.some((s) => s.mid === '100') && !dm_sent.some((s) => s.mid === '600'), '爸妈先回；陌生人占每天上限（上限 1：路人甲回了，路人乙没回）');
@@ -4021,10 +4035,10 @@ section('心情一期-1：有来由的情绪（shared/feel.js）');
     const I = (feel, kind, about) => (feel.emotions || []).filter((e) => e.kind === kind && (!about || e.about === about)).reduce((s, e) => s + e.intensity, 0);
     const dOf = (r, kind) => (r.changes || []).filter((c) => c.kind === kind).reduce((s, c) => s + c.delta, 0);
     const settle = (feel, from, to, o = {}) => FL.settleFeel(feel, { from, to, temper: T1(), asleep, lastVisitAt: to, ...o });
-    const POS = ['joy', 'curious', 'proud', 'loved'], NEG = ['miss', 'hurt', 'frustrated', 'down', 'worried', 'cranky'];
+    const POS = ['joy', 'curious', 'proud', 'loved'], NEG = ['miss', 'hurt', 'frustrated', 'down', 'worried', 'cranky', 'bored']; // 二期-1a 加了「无聊」
 
     // A 情绪表
-    T('心情一期-1 A1：EMOTIONS 正好是一期的 10 种', () => { const k = Object.keys(FL.EMOTIONS).sort(); return [JSON.stringify(k) === JSON.stringify([...POS, ...NEG].sort()), k.join(',')]; });
+    T('心情一期-1 A1：EMOTIONS 正好是一期的 10 种 + 二期的无聊（二期-1a 改）', () => { const k = Object.keys(FL.EMOTIONS).sort(); return [JSON.stringify(k) === JSON.stringify([...POS, ...NEG].sort()), k.join(',')]; });
     T('心情一期-1 A2：每种有中文名、正负号；开心 / 好奇 / 得意 / 被爱是正的，其余是负的', () => POS.every((k) => FL.EMOTIONS[k].sign === 1) && NEG.every((k) => FL.EMOTIONS[k].sign === -1) && Object.values(FL.EMOTIONS).every((e) => /[一-龥]/.test(e.name)));
 
     // B 性情
@@ -4222,6 +4236,7 @@ section('在家上网：醒着在家自己刷 B站，清单 + 最多一张便利
   const HL = LE.createLife(hdir);
   const hf = { id: 'homefish', name: '小家', parentCall: '妈妈', personaText: '我是小鱼', createdAt: new Date(T10 - 86400e3).toISOString(), pts: { brain: 40, tongue: 40, belly: 40, heart: 40, spark: 40 }, story: {} };
   HL.state(hf, T10);
+  HL.record(hf, 'x-visit', '起点', { visit: true }, T10); // 心情二期-1a 补：新鱼的「上次来过」取真实时钟，凌晨跑时到 T10 已经开始想念、心情会掉 1；在 T10 记一次来过，L4 只看刷到喜欢的
   const pts0 = JSON.stringify(HL.state(hf, T10).growth?.pts || null);
   const e0 = HL.state(hf, T10).energy;
   const readA = [{ title: '猫咪物理学', url: urlh(1), up: 'UP猫', tag: '科普', depth: 'subtitle', acts: ['点赞'], like: '喜欢', why: '好懂' }, { title: '做饭', url: urlh(2), tag: '美食', depth: 'detail', acts: [], like: '一般', why: '' }, { title: '吵架', url: urlh(3), depth: 'comments', acts: [], like: '不喜欢', why: '太吵' }];
@@ -4542,6 +4557,274 @@ section('心情一期-3 验收补（总指挥：标签用像人话的说法）')
   ok(ws[0] === FL5.emotionWord({ kind: 'loved', intensity: 60 }) && !ws.some((w) => /很被爱|[0-9]/.test(w || '')) && ws.every(Boolean), '心情一期-3 补：「她现在」的标签是像人话的说法（不拼成「很被爱」）', ws.join(' / '));
   ok(/e\.word/.test(read('src/game/main.js')) && /feels\.length/.test(read('src/game/main.js')), '心情一期-3 补：面板用 word，按条数判「心情平稳」');
 }
+
+/* ===== 心情二期-1a 验收（F-88，docs/任务书/心情-二期-1a.md；总指挥写好并锁定，实现方不许改这一块）===== */
+section('心情二期-1a：behaviorOf + 补情绪来源（无聊 / 被叫醒 / 精力见底 / 发不出去）');
+{
+  const imp = (f) => import(pathToFileURL(join(plugin, f)).href);
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const T = (label, fn) => { try { const r = fn(); ok(Array.isArray(r) ? r[0] : r, label, Array.isArray(r) ? r[1] : ''); } catch (e) { ok(false, label, `抛异常：${e?.message || e}`); } };
+  const FB = await imp('src/shared/feel.js'), LEB = await imp('src/host/life-engine.js'), RMB = await imp('src/shared/room.js');
+  const t0 = Date.parse('2026-11-09T10:00:00'), H = 3600e3, D = 86400e3, M = 60e3, iso = (t) => new Date(t).toISOString();
+  const mk = (list = []) => ({ v: 1, valence: 0, emotions: list.map(([kind, intensity, about, cause]) => ({ kind, intensity, about, cause: cause || `${kind}的原因`, at: '' })), seen: {}, lastAt: t0 });
+  const I = (f, kind, about) => (f.emotions || []).filter((e) => e.kind === kind && (!about || e.about === about)).reduce((n, e) => n + e.intensity, 0);
+  const ev = (f, kind, at = t0, ctx = {}) => FB.feelEvent(f, { kind, cause: `${kind}的原因`, at: iso(at) }, { temper: FB.temperOf(null), energy: 70, call: '妈妈', ...ctx }).feel;
+  const B = (list) => FB.behaviorOf(mk(list));
+
+  // A 无聊
+  T('心情二期-1a A1：有「无聊」这个情绪（负的，有中文名和说法）', () => FB.EMOTIONS.bored?.sign === -1 && /无聊/.test(FB.EMOTIONS.bored?.name || '') && /无聊/.test(FB.feelWord(mk([['bored', 50, 'self']]))[0]));
+  T('心情二期-1a A2：FRESH_KINDS 是「新鲜事」：外面的事和爸妈的互动都算', () => ['back', 'home-liked', 'inbox-reply', 'inbox-like', 'inbox-follow', 'dm-in', 'dm-parent', 'posted', 'act-follow', 'chat', 'pat', 'feed', 'greet', 'news'].every((k) => (FB.FRESH_KINDS || []).includes(k)) && !(FB.FRESH_KINDS || []).includes('late-work'));
+  T('心情二期-1a A3：一点新鲜事就不无聊了（回家 / 摸头都会清掉无聊）；不新鲜的（深夜干活）不清', () => I(ev(mk([['bored', 50, 'self']]), 'back'), 'bored') === 0 && I(ev(mk([['bored', 50, 'self']]), 'pat'), 'bored') === 0 && I(ev(mk([['bored', 50, 'self']]), 'late-work'), 'bored') > 0);
+
+  // B 新事件
+  T('心情二期-1a B1：新事件的情绪和对象：被叫醒 / 精力见底是自己烦躁，发不出去是对 B站受挫，没新鲜事是无聊', () => I(ev(mk(), 'woken'), 'cranky', 'self') > 0 && I(ev(mk(), 'drained'), 'cranky', 'self') > 0 && I(ev(mk(), 'voice-rejected'), 'frustrated', 'web') > 0 && I(ev(mk(), 'bored'), 'bored', 'self') > 0);
+
+  // D behaviorOf
+  T('心情二期-1a D1：没有情绪时出门倾向 = 现在心情 60 分的系数（0.84），默认出门频率不变', () => { const b = B([]); return [Math.abs(b.outBias - 0.84) < 0.011 && b.refuse === null && b.voiceHold === false && b.pose === null && b.reachOut === null, JSON.stringify(b)]; });
+  T('心情二期-1a D2：开心 / 好奇 / 无聊更想出门；被爱 / 低落 / 烦躁 / 想念 / 担心更想待着；都在 0.5–1.6', () => {
+    const n = B([]).outBias, up = [['joy', 60, 'world'], ['curious', 60, 'web'], ['bored', 50, 'self']].map((x) => B([x]).outBias), dn = [['loved', 60, 'parent'], ['down', 60, 'self'], ['cranky', 50, 'self'], ['miss', 50, 'parent'], ['worried', 50, 'self']].map((x) => B([x]).outBias);
+    return [up.every((x) => x > n) && dn.every((x) => x < n) && [...up, ...dn].every((x) => x >= 0.5 && x <= 1.6), `${n} | ↑ ${up.join(',')} | ↓ ${dn.join(',')}`];
+  });
+  T('心情二期-1a D3：拒绝出门：委屈够重 → hurt（带原因），烦躁 → cranky，低落 → down；有点小情绪不拒绝', () => {
+    const h = B([['hurt', 60, 'parent', '妈妈说本鱼写得不行']]).refuse, c = B([['cranky', 45, 'self']]).refuse, d = B([['down', 55, 'self']]).refuse;
+    return [h?.reason === 'hurt' && h.cause.includes('写得不行') && c?.reason === 'cranky' && d?.reason === 'down' && B([['hurt', 30, 'parent']]).refuse === null && B([['joy', 90, 'world']]).refuse === null, JSON.stringify({ h, c, d })];
+  });
+  T('心情二期-1a D4：先不对外说话：烦躁够重或对 B站受挫够重才拦；自己的受挫（草稿被否）不拦', () => B([['cranky', 45, 'self']]).voiceHold === true && B([['frustrated', 45, 'web']]).voiceHold === true && B([['frustrated', 60, 'self']]).voiceHold === false && B([['hurt', 80, 'parent']]).voiceHold === false && B([['cranky', 20, 'self']]).voiceHold === false);
+  T('心情二期-1a D5：姿势按主导情绪（够强才用），名字都在 ALL_POSES 里', () => {
+    const P = (k, a = 'self') => B([[k, 50, a]]).pose;
+    const want = { hurt: 'sulk', down: 'sad', frustrated: 'sad', cranky: 'yawn', worried: 'think', miss: 'think', joy: 'cheer', proud: 'cheer', loved: 'shy', curious: 'read', bored: 'phone' };
+    const got = Object.fromEntries(Object.keys(want).map((k) => [k, P(k)]));
+    return [Object.entries(want).every(([k, v]) => got[k] === v) && Object.values(got).every((p) => RMB.ALL_POSES.includes(p)) && B([['joy', 20, 'world']]).pose === null, JSON.stringify(got)];
+  });
+  T('心情二期-1a D6：主动找爸妈的由头：想念 → miss，B站得意 → share，受挫 / 低落 → comfort（同时有时 comfort 优先）', () => B([['miss', 45, 'parent']]).reachOut === 'miss' && B([['proud', 55, 'web']]).reachOut === 'share' && B([['frustrated', 55, 'web']]).reachOut === 'comfort' && B([['down', 55, 'self']]).reachOut === 'comfort' && B([['miss', 45, 'parent'], ['down', 55, 'self']]).reachOut === 'comfort' && B([['miss', 20, 'parent']]).reachOut === null);
+  T('心情二期-1a D7：behaviorOf 是纯函数（同一输入同一输出，不改传入的 feel）', () => { const f = mk([['joy', 60, 'world'], ['cranky', 45, 'self']]); const s0 = JSON.stringify(f); return JSON.stringify(FB.behaviorOf(f)) === JSON.stringify(FB.behaviorOf(f)) && JSON.stringify(f) === s0 && !/Date\.now\(\)|Math\.random/.test(read('src/shared/feel.js')); });
+
+  // E 组合：门槛真的到得了，平常日子到不了
+  T('心情二期-1a E1：一条评论没发出去不至于闭嘴；同一天又一条没发出去才先不说话', () => { const a = ev(mk(), 'voice-rejected', t0), b = ev(a, 'voice-rejected', t0 + 30 * M); return [FB.behaviorOf(a).voiceHold === false && FB.behaviorOf(b).voiceHold === true, `${I(a, 'frustrated')} → ${I(b, 'frustrated')}`]; });
+  T('心情二期-1a E2：被叫醒一次只是有点烦；被叫醒 + 深夜还在干活 → 烦到先不说话', () => { const a = ev(mk(), 'woken', t0), b = ev(a, 'late-work', t0 + 10 * M); return [FB.behaviorOf(a).voiceHold === false && FB.behaviorOf(b).voiceHold === true, `${I(a, 'cranky')} → ${I(b, 'cranky')}`]; });
+  T('心情二期-1a E3：平常的一天（聊天、摸头、喂零食、出门回来、在家刷到喜欢的、有人点赞）：不拒绝、不闭嘴', () => {
+    let f = mk(); ['chat', 'pat', 'feed', 'back', 'home-liked', 'inbox-like', 'chat', 'pat'].forEach((k, i) => { f = ev(f, k, t0 + i * 20 * M); });
+    const b = FB.behaviorOf(f); return [b.refuse === null && b.voiceHold === false && b.outBias >= 0.84, JSON.stringify(b)];
+  });
+
+  // C 接线（引擎）
+  const dirB = mkdtempSync(join(tmpdir(), 'yushe-p2a-')); const LB = LEB.createLife(dirB); let n = 0;
+  const seed = (extra = {}) => { const id = `fish-p2a-${++n}`; mkdirSync(join(dirB, 'life'), { recursive: true }); writeFileSync(join(dirB, 'life', `${id}.json`), JSON.stringify({ version: LEB.LIFE_VERSION, fishId: id, mood: 60, feel: FB.migrateFeel(60), energy: 80, bornAt: t0 - 3 * D, lastTickAt: t0, lastVisitAt: t0, events: [], chat: [], diary: [], album: [], journal: [], work: {}, letters: [], napUntil: 0, workAcc: 0, growth: null, bag: { items: {}, gear: null }, trip: null, lastBackAt: 0, dream: null, dreamTries: { day: '', n: 0 }, lastDreamDay: '', ...extra })); return { id, createdAt: '2026-11-06T10:00:00', parentCall: '妈妈' }; };
+  T('心情二期-1a C1：醒着精力见底 → 烦躁（对自己），3 小时内不重复；不往「今天」里写事件', () => {
+    const f = seed({ energy: 18, lastFreshAt: t0 }); const s1 = LB.state(f, t0 + 30 * M); const c1 = I(s1.feel, 'cranky', 'self');
+    const s2 = LB.state(f, t0 + 90 * M); const c2 = I(s2.feel, 'cranky', 'self');
+    return [c1 > 0 && c2 <= c1 && Number.isFinite(s1.lastDrainedAt) && !(s2.events || []).some((e) => e.kind === 'drained'), `${c1} → ${c2}`];
+  });
+  T('心情二期-1a C2：醒着 24 小时没新鲜事 → 无聊（一天一次，不写「今天」）；摸一下头就不无聊、lastFreshAt 更新', () => {
+    const f = seed({ lastFreshAt: t0, lastVisitAt: t0 }); const s1 = LB.state(f, t0 + 25 * H); const b1 = I(s1.feel, 'bored');
+    const s2 = LB.state(f, t0 + 26 * H); const b2 = I(s2.feel, 'bored');
+    const s3 = LB.record(f, 'pat', '妈妈摸了摸本鱼的头', { visit: true }, t0 + 26 * H + M);
+    return [b1 > 0 && b2 <= b1 && !(s1.events || []).some((e) => e.kind === 'bored') && I(s3.feel, 'bored') === 0 && s3.lastFreshAt === t0 + 26 * H + M, `${b1} → ${b2} → ${I(s3.feel, 'bored')}`];
+  });
+  T('心情二期-1a C3：老存档没有 lastFreshAt：不会一上来就无聊', () => { const f = seed({}); const s = LB.state(f, t0 + 2 * H); return [I(s.feel, 'bored') === 0, JSON.stringify(s.feel.emotions)]; });
+  T('心情二期-1a C4：在家刷到喜欢的、出门回来也算新鲜事（lastFreshAt 更新）', () => {
+    const f = seed({ lastFreshAt: t0 }); LB.homeRound(f, { read: [{ title: '喜欢的', url: 'https://www.bilibili.com/video/BV1p2a000001', depth: 'detail', acts: [], like: '喜欢', why: '' }], scanned: 2, note: null }, t0 + H);
+    const s = LB.state(f, t0 + H + M); const src = read('src/host/life-engine.js');
+    return [s.lastFreshAt === t0 + H && /tickTrip[\s\S]{0,15000}lastFreshAt/.test(src), String(s.lastFreshAt)];
+  });
+  T('心情二期-1a C5：睡着被叫醒聊天记一条 woken（聊天路由）', () => /where\s*===\s*'sleep'[\s\S]{0,400}'woken'|'woken'[\s\S]{0,400}where\s*===\s*'sleep'/.test(read('src/host/life-routes.js')));
+  T('心情二期-1a C6：不升存档版本（新字段都可以缺省）', () => LEB.LIFE_VERSION === 8);
+}
+/* ===== 心情二期-1a 验收结束 ===== */
+section('心情二期-1a 验收补（总指挥：老存档的「没新鲜事」起点要存下来）');
+{
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const FB2 = await import(pathToFileURL(join(plugin, 'src/shared/feel.js')).href), LEB2 = await import(pathToFileURL(join(plugin, 'src/host/life-engine.js')).href);
+  const t0 = Date.parse('2026-11-09T10:00:00'), H = 3600e3;
+  const dir = mkdtempSync(join(tmpdir(), 'yushe-p2a2-')); const L = LEB2.createLife(dir); const id = 'fish-p2a-old';
+  mkdirSync(join(dir, 'life'), { recursive: true }); writeFileSync(join(dir, 'life', `${id}.json`), JSON.stringify({ version: LEB2.LIFE_VERSION, fishId: id, mood: 60, feel: FB2.migrateFeel(60), energy: 80, bornAt: t0 - 86400e3, lastTickAt: t0, lastVisitAt: t0, events: [], chat: [], diary: [], album: [], journal: [], work: {}, letters: [], napUntil: 0, workAcc: 0, growth: null, bag: { items: {}, gear: null }, trip: null, lastBackAt: 0, dream: null, dreamTries: { day: '', n: 0 }, lastDreamDay: '' }));
+  const f = { id, createdAt: '2026-11-08T10:00:00', parentCall: '妈妈' };
+  let s; for (let h = 1; h <= 26; h++) s = L.state(f, t0 + h * H); // 每小时结算一次，期间什么新鲜事都没有
+  ok(s.lastFreshAt === t0 && (s.feel.emotions || []).some((e) => e.kind === 'bored'), '心情二期-1a 补：老存档每小时结算、一整天没新鲜事，也会无聊（起点第一次就存下来）', `lastFreshAt ${s.lastFreshAt}`);
+}
+
+/* ===== 心情二期-1b 验收（F-88，docs/任务书/心情-二期-1b.md；总指挥写好并锁定，实现方不许改这一块）===== */
+section('心情二期-1b：出门倾向跟着情绪走 + 逛多久她自己说');
+{
+  const imp = (f) => import(pathToFileURL(join(plugin, f)).href);
+  const T = (label, fn) => { try { const r = fn(); ok(Array.isArray(r) ? r[0] : r, label, Array.isArray(r) ? r[1] : ''); } catch (e) { ok(false, label, `抛异常：${e?.message || e}`); } };
+  const TRb = await imp('src/shared/trip.js'), TLb = await imp('src/host/trip-loop.js');
+  const day0 = Date.parse('2026-11-01T00:00:00');
+  const sim = (o, days = 30) => { let n = 0; for (let d = 0; d < days; d++) { let back = 0; for (let m = 9 * 60; m < 22 * 60; m += 10) { const now = day0 + d * 86400e3 + m * 60e3; if (now < back) continue; if (TRb.wantsToLeave({ fishId: 'sim-b', now, energy: 75, outgoing: 0.5, lastBackAt: back || 0, ...o })) { n++; back = now + 2 * 3600e3; } } } return n; };
+  T('心情二期-1b A1：给了 outBias 就用它：更想出门的鱼出门更多，更想待着的更少', () => { const hi = sim({ outBias: 1.2 }), mid = sim({ outBias: 0.84 }), lo = sim({ outBias: 0.6 }); return [hi > mid && mid > lo, `${hi} / ${mid} / ${lo}`]; });
+  T('心情二期-1b A2：没给 outBias 就照旧看 mood；outBias 0.84 和心情 60 的决定一模一样（默认出门频率不变）', () => { let same = true; for (let i = 0; i < 400; i++) { const now = day0 + i * 600e3; const a = TRb.wantsToLeave({ fishId: 'eq', now, energy: 75, outgoing: 0.5, mood: 60 }), b = TRb.wantsToLeave({ fishId: 'eq', now, energy: 75, outgoing: 0.5, outBias: 0.84, mood: 10 }); if (a !== b) { same = false; break; } } return same; });
+  T('心情二期-1b A3：outBias 不绕过睡着 / 没钱 / 太累 / 刚回家', () => [{ asleep: true }, { broke: true }, { energy: 20 }, { lastBackAt: day0 + 9 * 3600e3 - 60e3 }].every((o) => !TRb.wantsToLeave({ fishId: 'g', now: day0 + 9 * 3600e3, energy: 75, outgoing: 0.9, outBias: 1.6, ...o })));
+  T('心情二期-1b A4：autoTick 把 behaviorOf 的 outBias 交给 wantsToLeave', () => { const s = read('src/host/trips.js'); return /behaviorOf\(/.test(s) && /wantsToLeave\(\{[^}]*outBias/.test(s); });
+  const base = TRb.tripPlan({ tripId: 'T-b', startedAt: day0, seen: [] });
+  T('心情二期-1b B1：STAY_SCALE 三档；tripPlan 的 scale 乘到时长上，默认 1 不变', () => JSON.stringify(TRb.STAY_SCALE) === JSON.stringify({ 早点回: 0.7, 照常: 1, 多逛会儿: 1.25 }) && TRb.tripPlan({ tripId: 'T-b', startedAt: day0, seen: [], scale: 1 }).durationMs === base.durationMs && Math.abs(TRb.tripPlan({ tripId: 'T-b', startedAt: day0, seen: [], scale: 0.7 }).durationMs - base.durationMs * 0.7) <= 1);
+  T('心情二期-1b B2：scale 夹在 0.6–1.3；明信片的寄出时间跟着新时长', () => {
+    const big = TRb.tripPlan({ tripId: 'T-b', startedAt: day0, seen: [], scale: 9 }), tiny = TRb.tripPlan({ tripId: 'T-b', startedAt: day0, seen: [], scale: 0.01 });
+    const seen = [{ title: 'a', url: 'u1', verified: true }, { title: 'b', url: 'u2', verified: true }];
+    const sh = TRb.tripPlan({ tripId: 'T-b', startedAt: day0, seen, scale: 0.7 });
+    return [Math.abs(big.durationMs - base.durationMs * 1.3) <= 1 && Math.abs(tiny.durationMs - base.durationMs * 0.6) <= 1 && sh.returnAt === day0 + sh.durationMs && sh.cards.every((c) => c.deliverAt < sh.returnAt), `${base.durationMs} → ${big.durationMs} / ${tiny.durationMs}`];
+  });
+  T('心情二期-1b B3：游记里的 stay：三档照抄，没写 / 乱写当「照常」', () => { const cat = new Map(); const p = (j) => TLb.parseReport(JSON.stringify(j), cat).stay; return p({ seen: [], stay: '早点回' }) === '早点回' && p({ seen: [], stay: '多逛会儿' }) === '多逛会儿' && p({ seen: [] }) === '照常' && p({ seen: [], stay: '永远不回' }) === '照常'; });
+  T('心情二期-1b B4：回家结算时按 stay 换算时长；trip-report.md 里有 stay 的说明', () => /tripPlan\(\{[^}]*scale/.test(read('src/host/trips.js')) && /STAY_SCALE/.test(read('src/host/trips.js')) && read('src/prompts/trip-report.md').includes('"stay"') && read('src/prompts/trip-report.md').includes('早点回'));
+}
+/* ===== 心情二期-1b 验收结束 ===== */
+
+/* ===== 心情二期-1c 验收（F-88，docs/任务书/心情-二期-1c.md；总指挥写好并锁定，实现方不许改这一块）===== */
+section('心情二期-1c：拒绝出门带由头，同一个由头只拒一次');
+{
+  const imp = (f) => import(pathToFileURL(join(plugin, f)).href);
+  const T = (label, fn) => { try { const r = fn(); ok(Array.isArray(r) ? r[0] : r, label, Array.isArray(r) ? r[1] : ''); } catch (e) { ok(false, label, `抛异常：${e?.message || e}`); } };
+  const RMc = await imp('src/shared/room.js');
+  const now = Date.parse('2026-11-09T15:03:00');
+  const beh = (refuse, outBias = 0.84) => ({ outBias, refuse, voiceHold: false, pose: null, reachOut: null });
+  const ga = (o) => RMc.goOutAnswer({ fishId: 'fc', call: '妈妈', energy: 80, mood: 60, now, ...o });
+  T('心情二期-1c A1：委屈 → 拒绝，由头 hurt，话里有气 / 哼，why 带原因', () => { const a = ga({ behavior: beh({ reason: 'hurt', cause: '妈妈说本鱼写得不行' }) }); return [a.go === false && a.reason === 'hurt' && /气|哼/.test(a.line) && a.why === '妈妈说本鱼写得不行', JSON.stringify(a)]; });
+  T('心情二期-1c A2：烦躁 → 话里有烦；低落 → 话里有提不起 / 不想动', () => { const c = ga({ behavior: beh({ reason: 'cranky', cause: 'x' }) }), d = ga({ behavior: beh({ reason: 'down', cause: 'y' }) }); return [!c.go && c.reason === 'cranky' && /烦/.test(c.line) && !d.go && d.reason === 'down' && /提不起|不想动/.test(d.line), `${c.line} | ${d.line}`]; });
+  T('心情二期-1c A3：刚因为同一个由头拒过 → 松口出门，说的话和拒绝不一样', () => { const r = ga({ behavior: beh({ reason: 'hurt', cause: 'x' }) }), s = ga({ behavior: beh({ reason: 'hurt', cause: 'x' }), refusedRecently: true }); return [s.go === true && s.reason === 'softened' && s.line !== r.line && !/哼/.test(s.line), s.line]; });
+  T('心情二期-1c A4：睡着 / 没钱 / 太累照旧先判（有心事也一样）', () => { const b = beh({ reason: 'hurt', cause: 'x' }); return ga({ behavior: b, asleep: true }).reason === 'asleep' && ga({ behavior: b, broke: true }).reason === 'broke' && ga({ behavior: b, energy: 10 }).reason === 'tired' && ga({ behavior: b, asleep: true, refusedRecently: true }).go === false; });
+  T('心情二期-1c A5：没心事时按 outBias：更想出门的鱼答应得更多；心情分不再起作用', () => {
+    const cnt = (o) => { let y = 0; for (let i = 0; i < 300; i++) y += RMc.goOutAnswer({ fishId: `fc${i}`, energy: 70, now, ...o }).go ? 1 : 0; return y; };
+    const hi = cnt({ behavior: beh(null, 1.4), mood: 10 }), lo = cnt({ behavior: beh(null, 0.6), mood: 95 });
+    return [hi > lo, `${hi} vs ${lo}`];
+  });
+  T('心情二期-1c A6：10 分钟内问几次答案一样（骰子不变）', () => { const b = beh({ reason: 'down', cause: 'x' }); return ga({ behavior: b }).line === RMc.goOutAnswer({ fishId: 'fc', call: '妈妈', energy: 80, now: now + 60e3, behavior: b }).line; });
+  T('心情二期-1c A7：REFUSE_TEXT 有新由头', () => ['hurt', 'cranky', 'down', 'softened'].every((k) => typeof RMc.REFUSE_TEXT[k] === 'string' && RMc.REFUSE_TEXT[k]));
+  T('心情二期-1c B1：refusedRecently：30 分钟内因同一个由头拒过才算', () => {
+    const ev = [{ kind: 'ask-out', at: new Date(now - 10 * 60e3).toISOString(), text: `妈妈问要不要出门，本鱼说不去（${RMc.REFUSE_TEXT.hurt}）` }];
+    const old = [{ kind: 'ask-out', at: new Date(now - 40 * 60e3).toISOString(), text: `本鱼说不去（${RMc.REFUSE_TEXT.hurt}）` }];
+    return RMc.refusedRecently(ev, 'hurt', now) === true && RMc.refusedRecently(old, 'hurt', now) === false && RMc.refusedRecently(ev, 'cranky', now) === false && RMc.refusedRecently([], 'hurt', now) === false && RMc.refusedRecently(ev, undefined, now) === false;
+  });
+  T('心情二期-1c B2：房间和主会话工具两个调用方都传 behavior 和 refusedRecently', () => ['src/host/room-routes.js', 'src/host/tools/self/go-out.js'].every((f) => { const s = read(f); return /behaviorOf\(/.test(s) && /refusedRecently\(/.test(s) && /goOutAnswer\(\{[^}]*behavior/.test(s); }));
+}
+/* ===== 心情二期-1c 验收结束 ===== */
+
+/* ===== 心情二期-2a 验收（F-88，docs/任务书/心情-二期-2a.md；总指挥写好并锁定，实现方不许改这一块）===== */
+section('心情二期-2a：烦躁 / 受挫时先不对外说话 + 发不出去会受挫');
+{
+  const imp = (f) => import(pathToFileURL(join(plugin, f)).href);
+  const { writeFileSync: wf2 } = await import('node:fs');
+  const Ta = async (label, fn) => { try { const r = await fn(); ok(Array.isArray(r) ? r[0] : r, label, Array.isArray(r) ? r[1] : ''); } catch (e) { ok(false, label, `抛异常：${e?.message || e}`); } };
+  const GA = await imp('src/host/gate.js'), SC = await imp('src/host/tools/speak-common.js'), HBa = await imp('src/shared/habits.js');
+  const clk = mkdtempSync(join(tmpdir(), 'yushe-hold-clk-'));
+  const setNow = (s) => { wf2(join(clk, 'dev.json'), JSON.stringify({ now: s })); CK.initClock(clk); };
+  setNow(`${D0}T10:00:00`);
+  const fe = (list) => ({ v: 1, valence: 0, emotions: list.map(([kind, intensity, about]) => ({ kind, intensity, about, cause: 'x', at: '' })), seen: {}, lastAt: 0 });
+  const recs = [];
+  const lifeA = { feel: fe([]), record: (f, k, txt) => { recs.push({ k, txt }); return {}; }, state() { return { feel: this.feel, events: [] }; } };
+  const writes = [];
+  let writeStatus = 'sent';
+  const fw = { ready: () => true, async comment(a) { writes.push(['comment', a]); return { status: writeStatus, reason: writeStatus === 'failed' ? '平台拒了' : null }; }, async post(a) { writes.push(['post', a]); return { status: 'sent' }; }, async dm(a) { writes.push(['dm', a]); return { status: 'sent' }; } };
+  const hab = { h: { ...HBa.defaultHabits(), commentsPerDay: 9, postsPerDay: 9, parentMid: '500', dmsPerDay: 3, speakMode: 'approve' }, get() { return this.h; } };
+  const GG = GA.createGate({ storage: mkdtempSync(join(tmpdir(), 'yushe-hold-')), life: lifeA, habits: hab, biliRead: { videoInfo: async () => ({ aid: 7 }), loggedIn: () => true }, biliWrite: fw });
+  const fA = { id: 'fa', parentCall: '妈妈' };
+
+  await Ta('心情二期-2a A1：没有心事不拦；烦躁够重就拦，why 是一句话（不带数字）', () => { const a = GG.held(fA); lifeA.feel = fe([['cranky', 50, 'self']]); const b = GG.held(fA); return [a.held === false && b.held === true && typeof b.why === 'string' && b.why && !/[0-9]/.test(b.why), JSON.stringify({ a, b })]; });
+  await Ta('心情二期-2a A2：开始拦时「今天」记一条 voice-hold（同一段只记一次）', () => { GG.held(fA); GG.held(fA); const n = recs.filter((r) => r.k === 'voice-hold'); return [n.length === 1 && /烦/.test(n[0].txt), JSON.stringify(recs)]; });
+  await Ta('心情二期-2a A3：同一段最多拦 6 小时；情绪过了清掉，下次再拦重新算', () => {
+    setNow(`${D0}T16:30:00`); const late = GG.held(fA).held;
+    lifeA.feel = fe([]); const calm = GG.held(fA).held;
+    lifeA.feel = fe([['frustrated', 50, 'web']]); const again = GG.held(fA).held; const n = recs.filter((r) => r.k === 'voice-hold').length;
+    return [late === false && calm === false && again === true && n === 2, JSON.stringify({ late, calm, again, n })];
+  });
+  await Ta('心情二期-2a A4：老的假 life（只有 record、没有 state / feel）不拦', () => { const G0 = GA.createGate({ storage: mkdtempSync(join(tmpdir(), 'yushe-hold0-')), life: { record() {} }, habits: hab, biliRead: {}, biliWrite: fw }); return G0.held(fA).held === false; });
+  await Ta('心情二期-2a B1：拦着的时候评论草稿不进草稿箱；爸妈专线私信照样能发', () => {
+    const before = GG.view().pending.length;
+    const c = GG.propose(fA, { kind: 'comment', text: '这个视频好有意思，学到了', target: { bvid: 'BV1hold00001' } });
+    const d = GG.propose(fA, { kind: 'dm', text: '妈妈我在家呢', target: { mid: '500', who: '妈妈', parent: true } });
+    return [c.ok === false && c.held === true && GG.view().pending.length === before && d.ok === true, JSON.stringify({ c, d })];
+  });
+  await Ta('心情二期-2a B2：主会话让她发评论时，拦着就不调模型写草稿', async () => {
+    let said = 0;
+    const deps = { gate: GG, pond: { current: () => fA }, life: lifeA, wallet: { say: async () => { said++; return { text: '写好了' }; }, view: () => ({ broke: false }) }, memory: null, habits: hab };
+    const r = await SC.speak(deps, 'main', { kind: 'comment', what: '给视频写一条评论', max: 80, target: { bvid: 'BV1hold00002' }, args: { intent: '夸夸' }, material: ['标题：x'] });
+    const r2 = await SC.speak(deps, 'trip', { kind: 'comment', what: '评论', max: 80, target: { bvid: 'BV1hold00003' }, args: { text: '好看' } });
+    return [r.ok === false && r.held === true && said === 0 && r2.ok === false && r2.held === true, JSON.stringify({ r, r2, said })];
+  });
+  await Ta('心情二期-2a B3：陌生人私信拦着时先不回（拉消息前就跳过，不推进进度），爸妈照常', () => { const s = read('src/host/dms.js'); const i = s.indexOf('held'), j = s.indexOf('dmMessages('); return [i > 0 && j > 0 && i < j && /过会儿再回/.test(s), `held@${i} dmMessages@${j}`]; });
+  await Ta('心情二期-2a C1：规矩没过 → voice-rejected；上限 / 重复评论不算', () => {
+    lifeA.feel = fe([]); GG.held(fA);
+    const n0 = recs.filter((r) => r.k === 'voice-rejected').length;
+    GG.propose(fA, { kind: 'comment', text: '看这里 https://x.com', target: { bvid: 'BV1hold00004' } });
+    const n1 = recs.filter((r) => r.k === 'voice-rejected').length;
+    const p = GG.propose(fA, { kind: 'comment', text: '这一期讲得真清楚，谢谢', target: { bvid: 'BV1hold00005' } });
+    GG.propose(fA, { kind: 'comment', text: '再夸一次，真的很清楚', target: { bvid: 'BV1hold00005' } });
+    const n2 = recs.filter((r) => r.k === 'voice-rejected').length;
+    return [n1 === n0 + 1 && p.ok && n2 === n1, `${n0} → ${n1} → ${n2}`];
+  });
+  await Ta('心情二期-2a C2：平台拒了（failed）→ voice-rejected；发出去不记', async () => {
+    const p = GG.propose(fA, { kind: 'comment', text: '这个配乐好好听', target: { bvid: 'BV1hold00006' } });
+    writeStatus = 'failed'; const n0 = recs.filter((r) => r.k === 'voice-rejected').length;
+    await GG.decide(p.id, 'approve', undefined, fA);
+    const n1 = recs.filter((r) => r.k === 'voice-rejected').length; writeStatus = 'sent';
+    return [p.ok && n1 === n0 + 1 && recs.at(-1).txt.includes('没发出去'), `${n0} → ${n1}`];
+  });
+  CK.initClock(mkdtempSync(join(tmpdir(), 'yushe-hold-real-'))); // 还给真实时间
+}
+/* ===== 心情二期-2a 验收结束 ===== */
+section('心情二期-2a 验收补（总指挥：一直烦着的时候，6 小时到了就放开，不重新拦、不重复记）');
+{
+  const GA4 = await import(pathToFileURL(join(plugin, 'src/host/gate.js')).href), HB4 = await import(pathToFileURL(join(plugin, 'src/shared/habits.js')).href);
+  const { writeFileSync: wf4 } = await import('node:fs'); const clk4 = mkdtempSync(join(tmpdir(), 'yushe-hold4-clk-'));
+  const at4 = (s) => { wf4(join(clk4, 'dev.json'), JSON.stringify({ now: s })); CK.initClock(clk4); };
+  at4(`${D0}T09:00:00`);
+  const r4 = []; const l4 = { feel: { v: 1, valence: 0, emotions: [{ kind: 'cranky', intensity: 60, about: 'self', cause: 'x', at: '' }], seen: {}, lastAt: 0 }, record: (f, k) => r4.push(k), state() { return { feel: this.feel }; } };
+  const G4 = GA4.createGate({ storage: mkdtempSync(join(tmpdir(), 'yushe-hold4-')), life: l4, habits: { get: () => HB4.defaultHabits() }, biliRead: {}, biliWrite: { ready: () => true } });
+  const f4 = { id: 'f4', parentCall: '妈妈' };
+  const h1 = G4.held(f4).held; at4(`${D0}T15:30:00`); const h2 = G4.held(f4).held; at4(`${D0}T21:40:00`); const h3 = G4.held(f4).held;
+  l4.feel = { ...l4.feel, emotions: [] }; G4.held(f4); l4.feel = { ...l4.feel, emotions: [{ kind: 'cranky', intensity: 60, about: 'self', cause: 'x', at: '' }] }; const h4 = G4.held(f4).held;
+  ok(h1 && !h2 && !h3 && h4 && r4.filter((k) => k === 'voice-hold').length === 2, '心情二期-2a 补：一直烦着，拦满 6 小时就放开、之后不再重拦也不重复记；真的平复过、再烦才重新拦', JSON.stringify({ h1, h2, h3, h4, n: r4.filter((k) => k === 'voice-hold').length }));
+  CK.initClock(mkdtempSync(join(tmpdir(), 'yushe-hold4-real-')));
+}
+section('心情二期-2a 验收补（总指挥：爸妈专线私信没过规矩不算 B站受挫）');
+{
+  const GA2 = await import(pathToFileURL(join(plugin, 'src/host/gate.js')).href), HB3 = await import(pathToFileURL(join(plugin, 'src/shared/habits.js')).href);
+  const recs = []; const lf = { record: (f, k) => recs.push(k), state: () => ({ feel: { v: 1, valence: 0, emotions: [], seen: {}, lastAt: 0 } }) };
+  const G3 = GA2.createGate({ storage: mkdtempSync(join(tmpdir(), 'yushe-hold3-')), life: lf, habits: { get: () => ({ ...HB3.defaultHabits(), parentMid: '500', speakMode: 'auto' }) }, biliRead: {}, biliWrite: { ready: () => true, dm: async () => ({ status: 'sent' }) } });
+  G3.propose({ id: 'f3', parentCall: '妈妈' }, { kind: 'dm', text: '妈妈我的密码是 123456', target: { mid: '500', who: '妈妈', parent: true } });
+  ok(!recs.includes('voice-rejected'), '心情二期-2a 补：回爸妈的私信没过规矩，不记成 B站受挫', recs.join(','));
+}
+
+/* ===== 心情二期-2b 验收（F-88，docs/任务书/心情-二期-2b.md；总指挥写好并锁定，实现方不许改这一块）===== */
+section('心情二期-2b：主动给爸妈写信（想你 / 炫耀 / 想找你说说）');
+{
+  const imp = (f) => import(pathToFileURL(join(plugin, f)).href);
+  const Tb = async (label, fn) => { try { const r = await fn(); ok(Array.isArray(r) ? r[0] : r, label, Array.isArray(r) ? r[1] : ''); } catch (e) { ok(false, label, `抛异常：${e?.message || e}`); } };
+  const MOb = await imp('src/shared/mood.js'), LTb = await imp('src/host/letters.js'), LEb = await imp('src/host/life-engine.js');
+  const L = (day, kind) => ({ day, kind });
+  await Tb('心情二期-2b A1：由头：加了想你 / 炫耀 / 想找你说说，谷底 / 爆棚退役，老的三种还在', () => ['miss', 'share', 'comfort', 'trip', 'money', 'reflect'].every((k) => MOb.LETTER_KINDS[k]) && !MOb.LETTER_KINDS.low && !MOb.LETTER_KINDS.high && !MOb.shouldWrite('low', { letters: [], day: '2026-11-09' }));
+  await Tb('心情二期-2b A2：三种新由头的话里不要求回信', () => { const f = { personaText: 'P', parentCall: '妈妈' }; const ps = ['miss', 'share', 'comfort'].map((kind) => MOb.letterPrompt({ fish: f, kind, lifeText: '' })); return [ps.every((p) => p.includes('妈妈') && /不要求回信|不用回/.test(p)), ps.map((p) => p.split('【现在】')[1]?.slice(0, 80)).join(' | ')]; });
+  await Tb('心情二期-2b B1：想你——当天来过不写；三天内写过不写；第四天可以', () => {
+    const d = '2026-11-09';
+    return MOb.shouldWrite('miss', { letters: [], day: d }) === true && MOb.shouldWrite('miss', { letters: [], day: d, visitedToday: true }) === false && MOb.shouldWrite('miss', { letters: [L('2026-11-07', 'miss')], day: d }) === false && MOb.shouldWrite('miss', { letters: [L('2026-11-06', 'miss')], day: d }) === true;
+  });
+  await Tb('心情二期-2b B2：想找你说说——两天内写过不写；炫耀一天一封；每天总共 2 封照旧', () => {
+    const d = '2026-11-09';
+    return MOb.shouldWrite('comfort', { letters: [L('2026-11-08', 'comfort')], day: d }) === false && MOb.shouldWrite('comfort', { letters: [L('2026-11-07', 'comfort')], day: d }) === true && MOb.shouldWrite('share', { letters: [L(d, 'share')], day: d }) === false && MOb.shouldWrite('share', { letters: [L(d, 'trip'), L(d, 'money')], day: d }) === false;
+  });
+  await Tb('心情二期-2b C1：feelText 有就接在近况后面；没有就和原来一字不差', () => {
+    const f = { personaText: 'P', parentCall: '妈妈' };
+    const a = MOb.letterPrompt({ fish: f, kind: 'trip', lifeText: '【你的近况】在家。' }), b = MOb.letterPrompt({ fish: f, kind: 'trip', lifeText: '【你的近况】在家。', feelText: '【此刻的你】你有点想念。' });
+    return [b.includes('【你的近况】在家。\n【此刻的你】你有点想念。') && !a.includes('此刻的你') && b.replace('\n【此刻的你】你有点想念。', '') === a, b.slice(0, 80)];
+  });
+  // D：定时器里的 tick（真的生活引擎 + 假钱包）
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const dirL = mkdtempSync(join(tmpdir(), 'yushe-letters2b-')); const LL = LEb.createLife(dirL); let n = 0;
+  const seedL = (feelList, extra = {}) => { const id = `fish-l2b-${++n}`; const now = Date.now(); mkdirSync(join(dirL, 'life'), { recursive: true }); writeFileSync(join(dirL, 'life', `${id}.json`), JSON.stringify({ version: LEb.LIFE_VERSION, fishId: id, mood: 60, feel: { v: 1, valence: 0, emotions: feelList.map(([kind, intensity, about, cause]) => ({ kind, intensity, about, cause: cause || 'x', at: '' })), seen: {}, lastAt: now }, energy: 80, bornAt: now - 3 * 86400e3, lastTickAt: now, lastVisitAt: now, lastFreshAt: now, events: [], chat: [], diary: [], album: [], journal: [], work: {}, letters: [], napUntil: 0, workAcc: 0, growth: null, bag: { items: {}, gear: null }, trip: null, lastBackAt: 0, dream: null, dreamTries: { day: '', n: 0 }, lastDreamDay: '', ...extra })); return { id, createdAt: new Date(now - 3 * 86400e3).toISOString(), parentCall: '妈妈', personaText: 'P' }; };
+  const prompts = [];
+  const mkLetters = () => LTb.createLetters({ life: LL, wallet: { view: () => ({ broke: false, left: 1000 }), say: async (k, p) => { prompts.push(p); return { text: '妈妈，本鱼想你了。——小鱼' }; } }, pond: { current: () => null, list: () => ({ fish: [] }) }, log: null, habits: { get: () => ({}) }, gates: { closed: () => false, open: () => ({ ok: true }) } });
+  const wait = () => new Promise((r) => setTimeout(r, 30));
+  await Tb('心情二期-2b D1：想念够重时 tick 会写「想你了」，提示词里带着「此刻的你」', async () => {
+    const f = seedL([['miss', 50, 'parent', '好一阵子没见到你了']]); const LT = mkLetters();
+    const r = LT.tick(f); await wait(); const s = LL.state(f);
+    return [r === true && (s.letters || []).length === 1 && s.letters[0].kind === 'miss' && prompts.at(-1).includes('此刻的你'), JSON.stringify(s.letters)];
+  });
+  await Tb('心情二期-2b D2：没由头不写；爸妈今天在主会话里跟她说过话也算来过（想你不写）', async () => {
+    const a = seedL([['joy', 60, 'world']]); const LT = mkLetters(); const ra = LT.tick(a);
+    const b = seedL([['miss', 50, 'parent']]); LL.bumpWork(b); const rb = LT.tick(b); await wait();
+    return [ra === false && rb === false && (LL.state(b).letters || []).length === 0, JSON.stringify({ ra, rb })];
+  });
+  await Tb('心情二期-2b D3：onMood 改成看由头（不再判谷底 / 爆棚）；定时器里调 letters.tick', () => { const s = read('src/host/letters.js'); return /onMood[\s\S]{0,200}tick\(/.test(s) && !/after < 25|after >= 92/.test(s) && /letters\.tick\(/.test(read('src/host/index.js')); });
+}
+/* ===== 心情二期-2b 验收结束 ===== */
 
 /* ---------- 4. 脱敏 ---------- */
 section('脱敏（plugin/ tools/）');

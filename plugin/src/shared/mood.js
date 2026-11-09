@@ -91,13 +91,21 @@ export function napAnswer({ energy, sleeping = false, out = false, call = '妈�
 export const LETTER_KINDS = {
   trip: '出门回来',
   money: '零花钱快花光了',
-  low: '心情很低落',
-  high: '心情特别好',
+  miss: '想你了',
+  share: '想跟你炫耀',
+  comfort: '想找你说说',
   reflect: '晚上的感悟',
 };
 
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** 「最近 N 天」怎么算：两边都是 YYYY-MM-DD 就取天数差；不是这种格式（老检查里的 'd'）就只按「同一天」算（差 0）。 */
+const dayGap = (a, b) => (DAY_RE.test(a) && DAY_RE.test(b) ? Math.round((Date.parse(b) - Date.parse(a)) / 86_400_000) : a === b ? 0 : Infinity); // 格式不对时只认「同一天」，不同就当很久以前
+/** miss / comfort 的三天、两天红线（含今天）：多久以内写过同一种就不再写。 */
+const KIND_COOLDOWN = { miss: 3, comfort: 2 };
+
 /**
- * 要不要写信：每天最多 2 封；同一种一天一封；晚上的感悟只在 20:00 以后、今天有人来过、而且今天还没写过信时写。
+ * 要不要写信：每天最多 2 封；同一种一天一封；miss「当天来过」不写、最近 3 天写过不写，comfort 最近 2 天写过不写；
+ * 晚上的感悟只在 20:00 以后、今天有人来过、而且今天还没写过信时写。谷底 / 爆棚（low / high）退役了，永远不写。
  * letters：已写的信 [{day, kind}]；返回 true / false。
  */
 export function shouldWrite(kind, { letters = [], day, hour = 12, visitedToday = false, broke = false } = {}) {
@@ -105,22 +113,27 @@ export function shouldWrite(kind, { letters = [], day, hour = 12, visitedToday =
   const today = letters.filter((l) => l.day === day);
   if (today.length >= 2) return false;
   if (today.some((l) => l.kind === kind)) return false;
+  if (kind === 'miss' && visitedToday) return false; // 想你：爸妈今天来过（房间互动或主会话帮她干活）就不写信
+  const cooldown = KIND_COOLDOWN[kind];
+  if (cooldown && letters.some((l) => l.kind === kind && dayGap(l.day, day) < cooldown)) return false;
   if (kind === 'reflect') return hour >= 20 && visitedToday && today.length === 0;
   return Boolean(LETTER_KINDS[kind]);
 }
 
-/** 信的提示词：AI 自由发挥，规则只给事实（经历、心情、钱包）和由头。 */
-export function letterPrompt({ fish, kind, lifeText, events = [], wallet = null, extra = '' }) {
+/** 信的提示词：AI 自由发挥，规则只给事实（经历、心情、钱包）和由头。feelText：feelSection 的「此刻的你」，有就接在近况后面。 */
+export function letterPrompt({ fish, kind, lifeText, events = [], wallet = null, extra = '', feelText = '' }) {
   const why = {
     trip: '你刚出门冲浪回来，想把路上的想法写给爸妈（明信片已经寄了，这封是心里话）。',
     money: `你的零花钱快花光了（还剩 ${wallet?.left ?? '不多'} token）。写信跟${fish.parentCall}说说，可以撒娇讨零花钱，也可以说说你都把钱花在哪了。`,
-    low: `你最近心情很低落。写信告诉${fish.parentCall}你的感受。`,
-    high: `你今天心情特别好。写信跟${fish.parentCall}分享。`,
+    miss: `你心里正想着${fish.parentCall}。把想${fish.parentCall}这件事写下来就好——不抱怨，不要求回信。`,
+    share: `你在 B站上遇到了让你得意的事。跟${fish.parentCall}炫耀一下，让${fish.parentCall}也替你高兴高兴——这封只是分享，不用回。`,
+    comfort: `你在 B站上或者外头遇着了不顺心的事，心里有点堵。跟${fish.parentCall}说说你的心里话——不要求${fish.parentCall}做什么，也不要求回信。`,
     reflect: `晚上了，你想起今天的事，有了一点感悟——关于${fish.parentCall}、关于人类、关于做一条 AI 鱼、关于互联网上看到的东西，都可以。`,
   }[kind];
   // extra「有就整段加、没有就不加」：把它前后的空行都算进变量里（letter.md 没有空行过滤）
   return fill(PROMPTS.letter, {
-    persona: fish.personaText, lifeText,
+    persona: fish.personaText,
+    lifeText: feelText ? `${lifeText}\n${feelText}` : lifeText,
     events: events.length ? events.map((e) => `- ${e}`).join('\n') : '- （今天很安静）',
     extra: extra ? `\n${extra}\n` : '',
     why, call: fish.parentCall,

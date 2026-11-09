@@ -14,13 +14,14 @@ import { personaFor, dislikeList } from '../shared/growth.js';
 import { acceptNotes, readList, dislikedFrom, recentNoteUrls } from '../shared/notes.js';
 import { entriesFrom } from '../shared/seen.js';
 // 出门是对外场合（心情-一期-3 A）：给模型的口气只带对 B站 / 外面的情绪（feelSection scene:'public'），家里的不进去
-import { temperOf, feelSection } from '../shared/feel.js';
+// 二期-1b：她自己想不想出门看 behaviorOf 的出门倾向（outBias）
+import { temperOf, feelSection, behaviorOf } from '../shared/feel.js';
 import { nowMs, nowDate } from './clock.js';
 import { dayOf, snapshot, asleepAt, lifeSection, TRIP_OUT_ENERGY } from './life-engine.js';
 import { NEWS_SOURCES } from './sources.js';
 import { readJsonBody } from './game-routes.js';
 import { leanOnce } from '../shared/growth.js';
-import { wantsToLeave, tripPlan, souvenirsFor, gearEffects, SOUVENIRS, souvenirById, equip, outgoingness } from '../shared/trip.js';
+import { wantsToLeave, tripPlan, souvenirsFor, gearEffects, STAY_SCALE, SOUVENIRS, souvenirById, equip, outgoingness } from '../shared/trip.js';
 import { pickShots, photoPrompt, translatePrompt, cleanScene, bannedTerms } from '../shared/photo.js';
 import { planPostcards } from '../shared/postcard.js';
 import { imageApiReady, generatePhoto } from './photos.js';
@@ -43,7 +44,7 @@ export function notePrompt({ persona, lifeText, gearName = '', call }) {
   });
 }
 
-export function createTrips({ life, wallet, pond, storage, log, habits, biliRead, gate, memory = null, gates = null, seenLog = null }) {
+export function createTrips({ life, wallet, pond, storage, log, habits, biliRead, gate, memory = null, gates = null, seenLog = null, inbox = null }) {
   let loop = null; // { tools(ledger) → 出门用的工具成品, model() → { llm, provider, model } }
   const G = gates || createGates({ habits }); // 没传就自己建一个：行为跟旧的 asleepAt + 安静时段一致
   const noteLine = (f, gear) => `${f.parentCall}，我出去逛逛${gear ? `，带上了${souvenirById(gear)?.name}` : ''}，看到有意思的贴进笔记本，路上给你寄明信片～别担心！`;
@@ -116,7 +117,8 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
           const seen = result.seen || [];
           // F-82：有便利贴就让途中贴上的那几张正好是便利贴；没有（老路 / 没交游记）照旧用见闻
           const notes = Array.isArray(result.notes) ? result.notes : null;
-          const plan = tripPlan({ tripId: id, startedAt: cur.startedAt, seen: notes ? notes : seen, energy: energyAtStart, gear, items: hb.itemsPerTrip || 2 });
+          // 二期-1b：逛多久她自己说（游记 JSON 的 stay 换算时长倍数，没说就照常 ×1）
+          const plan = tripPlan({ tripId: id, startedAt: cur.startedAt, seen: notes ? notes : seen, energy: energyAtStart, gear, items: hb.itemsPerTrip || 2, scale: STAY_SCALE[result.stay] ?? 1 });
           let pick = { shots: [], missed: [] };
           try { pick = pickPhotos(result, seen); } catch (e) { log?.warn?.(`[dsh-yushe] 照片出错：${e?.message || e}`); }
           const postcards = planPostcards({ tripId: id, startedAt: cur.startedAt, durationMs: plan.durationMs, shots: pick.shots, missed: pick.missed, notes: notes || [], seen, text: String(result.postcard || ''), say: result.postcardSay, home: f.home }); // F-85：背面的哪种 + 她住的那间寄不出去（家里景挑别的）
@@ -161,6 +163,8 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
         // F-76：出门是对外的场合，只带 B站上的记忆（家里的事不带）；最近评论过的视频提醒别重复
         memoryText: (() => { try { return memory?.section?.(f, { scope: 'public', query: Object.keys(g.interests || {}).join(' '), limit: 4, title: '【你在 B站上的记忆】', tail: '模糊的就别说得很肯定；记不清的人当新认识。' }) || ''; } catch { return ''; } })(),
         commented: (() => { try { return memory?.recentlyCommented?.(f) || []; } catch { return []; } })(),
+        // F-81：有人回了她 / @ 她，这趟先去回一句（留言优先）
+        replies: (() => { try { return inbox?.pendingReplies?.(3) || []; } catch { return []; } })(),
       });
       const prompt = `${gear ? `你带着${souvenirById(gear)?.name}。` : ''}出发吧。先随便逛逛（比如刷首页推荐、看热门、看看关注的人发了什么），遇到喜欢的再看深一点。`;
       let calls = 0;
@@ -179,7 +183,7 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
           log?.info?.(`[dsh-yushe] 工具出门：调了 ${r.calls.length} 次工具（${[...new Set(r.calls.map((c) => c.name))].join('、')}），看过 ${catalog.size} 条，游记 ${rep.seen.length} 条${rep.dropped.length ? `，丢掉编的 ${rep.dropped.length} 条` : ''}，${r.usage.totalTokens} tokens`);
           endJob(jobId, { result: { tools: r.calls, seen } });
           life.setTrip(f, { toolCalls: r.calls.map((c) => c.name).slice(0, 40) });
-          finish({ seen, postcard: rep.postcard, postcardSay: rep.postcardSay, tokens: r.usage.totalTokens, photo: rep.seen.length ? rep.photo : null, ledger: dump, acts, notes, read, dislikes });
+          finish({ seen, postcard: rep.postcard, postcardSay: rep.postcardSay, stay: rep.stay, tokens: r.usage.totalTokens, photo: rep.seen.length ? rep.photo : null, ledger: dump, acts, notes, read, dislikes });
         })
         .catch((e) => {
           log?.warn?.(`[dsh-yushe] 工具出门出错：${String(e?.message || e).slice(0, 120)}${calls ? '' : '，退回老路'}`);
@@ -200,7 +204,7 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
       if (life.isBrowsing?.(f)) return false; // 在家正刷着 B站（F-87）：这一轮先不出门，等她刷完
       const s = life.state(f), snap = snapshot(s), day = dayOf();
       const tripsToday = (s.events || []).filter((e) => e.day === day && e.kind === 'out').length;
-      const go = wantsToLeave({ fishId: f.id, now: nowMs(), asleep: asleepAt() || snap.where === 'sleep', out: life.isOut(f), broke: wallet.view().broke, energy: snap.energy, mood: snap.mood, outgoing: outgoingness(s.growth?.pts || f.pts, s.growth?.lean).score, tripsToday, maxPerDay: hb?.tripsPerDay ? hb.tripsPerDay : Infinity, lastBackAt: s.lastBackAt || 0, bias: hb?.outBias ?? 1, restBias: hb?.restBias ?? 1 });
+      const go = wantsToLeave({ fishId: f.id, now: nowMs(), asleep: asleepAt() || snap.where === 'sleep', out: life.isOut(f), broke: wallet.view().broke, energy: snap.energy, mood: snap.mood, outBias: behaviorOf(s.feel).outBias, outgoing: outgoingness(s.growth?.pts || f.pts, s.growth?.lean).score, tripsToday, maxPerDay: hb?.tripsPerDay ? hb.tripsPerDay : Infinity, lastBackAt: s.lastBackAt || 0, bias: hb?.outBias ?? 1, restBias: hb?.restBias ?? 1 });
       if (!go) return false;
       log?.info?.(`[dsh-yushe] ${f.name} 自己决定出门闲逛`);
       trips.start(f, 'self');
