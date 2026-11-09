@@ -56,8 +56,8 @@ export const TIERS = [
   { min: 1, name: '新认识', days: 1.5 },
 ];
 
-export const MEMORY_VERSION = 3;
-export const emptyMemory = () => ({ version: MEMORY_VERSION, episodes: [], people: {}, beliefs: [], told: [], cursors: {}, log: [], seq: 0, changes: [] });
+export const MEMORY_VERSION = 4;
+export const emptyMemory = () => ({ version: MEMORY_VERSION, episodes: [], people: {}, beliefs: [], told: [], cursors: {}, log: [], seq: 0, changes: [], weeklies: [], chapters: [] });
 
 /** v1 → v2：补齐缺的字段、算出 cursors.lastAt（经历的最新一条；游标已经挡住比它老的老档案）、
  *  旧的 keys 数组转成新形状 { key: lastAt }——旧 key 没有时间，就记成迁移算出的 lastAt（lastAt 之外的过 3 天自然清掉）。 */
@@ -103,6 +103,7 @@ export function migrateMemory(raw) {
       changes: Array.isArray(m.changes) ? m.changes : [],
     };
   }
+  if (v < 4) m = { ...m, version: MEMORY_VERSION, weeklies: Array.isArray(m.weeklies) ? m.weeklies : [], chapters: Array.isArray(m.chapters) ? m.chapters : [] }; // 三期：回忆录的格子
   return m;
 }
 
@@ -142,7 +143,7 @@ export function defangSelf(text) {
 
 /* 改动日志：谁动了记忆一目了然（页面 / 出事回查用），最多 200 条，超了丢最老的。 */
 export const MAX_LOG = 200;
-const LOG_OPS = new Set(['add', 'forget', 'reflect', 'tell', 'untell', 'confirm', 'supersede', 'retire']); // 二期：认识升生效 / 被取代 / 放下也记
+const LOG_OPS = new Set(['add', 'forget', 'reflect', 'tell', 'untell', 'confirm', 'supersede', 'retire', 'weekly', 'chapter']); // 三期：写下周记 / 章节也记；二期：认识升生效 / 被取代 / 放下也记
 /** 追加一条日志（改 mem）。entry = { at?, op, n?, text? }；op 不认识就不记。 */
 export function logOp(mem, entry) {
   if (!entry || !LOG_OPS.has(entry.op)) return;
@@ -340,6 +341,7 @@ export function recall(mem, { query = '', scope = 'all', limit = 5, chars = 600,
   const restQ = tr ? tr.rest : query;
   const q = [...tokens(restQ)].filter((w) => !STOP.has(w));
   const ids = String(restQ).match(/BV[0-9A-Za-z]{10}|\d{5,}/g) || [];
+  const memoir = scope === 'public' || !tr || (tr.to - tr.from < 3 * DAY && !SPAN_LABELS.has(tr.label)) || (kinds && !kinds.some((k) => k === 'weekly' || k === 'chapter')) ? [] : memoirFor(mem, tr, now, baseDays); // 三期：问一段日子（≥ 3 天）先翻回忆录；出门不给
   const cands = [];
   for (const ep of mem.episodes || []) {
     if (scope === 'public' && ep.scope !== 'public') continue;
@@ -365,6 +367,10 @@ export function recall(mem, { query = '', scope = 'all', limit = 5, chars = 600,
   }
   cands.sort((a, b) => b.score - a.score);
   const out = []; let used = 0; const seenText = new Set();
+  for (const it of memoir) {
+    if (out.length >= limit || (used + it.text.length > chars && out.length)) break;
+    used += it.text.length; out.push(it);
+  }
   for (const { ep, st } of cands) {
     if (out.length >= limit) break;
     const shown = shownEpisode(ep, quotes);
@@ -402,7 +408,7 @@ export function aboutPerson(mem, { mid, who }, { now, baseDays = 30 } = {}) {
 export const SECTION_BUDGET = 900;
 export const MEMORY_TAIL = '这些是你自己的记忆，模糊的就说得含糊些，别编细节；没想起来的事就是忘了。';
 /** 每段字数上限（docs/设计/10 一期 1.3 表；只数内容行，段标题不算）。 */
-export const SECTION_CAPS = { told: 240, beliefs: 160, items: 320, people: 60 };
+export const SECTION_CAPS = { told: 240, beliefs: 160, items: 320, people: 60, recent: 80 };
 
 /** 按上限截内容行的条数：没超就全给，超了从末尾一条条去掉，第一条始终保留（哪怕它一条就超）。 */
 function capLines(lines, cap) {
@@ -412,16 +418,20 @@ function capLines(lines, cap) {
   return n;
 }
 
-export function memoryText(items, people = [], { title = '【你记得的事】', tail = '', beliefs = [], told = [] } = {}) {
-  if (!items.length && !people.length && !beliefs.length && !told.length) return '';
+export function memoryText(items, people = [], { title = '【你记得的事】', tail = '', beliefs = [], told = [], recent = [] } = {}) {
+  if (!items.length && !people.length && !beliefs.length && !told.length && !recent.length) return '';
   const TAIL = tail || MEMORY_TAIL;
   const toldLines = told.map((x) => `- ${x.text}`);
   const beliefLines = beliefs.map((b) => `- ${b.text}`);
   const itemLines = items.map((it) => `- ${it.text}`);
+  const recentLines = recent.map((x) => `- ${x}`); // 三期：【这阵子】（最近一篇周记 + 最近一章），≤ 80 字
+  let kRecent = capLines(recentLines, SECTION_CAPS.recent);
+  if (kRecent && recentLines.slice(0, kRecent).join('\n').length > SECTION_CAPS.recent) kRecent = 0; // 一条就超 80 字：整段不给
   const assemble = (kItems, kBeliefs, kTold, withPeople) => {
     const lines = [];
     if (kTold) lines.push('【爸妈让你记住的】', ...toldLines.slice(0, kTold));
     if (kBeliefs) lines.push('【你对自己的认识】（睡前反思攒下的）', ...beliefLines.slice(0, kBeliefs));
+    if (kRecent) lines.push('【这阵子】', ...recentLines.slice(0, kRecent));
     if (kItems || withPeople) lines.push(title); // 砍光了就不留空标题
     if (kItems) lines.push(...itemLines.slice(0, kItems));
     if (withPeople) lines.push(peopleLine);
@@ -441,6 +451,7 @@ export function memoryText(items, people = [], { title = '【你记得的事】'
   let lines = assemble(kItems, kBeliefs, kTold, withPeople);
   while (lines.join('\n').length > SECTION_BUDGET) {
     if (withPeople) withPeople = false; // 认识的人整行先砍
+    else if (kRecent > 0) kRecent -= 1; // 再砍【这阵子】（三期）
     else if (kItems > kItemsFloor) kItems -= 1; // 再从「你记得的事」末尾一条条去掉（至少留 2 条）
     else if (kBeliefs > 0) kBeliefs -= 1; // 不够了再去砍上面的段：「你对自己的认识」
     else if (kTold > 0) kTold -= 1; // 再去「爸妈让你记住的」
@@ -704,4 +715,201 @@ export function untell(mem, id) {
   const i = (mem.told || []).findIndex((x) => x.id === String(id));
   if (i < 0) return { ok: false, why: '没有这一条（先 list 看看编号）' };
   return { ok: true, item: mem.told.splice(i, 1)[0] };
+}
+
+/* ---------- 三期 · 回忆录：周记、章节（docs/任务书/记忆-三期-规格.md）。规则算统计、挑哪周、验收、遗忘；模型只写字 ---------- */
+
+export const MAX_CHAPTERS = 24;
+const SPAN_LABELS = new Set(['这周', '上周', '这个月', '上个月', '最近']); // 整段的时间词：周一问「这周」也先翻回忆录（reviewer 11-08）
+export const WEEKLY_HL_MULT = 6; // 周记半衰期 = 记性基准 × 6（适中 180 天）
+export const WEEKLY_STAGE_TEXT = { clear: '清晰', fuzzy: '模糊', trace: '只剩印象' }; // 给人看的白话
+const isYmd = (x) => /^\d{4}-\d{2}-\d{2}$/.test(String(x || ''));
+const ymdMs = (ymd) => { const [y, mo, d] = String(ymd).split('-').map(Number); return new Date(y, mo - 1, d).getTime(); };
+const addDays = (ymd, n) => { const d = new Date(ymdMs(ymd)); d.setDate(d.getDate() + n); return localDay(d.getTime()); };
+/** 这一天所在那周的周一（本机日期）。x = YYYY-MM-DD / ISO / 毫秒。 */
+export function weekOf(x) {
+  const t = isYmd(x) ? ymdMs(x) : typeof x === 'number' ? x : ms(x);
+  const d = new Date(t); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return localDay(d.getTime());
+}
+const inDays = (at, from, to) => { const d = localDay(at); return Boolean(d) && d >= from && d <= to; };
+const weekEps = (mem, week) => (mem.episodes || []).filter((e) => e && inDays(e.at, week, addDays(week, 6)));
+const ownThing = (e) => e.kind !== 'diary' && !OTHER_KINDS.has(e.kind); // 她自己的事（日记另算；别人回她的不算）
+const lifeDiaries = (life, from, to) => (life?.diary || []).filter((d) => d && isYmd(d.day) && d.day >= from && d.day <= to);
+const topOf = (vals, n = 3) => { const c = new Map(); for (const v of vals) if (v) c.set(v, (c.get(v) || 0) + 1); return [...c.entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map(([k]) => k); }; // 同样多按先出现的
+
+/** 这周的统计（纯函数）：按种类数、标签和人取最多的 ≤ 3 个、这周写了几篇日记。 */
+export function weekStats(mem, week, life) {
+  const eps = weekEps(mem, week);
+  const n = (ks) => eps.filter((e) => ks.includes(e.kind)).length;
+  const diaries = life && Array.isArray(life.diary) ? lifeDiaries(life, week, addDays(week, 6)).length : n(['diary']);
+  return { seen: n(['seen']), comments: n(['comment', 'reply', 'dyncomment']), replies: n(['got-reply']), topTags: topOf(eps.map((e) => e.keys?.tag)), topPeople: topOf(eps.map((e) => e.keys?.who)), diaries };
+}
+/** 这周她自己的事还记得几件（够 3 件才写周记）。 */
+export function weekCount(mem, week, { now, baseDays = 30 } = {}) {
+  return weekEps(mem, week).filter((e) => ownThing(e) && (now == null || stageOf(e, now, baseDays) !== 'forgotten')).length;
+}
+/** 今晚该写哪一周（没有就 null）：过完了（今天周日这周也算）、还没写、≥ 3 件事；从最近的往前，最多补到 2 周前。 */
+export function pickWeek(mem, today, opts = {}) {
+  if (!isYmd(today)) return null;
+  const cur = weekOf(today), sunday = new Date(ymdMs(today)).getDay() === 0;
+  for (let k = sunday ? 0 : 1; k <= 2; k++) {
+    const w = addDays(cur, -7 * k);
+    if ((mem.weeklies || []).some((x) => x.week === w)) continue;
+    if (weekCount(mem, w, opts) >= 3) return w;
+  }
+  return null;
+}
+/** 页面用：这周攒了几件、上周是不是过完了却没写成。 */
+export function weeklyStatus(mem, today, opts = {}) {
+  const cur = weekOf(today), last = addDays(cur, -7);
+  return { thisWeekCount: weekCount(mem, cur, opts), lastWeekMissed: weekCount(mem, last, opts) >= 3 && !(mem.weeklies || []).some((x) => x.week === last) };
+}
+const prevMonth = (ym) => { const [y, mo] = ym.split('-').map(Number); const d = new Date(y, mo - 2, 1); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`; };
+const monthEnd = (ym) => { const [y, mo] = ym.split('-').map(Number); return localDay(new Date(y, mo, 0).getTime()); };
+/** 和这个月有重叠的周记（跨月那周两边都算）。 */
+const monthWeeklies = (mem, ym) => (mem.weeklies || []).filter((w) => w.from <= monthEnd(ym) && w.to >= `${ym}-01`);
+/** 今晚该写哪个月的章节（没有就 null）：上个月、比最近一章新、还没写、有 ≥ 2 篇周记或 ≥ 5 篇日记。 */
+export function pickMonth(mem, today, life) {
+  if (!isYmd(today)) return null;
+  const target = prevMonth(today.slice(0, 7));
+  const chs = mem.chapters || [];
+  if (chs.some((c) => c.month === target || (c.toMonth && c.month <= target && c.toMonth >= target))) return null;
+  if (chs.some((c) => (c.toMonth || c.month) > target)) return null;
+  return monthWeeklies(mem, target).length >= 2 || lifeDiaries(life, `${target}-01`, monthEnd(target)).length >= 5 ? target : null;
+}
+
+const parseObj = (raw) => {
+  const s = String(raw || '');
+  let j = null;
+  try { j = JSON.parse(s); } catch { try { const m2 = s.match(/\{[\s\S]*\}/); j = m2 ? JSON.parse(m2[0]) : null; } catch { j = null; } }
+  if (typeof j === 'string') { try { j = JSON.parse(j); } catch { j = null; } } // 模型偶尔把 JSON 又包成一层字符串
+  return j && typeof j === 'object' && !Array.isArray(j) ? j : null;
+};
+/** 不编：《标题》要在这周的事 / 日记里出现过；2 位以上的数字要等于统计里的数或在里面出现过。返回不对的地方（'' = 没问题）。 */
+function madeUp(text, corpus, nums) {
+  for (const m2 of String(text).matchAll(/《([^》]{1,60})》/g)) if (!corpus.includes(m2[1])) return `《${m2[1]}》不在这周的事里`;
+  for (const m2 of String(text).matchAll(/\d{2,}/g)) if (!nums.has(Number(m2[0])) && !corpus.includes(m2[0])) return `数字 ${m2[0]} 对不上这周的事`;
+  return '';
+}
+/** 下一个编号（W / C 各自数）。 */
+export function nextId(list, p) { let n = 0; for (const x of list || []) { const k = Number(String(x?.id || '').slice(1)); if (String(x?.id || '').startsWith(p) && k > n) n = k; } return `${p}${n + 1}`; }
+
+/** 周记的材料（给提示词，也给验收）：这周还记得的事、这周的日记、统计。 */
+export function weekMaterial(mem, week, life, { now, baseDays = 30 } = {}) {
+  const to = addDays(week, 6);
+  const eps = weekEps(mem, week).filter((e) => now == null || stageOf(e, now, baseDays) !== 'forgotten');
+  const diaries = life && Array.isArray(life.diary) ? lifeDiaries(life, week, to).map((d) => ({ ref: `d:${d.day}`, day: d.day, text: String(d.text || '') }))
+    : eps.filter((e) => e.kind === 'diary').map((e) => ({ ref: `d:${localDay(e.at)}`, day: localDay(e.at), text: e.text }));
+  return { week, from: week, to, eps, diaries, stats: weekStats(mem, week, life) };
+}
+/**
+ * 周记验收（规则 5）。返回 { ok, entry } / { ok: false, retry, why }。
+ * 坏 JSON、太短 → 不收、不重写；引用不够、编了标题 / 数字 → retry（打回重写一次）。cites 一个没给 → 规则替她挑这周的依据。
+ */
+export function checkWeekly(mat, raw) {
+  const j = parseObj(raw);
+  if (!j) return { ok: false, retry: false, why: '不是 JSON' };
+  const headline = cleanSelf(j.headline, 30), text = cleanSelf(j.text, 300);
+  const valid = new Map([...mat.eps.filter((e) => e.kind !== 'diary').map((e) => [e.id, e.text]), ...mat.diaries.map((d) => [d.ref, d.text])]);
+  const given = Array.isArray(j.cites) ? [...new Set(j.cites.map(String))] : [];
+  const cites = given.length ? given.filter((c) => valid.has(c)) : [...valid.keys()].slice(0, 5);
+  if (cites.length < 3) return { ok: false, retry: true, why: `依据不够：要至少 3 个这周还记得的事的编号或日记（d:日期），有效的只有 ${cites.length} 个` };
+  const corpus = [...mat.eps.map((e) => `${localDay(e.at)} ${e.text}`), ...mat.diaries.map((d) => `${d.day} ${d.text}`), mat.from, mat.to].join('\n'); // 日子也算（提示词里给过，写「11-08」不算编）
+  const st = mat.stats;
+  const bad = madeUp(`${headline}\n${text}`, corpus, new Set([st.seen, st.comments, st.replies, st.diaries]));
+  if (bad) return { ok: false, retry: true, why: `${bad}，只写上面有的事` };
+  if (!headline || text.length < 60) return { ok: false, retry: false, why: '太短' }; // 能打回重写的先查完，太短直接不收
+  return { ok: true, entry: { week: mat.week, from: mat.from, to: mat.to, headline, text, stats: st, cites, floor: 0 } };
+}
+/** 章节的材料：这个月的周记、这个月的日记。 */
+export function monthMaterial(mem, month, life) {
+  return { month, weeklies: monthWeeklies(mem, month), diaries: lifeDiaries(life, `${month}-01`, monthEnd(month)).map((d) => ({ ref: `d:${d.day}`, day: d.day, text: String(d.text || '') })) };
+}
+/** 章节验收：至少 2 篇这个月的周记，或 5 篇这个月的日记；不够打回重写一次。章节只从验过的周记 / 日记写，不再查标题。 */
+export function checkChapter(mat, raw) {
+  const j = parseObj(raw);
+  if (!j) return { ok: false, retry: false, why: '不是 JSON' };
+  const title = cleanSelf(j.title, 12), headline = cleanSelf(j.headline, 30), text = cleanSelf(j.text, 400);
+  if (!title || !headline || text.length < 60) return { ok: false, retry: false, why: '太短' };
+  const ws = new Set(mat.weeklies.map((w) => w.id)), ds = new Set(mat.diaries.map((d) => d.ref));
+  const given = Array.isArray(j.cites) ? [...new Set(j.cites.map(String))] : [];
+  const cites = given.length ? given.filter((c) => ws.has(c) || ds.has(c)) : (ws.size >= 2 ? [...ws] : [...ds]);
+  const nW = cites.filter((c) => ws.has(c)).length, nD = cites.filter((c) => ds.has(c)).length;
+  if (nW < 2 && nD < 5) return { ok: false, retry: true, why: '依据不够：要至少 2 篇这个月的周记（W…），或 5 篇这个月的日记（d:日期）' };
+  return { ok: true, entry: { month: mat.month, title, headline, text, cites } };
+}
+
+const statsWords = (st) => [`看了 ${st.seen} 个视频`, `在 B站留了 ${st.comments} 条言`, `收到 ${st.replies} 条回复`, `写了 ${st.diaries} 篇日记`, st.topTags.length ? `看得最多的：${st.topTags.join('、')}` : '', st.topPeople.length ? `打交道最多的：${st.topPeople.join('、')}` : ''].filter(Boolean).join('；');
+const fixLine = (why) => (why ? `【上一稿没收下】${why}。照上面的规矩改好再写一遍。` : DROP);
+/** 写周记的提示词（本体在 src/prompts/weekly.md）。 */
+export function weeklyPrompt({ persona = '', call = '爸妈', mat, fix = '' }) {
+  return dropLines(fill(PROMPTS.weekly, {
+    persona: persona || DROP, call, from: mat.from, to: mat.to,
+    stats: statsWords(mat.stats),
+    episodes: mat.eps.filter((e) => e.kind !== 'diary').map((e) => `- [${e.id}] ${localDay(e.at)} ${e.text}`).join('\n') || '（没有）',
+    diaries: mat.diaries.map((d) => `- [${d.ref}] ${clean(d.text, 120)}`).join('\n') || '（这周没写日记）',
+    fix: fixLine(fix),
+  }));
+}
+/** 写章节的提示词（本体在 src/prompts/chapter.md）。 */
+export function chapterPrompt({ persona = '', call = '爸妈', mat, fix = '' }) {
+  return dropLines(fill(PROMPTS.chapter, {
+    persona: persona || DROP, call, month: mat.month,
+    weeklies: mat.weeklies.map((w) => `- [${w.id}] ${w.from} 到 ${w.to}：${w.headline}。${w.text}`).join('\n') || '（这个月没有周记）',
+    diaries: mat.diaries.map((d) => `- [${d.ref}] ${clean(d.text, 80)}`).join('\n') || '（没有）',
+    fix: fixLine(fix),
+  }));
+}
+
+/** 周记的阶段：半衰期 = 基准 × 6，阈值同经历，不会好过到过的最差阶段。 */
+export function weeklyStage(w, now, baseDays = 30) {
+  const age = Math.max(0, (now - ms(w.at)) / DAY);
+  return STAGES[Math.max(w.floor || 0, stageOfR(Math.pow(0.5, age / (baseDays * WEEKLY_HL_MULT))))];
+}
+/** 周记慢慢模糊（改 mem）：模糊截到 80 字，只剩印象时正文 = headline，忘了就删。返回删了几篇。 */
+export function settleWeeklies(mem, now, baseDays = 30) {
+  let gone = 0; const out = [];
+  for (const w of mem.weeklies || []) {
+    const st = weeklyStage(w, now, baseDays), i = STAGES.indexOf(st);
+    if (st === 'forgotten') { gone += 1; continue; }
+    if (i > (w.floor || 0)) out.push({ ...w, floor: i, text: i >= 2 ? w.headline : String(w.text).slice(0, 80) });
+    else out.push(w);
+  }
+  mem.weeklies = out;
+  return gone;
+}
+/** 章节不忘；超了（到 24 章）把最早的两章按规则合并，不调模型。返回合并了几次。 */
+export function mergeChapters(mem) {
+  let n = 0;
+  const chs = (mem.chapters || []).slice().sort((a, b) => String(a.month).localeCompare(String(b.month)) || String(a.at).localeCompare(String(b.at)));
+  while (chs.length >= MAX_CHAPTERS) {
+    const [a, b] = chs.splice(0, 2);
+    const half = (t) => String(t || '').slice(0, Math.ceil(String(t || '').length / 2));
+    chs.unshift({ id: a.id, month: a.month, toMonth: b.toMonth || b.month, title: `${a.title}、${b.title}`, headline: a.headline, text: `${half(a.text)}${half(b.text)}`, cites: [...new Set([...(a.cites || []), ...(b.cites || [])])], at: a.at, merged: true });
+    n += 1;
+  }
+  if (n) mem.chapters = chs;
+  return n;
+}
+/** 【这阵子】的两行：最近一篇还没忘的周记的 headline、最近一章的「title：headline」。 */
+export function recentLines(mem, { now, baseDays = 30 } = {}) {
+  const w = (mem.weeklies || []).filter((x) => weeklyStage(x, now, baseDays) !== 'forgotten').sort((a, b) => String(a.to).localeCompare(String(b.to))).at(-1);
+  const c = (mem.chapters || []).slice().sort((a, b) => String(a.toMonth || a.month).localeCompare(String(b.toMonth || b.month))).at(-1);
+  return [w ? w.headline : '', c ? `${c.title}：${c.headline}` : ''].filter(Boolean);
+}
+/** 召回路由：和这段日子重叠的章节（先）和周记（新的在前）。 */
+function memoirFor(mem, tr, now, baseDays) {
+  const out = [];
+  const overlap = (f, t) => f < tr.to && t > tr.from;
+  for (const c of (mem.chapters || []).slice().reverse()) {
+    const [y, mo] = String(c.month).split('-').map(Number), [y2, mo2] = String(c.toMonth || c.month).split('-').map(Number);
+    if (overlap(new Date(y, mo - 1, 1).getTime(), new Date(y2, mo2, 1).getTime())) out.push({ id: c.id, stage: 'clear', kind: 'chapter', at: c.at, text: `${c.title}：${c.headline}。${String(c.text).slice(0, 80)}` });
+  }
+  for (const w of (mem.weeklies || []).slice().sort((a, b) => String(b.from).localeCompare(String(a.from)))) {
+    const st = weeklyStage(w, now, baseDays);
+    if (st === 'forgotten' || !isYmd(w.from) || !isYmd(w.to)) continue;
+    if (overlap(ymdMs(w.from), ymdMs(w.to) + DAY)) out.push({ id: w.id, stage: st, kind: 'weekly', at: w.at, text: `${w.headline}：${String(w.text).slice(0, 80)}` });
+  }
+  return out;
 }

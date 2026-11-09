@@ -96,7 +96,7 @@ export async function writeDiary({ wallet, life, memory = null }, fish, day) {
     const r = await wallet.say('diary', diaryPrompt(fish, s, day, life), null, 60_000);
     const diary = life.putDiary(fish, day, r.text, true);
     // F-76 第二步：写完日记顺便睡前反思（后台，一天一次，不挡日记）
-    if (memory?.reflect) memory.reflect(fish, wallet, { day }).catch(() => {});
+    if (memory?.reflect) memory.reflect(fish, wallet, { day }).catch(() => {}).then(() => memory.summarize?.(fish, wallet, { day })).catch(() => {}); // 反思完写周记 / 章节（三期，后台）
     return { text: r.text, ai: true, diary };
   } catch (e) {
     if (e?.broke) { const text = ruleDiary(fish, s, day, life); return { text, ai: false, broke: true, diary: life.putDiary(fish, day, text, false) }; }
@@ -261,7 +261,7 @@ export function registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, ga
     try {
       const r = await wallet.say('diary', diaryPrompt(f, s, day, life), null, 60_000);
       const diary = life.putDiary(f, day, r.text, true);
-      if (memory?.reflect) memory.reflect(f, wallet, { day }).catch(() => {}); // 睡前反思（后台）
+      if (memory?.reflect) memory.reflect(f, wallet, { day }).catch(() => {}).then(() => memory.summarize?.(f, wallet, { day })).catch(() => {}); // 睡前反思，再写周记 / 章节（后台）
       writeJson(res, 200, { ok: true, day, text: r.text, diary: diary.slice().reverse() });
     } catch (e) {
       if (e?.broke) { const text = ruleDiary(f, s, day, life); const diary = life.putDiary(f, day, text, false); return writeJson(res, 200, { ok: true, day, text, broke: true, diary: diary.slice().reverse() }); }

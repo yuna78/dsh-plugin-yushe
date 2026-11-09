@@ -3,7 +3,7 @@
  * createSim：假时钟 + 假模型。档案（life / 足迹 / 信箱 / 私信）在内存里维护，喂给真的
  * createMemory（plugin/src/host/memory.js，now 传模拟时钟）；经历照真规则存进临时目录、慢慢忘。
  *
- * night() 表示「过完这一天」：写当天日记、按当天反思（reflect 的「今天想过了」按本机日子挡住），
+ * night() 表示「过完这一天」：写当天日记、按当天反思（reflect 的「今天想过了」按本机日子挡住）、再写周记 / 章节（三期 summarize），
  * 最后把时钟拨到第二天本机 08:00——所以每次 night() 都是一个新的日子。
  */
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -25,9 +25,9 @@ export function createSim({ start = new Date(), model: userModel, parentMid = ''
   const beginMidnight = midnight(begin);
 
   // 假模型：每次真的调用了都计数（返回还是 throw 都算）
-  const counts = { diary: 0, reflect: 0 };
+  const counts = { diary: 0, reflect: 0, weekly: 0, chapter: 0 }; // 三期：周记 / 章节也计数
   const model = (kind, prompt) => {
-    if (kind === 'diary' || kind === 'reflect') counts[kind] += 1;
+    if (kind in counts) counts[kind] += 1;
     if (userModel) return userModel(kind, prompt);
     return kind === 'reflect' ? '{"add":[]}' : DEFAULT_DIARY;
   };
@@ -112,8 +112,11 @@ export function createSim({ start = new Date(), model: userModel, parentMid = ''
       let reflect;
       try { reflect = await memory.reflect(fish, wallet, { day }); }
       catch (e) { reflect = { ok: false, why: String(e?.message || e).slice(0, 60) }; }
+      let summarize; // 三期：反思之后写周记 / 章节（自己接住 throw）
+      try { summarize = await memory.summarize(fish, wallet, { day }); }
+      catch (e) { summarize = { ok: false, why: String(e?.message || e).slice(0, 60) }; }
       nextMorning();
-      return { diary: { ok: true }, reflect };
+      return { diary: { ok: true }, reflect, summarize };
     },
 
     /** 连着过 n 天：每天 perDay(sim, i)（i 从 1 起）→ sync() → night()（夜里把时钟拨到第二天 08:00）。 */
@@ -135,8 +138,8 @@ export function createSim({ start = new Date(), model: userModel, parentMid = ''
     recall(query, scope = 'all') { return memory.recall(fish, { query, scope }); },
     /** 当前存档（只读：别改它）。 */
     mem() { return memory.sync(fish, { minGapMs: 1e12 }); },
-    /** 模型调用计数 { diary, reflect, total }。 */
-    calls() { return { diary: counts.diary, reflect: counts.reflect, total: counts.diary + counts.reflect }; },
+    /** 模型调用计数 { diary, reflect, weekly, chapter, total }。 */
+    calls() { return { ...counts, total: counts.diary + counts.reflect + counts.weekly + counts.chapter }; },
   };
   return sim;
 }

@@ -8,6 +8,7 @@
  *   memory.recall(fish, { query, scope }) 召回；scope 'public' = 对外说话，只给 B站范围
  *   memory.reinforce(fish, ids)          她主动想起来了：加深（半衰期变长）
  *   memory.section(fish, …)              给模型的一段「你记得的事」
+ *   memory.summarize(fish, wallet, {day}) 三期：写完日记、反思之后写周记 / 章节（一晚最多各一篇）
  *   GET /api/dsh-yushe/memory            给页面：各阶段几条、认识几个人、最近记得的事
  *
  * 存 <storage>/memory/<fishId>.json，一条鱼一个文件。
@@ -15,7 +16,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { nowMs } from './clock.js';
-import { emptyMemory, migrateMemory, makeEpisode, meet, settleMemory, recall, knownPeople, aboutPerson, memoryText, memoryStats, stageOf, STAGE_TEXT, reflectCandidates, reflectPrompt, applyReflection, settleBeliefs, beliefsFor, activeBeliefs, tell, untell, localDay, defang, logOp } from '../shared/memory.js';
+import { emptyMemory, migrateMemory, makeEpisode, meet, settleMemory, recall, knownPeople, aboutPerson, memoryText, memoryStats, stageOf, STAGE_TEXT, reflectCandidates, reflectPrompt, applyReflection, settleBeliefs, beliefsFor, activeBeliefs, tell, untell, localDay, defang, logOp, pickWeek, pickMonth, weekMaterial, monthMaterial, checkWeekly, checkChapter, weeklyPrompt, chapterPrompt, settleWeeklies, mergeChapters, recentLines, weeklyStage, weeklyStatus, nextId, WEEKLY_STAGE_TEXT } from '../shared/memory.js';
 import { personaFor } from '../shared/growth.js';
 
 export const MEMORY_PATH = '/api/dsh-yushe/memory';
@@ -157,6 +158,7 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
         const items = archiveItems({ fish, life: s, footprints: gate?.footprints?.() || [], inbox: inbox?.all?.() || [], dms: dms?.view?.().convs || [], parentMid: habits?.get?.().parentMid || '', chatFrom: m.cursors.chatFrom });
         const added = ingest(m, items);
         const { forgot, faded } = settleMemory(m, now, days());
+        settleWeeklies(m, now, days()); // 三期：周记也慢慢模糊（半衰期 × 6）；章节不忘
         if (added) logOp(m, { op: 'add', n: added, at: new Date(now).toISOString() });   // 改动日志：这轮记了什么
         if (forgot) logOp(m, { op: 'forget', n: forgot, at: new Date(now).toISOString() });
         save(fish, m);
@@ -190,7 +192,8 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
         const m = load(fish);
         const bl = beliefs ? beliefsFor(m, { scope, limit: beliefs }) : []; // 只给想明白了的（二期：暂定的先不注入）
         const told = scope === 'public' ? [] : (m.told || []).slice(-8); // 爸妈让记的只在家里说
-        return memoryText(items, ppl, { title, tail, beliefs: bl, told });
+        const recent = scope === 'all' ? recentLines(m, { now: tnow(), baseDays: days() }) : []; // 三期【这阵子】：只在家里（主会话 / 鱼社房间），出门没有
+        return memoryText(items, ppl, { title, tail, beliefs: bl, told, recent });
       } catch { return ''; }
     },
     /** 她的认识（生效 + 暂定）：每条带白话 state，规则词不出门（yushe_recall 的 beliefs 用）。 */
@@ -231,6 +234,71 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
       log?.info?.(`[dsh-yushe] 睡前反思：新认识 ${r.added.length} 条，加深 ${r.merged.length} 条，放下 ${r.dropped.length} 条${r.rejected.length ? `，没依据丢掉 ${r.rejected.length} 条` : ''}`);
       return { ok: r.parsed, ...r };
     },
+    /**
+     * 三期 · 回忆录（写完日记、反思之后调，一晚一次）：最多写一篇周记 + 一章。规则挑哪周 / 哪个月、算统计、验收，
+     * 引用不够或编了标题 / 数字就打回重写一次；零花钱花光就跳过（下次再补）。返回 { weekly, chapter, merged }。
+     */
+    async summarize(fish, wallet, { day, force = false } = {}) {
+      if (!fish || !wallet?.say) return { ok: false, why: '没有模型' };
+      let m = memory.sync(fish, { minGapMs: 0 });
+      const now = tnow(), today = /^\d{4}-\d{2}-\d{2}$/.test(day || '') ? day : localDay(now);
+      if (!force && m.cursors.summarizeDay === today) return { ok: false, why: '今晚写过了' };
+      m.cursors.summarizeDay = today;
+      const merged = mergeChapters(m); // 超了先按规则合并最早的两章
+      save(fish, m);
+      const s = life?.state?.(fish) || {};
+      const persona = (() => { try { return personaFor(fish, s.growth) || fish.personaText || ''; } catch { return fish.personaText || ''; } })();
+      const opts = { now, baseDays: days() };
+      const write = async (kind, makePrompt, check, keep) => {
+        let fix = '';
+        for (let round = 1; round <= 2; round++) {
+          let raw = '';
+          try { raw = (await wallet.say(kind, makePrompt(fix), null, 60_000)).text; }
+          catch (e) { return { ok: false, why: e?.broke ? '零花钱花光了，下次再写' : `没写出来：${String(e?.message || e).slice(0, 60)}` }; }
+          const r = check(raw);
+          if (r.ok) { m = load(fish); const entry = keep(r.entry); save(fish, m); return { ok: true, id: entry.id }; }
+          if (!r.retry || round === 2) return { ok: false, why: r.why };
+          fix = r.why;
+        }
+        return { ok: false, why: '没写成' };
+      };
+      const out = { ok: true, merged, weekly: null, chapter: null };
+      const week = pickWeek(m, today, opts);
+      if (week) {
+        const mat = weekMaterial(m, week, s, opts);
+        out.weekly = await write('weekly', (fix) => weeklyPrompt({ persona, call: fish.parentCall, mat, fix }), (raw) => checkWeekly(mat, raw), (entry) => {
+          const at = new Date(tnow()).toISOString(), w = { id: nextId(m.weeklies, 'W'), ...entry, at };
+          m.weeklies = [...(m.weeklies || []), w];
+          logOp(m, { op: 'weekly', at, text: `${w.from}–${w.to}：${w.headline}` });
+          return w;
+        });
+        log?.info?.(`[dsh-yushe] 周记（${week} 那周）：${out.weekly.ok ? '写好了' : out.weekly.why}`);
+      }
+      m = load(fish);
+      const month = pickMonth(m, today, s);
+      if (month) {
+        const mat = monthMaterial(m, month, s);
+        out.chapter = await write('chapter', (fix) => chapterPrompt({ persona, call: fish.parentCall, mat, fix }), (raw) => checkChapter(mat, raw), (entry) => {
+          const at = new Date(tnow()).toISOString(), c = { id: nextId(m.chapters, 'C'), ...entry, at };
+          m.chapters = [...(m.chapters || []), c];
+          logOp(m, { op: 'chapter', at, text: `${c.month}「${c.title}」` });
+          return c;
+        });
+        log?.info?.(`[dsh-yushe] 回忆录（${month}）：${out.chapter.ok ? '写好了一章' : out.chapter.why}`);
+      }
+      return out;
+    },
+    /** 周记（新的在前，白话阶段）：yushe_recall 的 weekly 和页面用。 */
+    weeklies(fish, { limit = 8 } = {}) {
+      const m = memory.sync(fish), now = tnow();
+      return (m.weeklies || []).slice().sort((a, b) => String(b.from).localeCompare(String(a.from))).slice(0, limit)
+        .map((w) => ({ from: w.from, to: w.to, headline: w.headline, text: w.text, stage: WEEKLY_STAGE_TEXT[weeklyStage(w, now, days())] || '只剩印象' }));
+    },
+    /** 章节（新的在前）。 */
+    chapters(fish) {
+      return (memory.sync(fish).chapters || []).slice().sort((a, b) => String(b.month).localeCompare(String(a.month)))
+        .map((c) => ({ month: c.toMonth && c.toMonth !== c.month ? `${c.month}～${c.toMonth}` : c.month, title: c.title, headline: c.headline, text: c.text }));
+    },
     /** 爸妈让她记住 / 忘掉 / 看看记了哪些（yushe_remember 用）。 */
     tell(fish, text) {
       const m = load(fish), now = tnow(), d = new Date(now);
@@ -258,6 +326,9 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
         beliefs: activeBeliefs(m, { limit: 30 }).map((b) => ({ ...shownBelief(b), home: b.scope === 'home' })),
         changes: (m.changes || []).slice(-30).reverse().map((x) => ({ kind: x.kind, before: x.before, after: x.after, why: x.why, at: x.at })).slice(0, 20), // 想法怎么变的：最近 20 条，新的在前
         reflectDay: m.cursors.reflectDay || null,
+        weeklies: memory.weeklies(fish, { limit: 8 }), // 三期 · 回忆录：最近 8 篇周记（白话阶段）
+        chapters: memory.chapters(fish),
+        weeklyStatus: weeklyStatus(m, localDay(now), { now, baseDays: days() }), // 空的时候页面按真实状态说
       };
     },
   };

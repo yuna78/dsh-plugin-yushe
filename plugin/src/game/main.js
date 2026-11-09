@@ -949,7 +949,26 @@ function herPanel(g, fish) {
 }
 
 // 记忆页（F-76 第二步）：她还记得什么、对自己的认识、想法怎么变的、认识的人
+// 记忆页折起来的几块（三期，妈妈 11-08 拍板）：展开状态记在浏览器里，存不了就每次都折着
+const MEM_OPEN_KEY = 'yushe.memOpen';
+const memOpen = () => { try { return new Set(JSON.parse(localStorage.getItem(MEM_OPEN_KEY) || '[]')); } catch { return new Set(); } };
+document.addEventListener('toggle', (e) => {
+  const d = e.target; if (!d?.dataset?.msec) return;
+  try { const s = memOpen(); d.open ? s.add(d.dataset.msec) : s.delete(d.dataset.msec); localStorage.setItem(MEM_OPEN_KEY, JSON.stringify([...s])); } catch { /* 存不了就算了 */ }
+}, true);
+const memFold = (key, icon, title, n, body, open) => `<details class="msec" data-msec="${key}"${open.has(key) ? ' open' : ''}><summary>${ICON(icon)} ${title} <small>· ${n} 条</small></summary>${body}</details>`;
 function memPanel(m) {
+  // 她写的回忆录（三期）：本月 / 最近一章 + 最近 4 篇周记，只看 headline，点开看全文；不清晰的标出来；空的时候按真实状态说
+  function memoirHtml(m) {
+    const ws = (m.weeklies || []).slice(0, 4), ch = (m.chapters || [])[0], st = m.weeklyStatus || {};
+    const status = st.lastWeekMissed ? '上周没写成（那几天没开 DSH 或零花钱不够），下次写日记时补'
+      : st.thisWeekCount ? `这周攒了 ${st.thisWeekCount} 件事，周日她写完日记就写`
+      : '她每周日写一篇周记，月初写上个月的一章';
+    const chRow = ch ? `<details class="memo ch"><summary><b>${esc(ch.title)}</b>${esc(ch.headline)}<i>${esc(ch.month)} · 一章</i></summary><p>${esc(ch.text)}</p></details>` : '';
+    const wRow = (w) => `<details class="memo${w.stage !== '清晰' ? ' faded' : ''}"><summary><b>${esc(w.headline)}</b><i>${esc((w.from || '').slice(5))}–${esc((w.to || '').slice(5))} · 周记${w.stage !== '清晰' ? ` · ${esc(w.stage)}` : ''}</i></summary><p>${esc(w.text)}</p></details>`;
+    const empty = !ch && !ws.length;
+    return `<h4>${ICON('book')} 她写的回忆录</h4><div class="empty" style="font-size:12px;margin-top:-2px">她自己回想着写的，不是逐条记录</div>${chRow}${ws.map(wRow).join('')}${empty || st.lastWeekMissed || (st.thisWeekCount && !ws.length) ? `<div class="empty" style="margin-top:6px">${status}</div>` : ''}`;
+  }
   if (!m || !m.ok) return '<div class="empty">记忆还没准备好，过一会儿再看～</div>';
   const call = esc(LIFE?.fish?.parentCall || '爸妈');
   const stat = `<div class="mstat"><div><b>${m.clear || 0}</b>清晰</div><div class="s-fuzzy"><b>${m.fuzzy || 0}</b>模糊</div><div class="s-trace"><b>${m.trace || 0}</b>只剩印象</div><div><b>${m.people?.filter((p) => p.tier !== '爸妈').length || 0}</b>认识的人</div></div>`;
@@ -960,17 +979,21 @@ function memPanel(m) {
   const germRow = germ.length ? `<div class="germ">还在想：${germ.map((b) => `<em>${esc(b.text)}</em>`).join('、')}</div><div class="empty" style="font-size:12px">有的念头想几天就会放下，这很正常</div>` : '';
   // 想法变了：最近 8 条，四种变化用不同的口吻说，别让人以为她坏了
   const chgRow = (c) => c.kind === '取代' ? `以前觉得 ${esc(c.before)}，现在觉得 ${esc(c.after)}` : c.kind === '站住了' ? `${esc(c.before)} —— 想了几天，她自己也认了` : c.kind === '没站住' ? `想过 ${esc(c.before)}，后来没再想下去` : `后来不这么觉得了：${esc(c.before)}${c.why ? `（因为${esc(c.why)}…）` : ''}`;
-  const chg = (m.changes || []).slice(0, 8).length ? `<h4>${ICON('sparkle')} 想法变了 <small style="font:11px var(--body);color:var(--mute)">（最近 8 条）</small></h4><div class="glog">${(m.changes || []).slice(0, 8).map((c) => `<div><i>${esc((c.at || '').slice(5, 10))}</i><span>${chgRow(c)}</span></div>`).join('')}</div>` : '';
+  const chg = (m.changes || []).slice(0, 8).length ? `<div class="glog">${(m.changes || []).slice(0, 8).map((c) => `<div><i>${esc((c.at || '').slice(5, 10))}</i><span>${chgRow(c)}</span></div>`).join('')}</div>` : '';
   const ppl = (m.people || []).filter((p) => p.tier !== '爸妈');
   const pp = ppl.length ? ppl.map((p) => `<span class="up">${esc(p.who)} · ${esc(p.tier)}${p.fuzzy ? '（记不清了）' : ''}</span>`).join('') : '<div class="empty" style="margin-top:6px">B站上还没认识谁</div>';
   const rec = (m.recent || []).length ? m.recent.map((e) => `<div class="mrow st-${esc(e.stage)}"><i>${esc(e.stage)}</i><span>${esc(e.text)}</span></div>`).join('') : '<div class="empty" style="margin-top:6px">还没记下什么</div>';
+  // 排法（妈妈 11-08 拍板）：统计条 → 她写的回忆录（置顶）→ 其余几块默认折起来，只显示「标题 · N 条」
+  const open = memOpen();
+  const chgN = (m.changes || []).slice(0, 8).length;
   return `<div class="her">
     <h4>${ICON('brain')} 她还记得多少 <small style="font:11px var(--body);color:var(--mute)">（记性：普通的事 ${m.days} 天忘一半）</small></h4>${stat}
-    ${(m.told || []).length ? `<h4>${ICON('bookmark')} ${call}让她记住的</h4>${m.told.map((x) => `<div class="belief">${esc(x.text)}<small>${esc((x.at || '').slice(0, 10))} · 只在家里说</small></div>`).join('')}` : ''}
-    <h4>${ICON('sparkle')} 对自己的认识</h4>${bl}${germRow}
-    ${chg}
-    <h4>${ICON('heart')} B站上认识的人</h4>${pp}
-    <h4>${ICON('book')} 最近记得的事 <small style="font:11px var(--body);color:var(--mute)">（会慢慢变模糊；档案在「笔记本」「日记」里，一直都在）</small></h4>${rec}
+    ${memoirHtml(m)}
+    ${(m.told || []).length ? memFold('told', 'bookmark', `${call}让她记住的`, m.told.length, m.told.map((x) => `<div class="belief">${esc(x.text)}<small>${esc((x.at || '').slice(0, 10))} · 只在家里说</small></div>`).join(''), open) : ''}
+    ${memFold('beliefs', 'sparkle', '对自己的认识', sure.length, `${bl}${germRow}`, open)}
+    ${chgN ? memFold('changes', 'sparkle', '想法变了', chgN, chg, open) : ''}
+    ${memFold('people', 'heart', 'B站上认识的人', ppl.length, pp, open)}
+    ${memFold('recent', 'book', '最近记得的事', (m.recent || []).length, `<div class="empty" style="font-size:12px">会慢慢变模糊；档案在「笔记本」「日记」里，一直都在</div>${rec}`, open)}
     <div class="empty" style="font-size:12px">${call}可以在设置里调「记性」：健忘 / 适中 / 好记性</div>
   </div>`;
 }

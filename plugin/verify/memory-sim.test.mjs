@@ -158,7 +158,7 @@ const epOf = (sim, kw) => (sim.mem().episodes || []).find((e) => String(e.text |
   }
   const final = sim.calls();
   daily('一期-3 S5.1：14 天每天模型调用 ≤ 1 次日记 + ≤ 1 次反思（按日增量对账）', perDay, DAYS_14);
-  count(final.total <= 28, `一期-3 S5.2：正常 sim.calls().total ≤ 28（实际 ${final.total}）`);
+  count(final.diary + final.reflect <= 28, `一期-3 S5.2：正常 日记 + 反思 ≤ 28（实际 ${final.diary + final.reflect}；三期起 total 还含周记 / 章节）`);
   count(final.diary <= 14 && final.reflect <= 14, '一期-3 S5.3：日记 ≤ 14 次、反思 ≤ 14 次（任何天都不超 1 次）');
 }
 
@@ -255,7 +255,7 @@ const epOf = (sim, kw) => (sim.mem().episodes || []).find((e) => String(e.text |
   daily('一期-3 S6.15：花光以后记忆照常同步：第 d 天的事都在记忆里（每天 seen 的那条）', synced, DAYS_14);
   sim2.advance(744); sim2.sync(); // 到第 46 天：更早种下的聊天照常走完整遗忘流程
   count(!epOf(sim2, '贝壳灯'), '一期-3 S6.16：反例 遗忘照常：第 1 天的聊天到 40 多天以后从记忆里消失');
-  count(sim2.calls().total <= 28, `一期-3 S6.17：sim.calls().total ≤ 28（实际 ${sim2.calls().total}）`);
+  count(sim2.calls().diary + sim2.calls().reflect <= 28, `一期-3 S6.17：日记 + 反思 ≤ 28（实际 ${sim2.calls().diary + sim2.calls().reflect}；三期起 total 还含周记 / 章节）`);
 }
 
 /* ================= 一期-3 S7：空白的日子（有一天除了拨时钟什么都没发生） ================= */
