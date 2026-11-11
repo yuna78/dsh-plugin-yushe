@@ -11,6 +11,7 @@ export default defineTool({
   kind: 'speak',
   perPerson: true,
   description: '回复 B站上的一条评论（视频评论给 bvid + rpid；动态下的评论给 oid + type + rpid，从 bili_dynamic 的 comment 字段拿）。有人在评论区回你、或者你想接一句别人的话时用。DSH 里爸妈让你回：给一句 intent（想回的方向），正文你自己在鱼社里写，再过规矩。同一条只回一次，每天有上限，对同一个人每天也有上限。',
+  tripDescription: '回复一条 B站评论：视频评论给 bvid + rpid，动态评论给 oid + type + rpid，再给 text（2–80 字，你自己想回的那句话）。出门时直接写 text，不用给意图。同一条只回一次，每天有上限。',
   params: { rpid: { type: 'string', description: '要回的那条评论的 rpid', required: true }, bvid: { type: 'string', description: '视频评论：BV 号' }, oid: { type: 'string', description: '动态评论：评论区 id' }, type: { type: 'integer', description: '动态评论：评论区类型' }, intent: { type: 'string', description: '想回的方向（一句话，≤ 40 字）', required: true } },
   tripParams: { rpid: { type: 'string', description: '要回的那条评论的 rpid', required: true }, bvid: { type: 'string', description: '视频评论：BV 号' }, oid: { type: 'string', description: '动态评论：评论区 id' }, type: { type: 'integer', description: '动态评论：评论区类型' }, text: { type: 'string', description: '你要回的话（2–80 字）', required: true } },
   endpoints: [{ host: 'api', method: 'GET', path: '/x/web-interface/view' }, { host: 'api', method: 'GET', path: '/x/v2/reply/detail' }, { host: 'api', method: 'POST', path: '/x/v2/reply/add', login: true, csrf: true }],

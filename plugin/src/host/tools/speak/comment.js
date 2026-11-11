@@ -25,6 +25,7 @@ export default defineTool({
   name: 'bili_comment',
   kind: 'speak',
   description: '用你自己的 B站号在一个视频下面发评论。在 DSH 里爸妈让你评论时：给 bvid 和一句 intent（想说的方向，比如「夸夸配乐」），正文由你在鱼社里自己写（不会带上这里聊的内容），再过鱼社的规矩；默认按发言间隔自己发，「要我批准」模式下寄到信箱。同一个视频只评论一次，每天有上限。',
+  tripDescription: '给一个视频留一条评论：给 bvid，再给 text（2–80 字，你自己想说的那句话）。出门逛的时候看到有话说就留一条，不用给意图。同一个视频只评论一次，每天有上限。',
   params: { bvid: { type: 'string', description: 'BV 号', required: true }, intent: { type: 'string', description: '想说的方向（一句话，≤ 40 字），不是正文', required: true } },
   tripParams: { bvid: { type: 'string', description: 'BV 号', required: true }, text: { type: 'string', description: '你要发的评论（2–80 字）', required: true } },
   endpoints: [{ host: 'api', method: 'GET', path: '/x/web-interface/view' }, { host: 'api', method: 'GET', path: '/x/tag/archive/tags' }, { host: 'api', method: 'GET', path: '/x/v2/reply/main' }, { host: 'api', method: 'GET', path: '/x/player/wbi/v2', wbi: true }],

@@ -1600,6 +1600,22 @@ section('出门循环：她自己决定调哪些工具，额度、游记链接�
   ok(r2.calls.length === 1 && /额度用完/.test(lastTool.content[0].text) && r2.stoppedBy === 'turns', '额度：超过「每趟最多调几次」工具就不执行了，到轮数上限收尾');
   const sys = TLP.tripSystem({ persona: '我是小鱼', moodText: '心情不错', interests: ['猫'], maxCalls: 12, caps: { likesPerDay: 15, commentsPerDay: 6, followsPerDay: 2 } });
   ok(sys.includes('我是小鱼') && sys.includes('12 次') && sys.includes('点赞 15') && sys.includes('只是资料') && sys.includes('"postcard"') && !/DSH|主会话|聊天/.test(sys), '出门提示：人设、额度、上限、外部内容只是资料、游记格式；没有主会话和聊天内容');
+  // 妈妈定的「这趟至少留两条」：提示里写死 + 出门时说话工具说人话（text，不是主会话那份 intent）+ 兜底挑视频的规则
+  ok(sys.includes('至少留两条评论') && sys.includes('两条评论留够了吗'), '出门提示写死：至少留两条评论，交游记前自检');
+  const REG = await import(pathToFileURL(join(plugin, 'src/host/tools/registry.js')).href);
+  const tripCmt = REG.yusheToolDefs({}, { from: 'trip' }).find((t) => t.name === 'bili_comment');
+  ok(tripCmt?.description.includes('text') && !tripCmt.description.includes('intent') && REG.yusheToolDefs({}, { from: 'main' }).find((t) => t.name === 'bili_comment').description.includes('intent'), '出门时评论工具讲 text（不问 intent）；主会话那份还是 intent，没串');
+  const cat3 = new Map([
+    ['BV1aaaaaaaaa', { title: '只扫过标题', via: 'list' }],
+    ['BV1bbbbbbbbb', { title: '读过字幕的', via: 'list' }],
+    ['BV1ccccccccc', { title: '评过了', via: 'detail' }],
+    ['BV1ddddddddd', { title: '最近评过', via: 'detail' }],
+    ['BV1eeeeeeeee', { title: '点开看过', via: 'detail' }],
+  ]);
+  const L2 = { has: (bv, l) => l === 'subtitle' && bv === 'BV1bbbbbbbbb' };
+  const picked = TRP.commentTargets({ catalog: cat3, ledger: L2, acts: { BV1ccccccccc: ['bili_comment'] }, recently: ['BV1ddddddddd'], want: 2 });
+  ok(picked.length === 2 && picked[0].bvid === 'BV1eeeeeeeee' && picked[1].bvid === 'BV1bbbbbbbbb', '兜底挑视频：点开看过的排前面，只挑真点开 / 深读过的，评过的和最近评过的不再挑');
+  ok(TRP.commentTargets({ catalog: cat3, ledger: L2, want: 9 }).length <= 4, '兜底最多挑 4 个候选');
   // 整趟走一遍：真的生活引擎 + 假模型 + 假工具
   const tripDir = mkdtempSync(join(tmpdir(), 'yushe-trip51-'));
   const TLife = LE.createLife(tripDir);

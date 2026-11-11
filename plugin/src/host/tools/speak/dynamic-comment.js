@@ -11,6 +11,7 @@ export default defineTool({
   kind: 'speak',
   perPerson: true,
   description: '在别人的 B站动态下面评论（给动态 id）。刷关注动态看到想接话的时候用。DSH 里爸妈让你评论：给一句 intent，正文你自己在鱼社里写，再过规矩。同一条动态只评论一次，每天有上限，对同一个人每天也有上限。',
+  tripDescription: '在别人的 B站动态下面评论：给 dynamicId，再给 text（2–80 字，你自己写的评论）。出门时直接写 text，不用给意图。同一条动态只评论一次，每天有上限。',
   params: { dynamicId: { type: 'string', description: '动态 id', required: true }, intent: { type: 'string', description: '想说的方向（一句话，≤ 40 字）', required: true } },
   tripParams: { dynamicId: { type: 'string', description: '动态 id', required: true }, text: { type: 'string', description: '你要发的评论（2–80 字）', required: true } },
   endpoints: [{ host: 'api', method: 'GET', path: '/x/polymer/web-dynamic/v1/detail' }, { host: 'api', method: 'GET', path: '/x/v2/reply/main' }, { host: 'api', method: 'POST', path: '/x/v2/reply/add', login: true, csrf: true }],

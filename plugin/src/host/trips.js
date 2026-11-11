@@ -9,6 +9,8 @@
  */
 import { startRoam, trackJob, endJob } from './probe.js';
 import { runToolLoop, tripSystem, collectCatalog, parseReport } from './trip-loop.js';
+import { writeDraft } from './tools/writer.js';
+import { videoMaterial } from './tools/speak/comment.js';
 import { createLedger } from '../shared/evidence.js';
 import { personaFor, dislikeList } from '../shared/growth.js';
 import { acceptNotes, readList, dislikedFrom, recentNoteUrls } from '../shared/notes.js';
@@ -42,6 +44,20 @@ export function notePrompt({ persona, lifeText, gearName = '', call }) {
     persona: persona || '', lifeText: lifeText || '', call,
     gear: gearName ? `，带着${gearName}` : '',
   });
+}
+
+/**
+ * 兜底补评论时挑哪几个视频（规则管结果，模型只管写正文）：
+ * 只挑这趟**真点开看过**（detail，或读过评论 / 字幕 / 弹幕）、还没评过的；点开过的排前面，最多 4 个。
+ * want = 这趟还差几条。
+ */
+export function commentTargets({ catalog, ledger, acts = {}, recently = [], want = 2 } = {}) {
+  const skip = new Set(Object.keys(acts || {}).filter((bv) => (acts[bv] || []).includes('bili_comment')));
+  for (const bv of recently || []) skip.add(String(bv));
+  const deep = (bv) => ['comments', 'subtitle', 'danmaku'].some((l) => ledger?.has?.(bv, l));
+  const entries = [...(catalog?.entries?.() || [])].filter(([bv, v]) => /^BV[0-9A-Za-z]{10}$/.test(bv) && v && !skip.has(bv) && (v.via === 'detail' || deep(bv)));
+  const ordered = [...entries.filter(([, v]) => v.via === 'detail'), ...entries.filter(([, v]) => v.via !== 'detail')];
+  return ordered.slice(0, Math.max(0, Math.min(Number(want) || 0, 4))).map(([bvid, v]) => ({ bvid, title: String(v.title || '') }));
 }
 
 export function createTrips({ life, wallet, pond, storage, log, habits, biliRead, gate, memory = null, gates = null, seenLog = null, inbox = null }) {
@@ -125,6 +141,38 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
           life.setTrip(f, { wantComment: result.wantComment || null, wantPost: result.wantPost || null, state: 'planned', seen: seen.slice(0, 12), cards: plan.cards, returnAt: plan.returnAt, postcard: String(result.postcard || '').slice(0, 300), postcards, souvenirs: souvenirsFor({ tripId: id, seen, gear }), tokens: result.tokens || 0, ...(notes ? { notes } : {}), ...(result.read ? { read: result.read.read, scanned: result.read.scanned } : {}), ...(result.dislikes?.length ? { dislikes: result.dislikes } : {}) });
           try { shootPhotos(pick, seen, postcards); } catch (e) { log?.warn?.(`[dsh-yushe] 照片出错：${e?.message || e}`); }
       };
+      /**
+       * 兜底（妈妈定的「这趟至少留两条」）：工具路逛完，评论不到两条就从**这趟点开看过、还没评过**的视频里补。
+       * 正文她自己写（走 writeDraft，过 G2 证据检查），发不发仍由闸门和每天上限管；安静时段不补（不打扰）。
+       */
+      const COMMENT_TARGET = 2;
+      const topUpComments = async (f, id, { catalog, ledger, acts }) => {
+        if (!gate || !wallet?.say || !biliRead || !catalog?.size || !ledger) return;
+        const hb = habits?.get() || {};
+        if (inQuiet(hb, nowDate())) return;
+        const view = gate.view();
+        const left = Number(view.limits?.comment ?? 0) - (Number(view.today?.comment ?? 0) + (view.queued || []).filter((d) => d.kind === 'comment').length);
+        const done = Object.entries(acts || {}).filter(([, a]) => (a || []).includes('bili_comment')).length;
+        const want = Math.min(COMMENT_TARGET - done, left);
+        if (want <= 0) return;
+        const recently = (() => { try { return (memory?.recentlyCommented?.(f, 24) || []).map(String); } catch { return []; } })();
+        const cand = commentTargets({ catalog, ledger, acts, recently, want });
+        if (!cand.length) return;
+        let added = 0;
+        for (const { bvid } of cand) {
+          if (added >= want) break;
+          const cur = life.state(f).trip;
+          if (cur?.id !== id) break; // 已经换了趟次，不补了
+          try {
+            const { v, material } = await videoMaterial(biliRead, bvid, ledger);
+            const w = await writeDraft({ wallet, pond, life }, { what: `给视频《${String(v.title || '').slice(0, 40)}》写一条评论`, material, intent: null, max: 80, evidence: { ledger, bvid } });
+            if (!w.ok) continue;
+            const r = gate.propose(f, { kind: 'comment', text: w.text, target: { bvid: v.bvid, aid: v.aid, title: String(v.title || '').slice(0, 60) } });
+            if (r.ok) { added += 1; log?.info?.(`[dsh-yushe] 兜底补评论：《${String(v.title || '').slice(0, 30)}》${r.queued ? '进发言队列' : '等爸妈批准'}`); }
+          } catch (e) { log?.warn?.(`[dsh-yushe] 兜底补评论没成：${String(e?.message || e).slice(0, 80)}`); }
+        }
+        if (added < want) log?.info?.(`[dsh-yushe] 这趟评论还差 ${want - added} 条（没有合适的可以补）`);
+      };
       const roamOld = () => {
         const jobId = startRoam(storage, 4 * 60_000, {
         who: { name: f.name, call: f.parentCall }, prefer, k, gatherBili,
@@ -184,6 +232,8 @@ export function createTrips({ life, wallet, pond, storage, log, habits, biliRead
           endJob(jobId, { result: { tools: r.calls, seen } });
           life.setTrip(f, { toolCalls: r.calls.map((c) => c.name).slice(0, 40) });
           finish({ seen, postcard: rep.postcard, postcardSay: rep.postcardSay, stay: rep.stay, tokens: r.usage.totalTokens, photo: rep.seen.length ? rep.photo : null, ledger: dump, acts, notes, read, dislikes });
+          // F-93（妈妈定的「每趟至少留两条」）：够了两条就什么也不做，不够就补
+          topUpComments(f, id, { catalog, ledger, acts }).catch((e) => log?.warn?.(`[dsh-yushe] 兜底补评论出错：${String(e?.message || e).slice(0, 80)}`));
         })
         .catch((e) => {
           log?.warn?.(`[dsh-yushe] 工具出门出错：${String(e?.message || e).slice(0, 120)}${calls ? '' : '，退回老路'}`);

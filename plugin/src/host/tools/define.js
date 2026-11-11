@@ -5,6 +5,7 @@
  *   kind        read | act | speak | self
  *   expose      { main, trip, room }：DSH 主会话 / 她自己的出门循环 / 房间聊天 谁能用（room 只放只读 / 回忆类，F-86）
  *   description 给模型看的说明（中文、不含 emoji）
+ *   tripDescription 出门循环里单独用的说明（不给就用 description）：出门时说话工具直接写 text，主会话那份说明讲的是 intent，所以说话工具要另写一份
  *   params      { 参数名: { type, description, enum?, required?, items? } } → 自动变成严格的 JSON Schema
  *   tripParams  出门循环里用的参数（不给就同 params）；说话工具主会话只收意图、出门直接写 text
  *   endpoints   [{ host: 'api'|'vc', method: 'GET'|'POST', path, wbi?, login?, csrf? }]：要用的 B站接口，注册表汇总成白名单
@@ -33,7 +34,7 @@ export function paramsSchema(params = {}) {
 }
 
 export function defineTool(spec) {
-  const s = { expose: { main: true, trip: true }, params: {}, endpoints: [], readCost: 0, perPerson: false, external: false, ...spec };
+  const s = { expose: { main: true, trip: true }, params: {}, endpoints: [], readCost: 0, perPerson: false, external: false, tripDescription: null, ...spec };
   return Object.freeze({ ...s, parameters: paramsSchema(s.params), tripParameters: paramsSchema(s.tripParams || s.params) });
 }
 
@@ -50,6 +51,8 @@ export function checkTools(tools) {
     if (typeof t.run !== 'function') problems.push(`${who}：没有 run`);
     if (!t.description || t.description.length < 20) problems.push(`${who}：说明太短`);
     if (/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(t.description || '')) problems.push(`${who}：说明里有 emoji`);
+    if (t.tripDescription != null && (!t.tripDescription || t.tripDescription.length < 20)) problems.push(`${who}：出门用的说明太短`);
+    if (t.tripDescription != null && /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(t.tripDescription)) problems.push(`${who}：出门用的说明里有 emoji`);
     if (!t.expose?.main && !t.expose?.trip) problems.push(`${who}：主会话和出门都不能用，那就没用`);
     for (const [k, p] of Object.entries({ ...(t.params || {}), ...(t.tripParams || {}) })) if (!TYPES.has(p?.type)) problems.push(`${who}：参数 ${k} 的 type 不对`);
     for (const e of t.endpoints || []) {

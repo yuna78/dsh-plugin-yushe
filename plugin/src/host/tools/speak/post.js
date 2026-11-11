@@ -11,6 +11,7 @@ export default defineTool({
   name: 'bili_post',
   kind: 'speak',
   description: '用你自己的 B站号发一条纯文字动态（分享你今天的小生活、看到的有意思的东西）。DSH 里爸妈让你发：给一句 intent（想发什么方向），正文你自己在鱼社里写——只会用你自己的经历和看过的公开内容，不会带上爸妈在 DSH 里说的话。再过规矩，每天有上限。',
+  tripDescription: '用你自己的 B站号发一条纯文字动态：给 text（5–500 字，你自己写的），写你看到的东西或此刻的感想。出门时直接写 text，不用给意图。每天有上限。',
   params: {
     intent: { type: 'string', description: '想发的方向（一句话，≤ 40 字）', required: true },
     image: { type: 'string', description: '可选：配图（本机图片路径，png/jpg/webp，≤20MB）。给了就把图挂到这条动态上' },

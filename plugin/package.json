@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-yushe",
-  "version": "0.49.0",
+  "version": "0.50.0",
   "repository": { "type": "git", "url": "git+https://github.com/yuna78/dsh-plugin-yushe.git" },
   "homepage": "https://github.com/yuna78/dsh-plugin-yushe#readme",
   "bugs": "https://github.com/yuna78/dsh-plugin-yushe/issues",

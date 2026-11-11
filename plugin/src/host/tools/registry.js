@@ -55,7 +55,7 @@ export async function runTool(tool, args, deps, from = 'main') {
 /** 给某个出口的「成品」定义（verify 和出门循环用）。 */
 export function yusheToolDefs(deps, { from = 'main', tools = TOOLS, kinds = null } = {}) {
   return toolsFor(from, tools, kinds).map((t) => ({
-    name: t.name, kind: t.kind, description: t.description, parameters: from === 'trip' ? t.tripParameters : t.parameters,
+    name: t.name, kind: t.kind, description: from === 'trip' ? (t.tripDescription || t.description) : t.description, parameters: from === 'trip' ? t.tripParameters : t.parameters,
     execute: (args) => runTool(t, args, deps, from),
   }));
 }
