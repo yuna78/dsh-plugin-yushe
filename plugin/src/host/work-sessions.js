@@ -6,14 +6,22 @@
  *
  * 现在：听宿主的 `agent/inbox/claimed`（一条消息进入一轮对话时发，带 agent = 那个会话）。
  *   - 浏览器里人打的字：source.kind === 'user' 且带 rpcId → 算一次活，并记下这个会话是「爸妈开的」
- *   - 子任务 / 定时任务 / 压缩 / 别的插件塞的消息：都不是这个样子 → 不算，也不记
+ *   - 从外部聊天渠道私聊进来的人话：source.kind === 'user' 且声明了 channel（比如 QQ 私聊）→ 同上。
+ *     群聊（chatType === 'group'）不算：一个会话里混着别人，家里的记忆不能进去
+ *   - 子任务 / 定时任务 / 压缩 / 别的插件塞的消息：都不是这个样子 → 不算，也不记。
+ *     注意只看 kind 不够：任务板、做 PPT 的审稿子任务发的就是光秃秃的 { kind: 'user' }
  * 人设和近况两段只在记下来的会话里出现（`inUserSession(assembleContext)`）。
  * 绑了工作区（F-64）：只有她那个工作区里的会话才算、才放人设；没绑（null）就所有工作区都算。
  * 宿主太旧、拼装时不带 agent 的话，退回老办法（照样注入），免得她整个消失。
  */
 import { inWorkspace, cwdOfAgent } from './workspaces.js';
 
-export const isTypedByUser = (message) => message?.source?.kind === 'user' && typeof message.source.rpcId === 'string' && message.source.rpcId.length > 0;
+const filled = (v) => typeof v === 'string' && v.length > 0;
+export const isTypedByUser = (message) => {
+  const s = message?.source;
+  if (s?.kind !== 'user') return false;
+  return filled(s.rpcId) || (filled(s.channel) && s.chatType !== 'group');
+};
 
 export function createWorkSessions({ ctx, pond, life, log }) {
   const userSessions = new Set();

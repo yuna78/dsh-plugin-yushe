@@ -46,7 +46,7 @@ import { createWorkspaces, registerWorkspaceRoutes } from './workspaces.js';
 export const name = 'dsh-plugin-yushe'; // 包名；存档目录、路由前缀仍叫 dsh-yushe（老存档不丢）
 // 人设注入要用 systemPrompt（所有带 dsh-base 的 profile 都有）
 export const inject = ['systemPrompt'];
-export const VERSION = '0.50.0';
+export const VERSION = '0.50.1';
 export const STATUS_PATH = '/api/dsh-yushe/status';
 export const SAY_PATH = '/api/dsh-yushe/probe/say';
 export const ROAM_PATH = '/api/dsh-yushe/probe/roam';

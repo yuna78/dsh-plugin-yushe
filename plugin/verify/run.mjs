@@ -1171,6 +1171,27 @@ section('她只在爸妈开的对话里上工 + 干活按消息算（F-63）');
   ok(!/text: \([^)]*\) => \{[\s\S]{0,200}bumpWork/.test(gr) && gr.includes('work.inUserSession(context)') && lr.includes('work.inUserSession(context)'), '人设 / 近况段落不再顺手记账，都先问是不是爸妈开的对话');
 }
 
+section('外部聊天渠道的私聊也算爸妈开的对话');
+{
+  const WS3 = await import(pathToFileURL(join(plugin, 'src/host/work-sessions.js')).href);
+  const by = (source) => WS3.isTypedByUser({ source });
+  ok(by({ kind: 'user', rpcId: 'r' }), '页面里打的字照旧算');
+  ok(by({ kind: 'user', channel: 'qq', chatType: 'c2c', senderId: 'u' }), '外部渠道私聊进来的人话算（没有 rpcId 也算）');
+  ok(!by({ kind: 'user' }), '光秃秃的 kind: user 不算：任务板、审稿子任务发的就是这样');
+  ok(!by({ kind: 'user', channel: '' }), '空的 channel 不算');
+  ok(!by({ kind: 'user', channel: 'qq', chatType: 'group', senderId: 'u' }), '群聊不算：会话里混着别人，家里的记忆不能进去');
+  ok(!by({ kind: 'qq-chat', channel: 'qq', chatType: 'c2c' }), 'kind 不是 user 的不算');
+  let h3 = null, n3 = 0;
+  const W3 = WS3.createWorkSessions({ ctx: { on: (_n, fn) => { h3 = fn; } }, pond: { current: () => ({ id: 'f', workspace: { id: 'w', path: '/a/home' } }) }, life: { bumpWork: () => { n3 += 1; } } });
+  const ag3 = (id, cwd) => ({ id, session: { header: { cwd } } });
+  const im = { source: { kind: 'user', channel: 'qq', chatType: 'c2c', senderId: 'u' } };
+  h3({ agent: ag3('IN', '/a/home'), message: im }); h3({ agent: ag3('OUT', '/a/other'), message: im }); h3({ agent: ag3('AUTO', '/a/home'), message: { source: { kind: 'user' } } });
+  ok(W3.inUserSession({ agent: ag3('IN', '/a/home'), scope: {} }), '她上工的工作区里，外部渠道私聊的会话有人设');
+  ok(!W3.inUserSession({ agent: ag3('OUT', '/a/other'), scope: {} }), '别的工作区的外部渠道会话没有人设');
+  ok(!W3.inUserSession({ agent: ag3('AUTO', '/a/home'), scope: {} }), '她工作区里的自动化会话照旧没有人设');
+  ok(n3 === 1, '只有她工作区里的私聊算一次活');
+}
+
 section('她在哪儿上工：绑工作区（F-64）');
 {
   const WSP = await import(pathToFileURL(join(plugin, 'src/host/workspaces.js')).href);
