@@ -7,6 +7,7 @@
  *   POST /api/dsh-yushe/diary         {day?} → 让她把（今天的）日记写出来（宿主模型）
  *
  * 近况段落 yushe:life：≤320 字，跟在人设后面；没有上工的鱼就返回空串。
+ * 另有 registerRecallContext：主会话按「爸妈这一句」另挂一段想起的经历（五期-1，yushe:recall）。
  */
 import { nowMs } from './clock.js';
 import { readJsonBody } from './game-routes.js';
@@ -292,5 +293,32 @@ export function registerLifeSection(ctx, pond, life, personaOrder, work = null, 
     },
     interpolate: false,
   }), 'dsh-yushe: life section');
+  return true;
+}
+
+/**
+ * 五期-1（F-95）：主会话按「爸妈这一句」另挂一段想起的经历（yushe:recall），不动近况段 yushe:life。
+ * 探针结果：context 的 text 每一步都会重算但拿不到这一句，所以这句只能由 work-sessions 从
+ * agent/inbox/claimed 顺手记下（只在内存）；context 的结果会作为快照落进会话历史、且只在内容变了时追加——
+ * 所以这段只在真有命中时才有字，没命中就是空串，多数轮次快照不变、不多占地方。
+ * 这一句只在本地当检索词用一次：不存、不进档案、不进日志；不带别人原话（memory.related 里已按 quotes:false）。
+ */
+export function registerRecallContext(ctx, pond, work, memory) {
+  if (!ctx.systemPrompt?.context) return false; // 宿主没有这个口子就不挂，不抛
+  const RECALL_ORDER = 900; // 排在人设 / 近况段（persona + 1）等其他 context 后面；宿主按它排序，有限数就行
+  ctx.effect(() => ctx.systemPrompt.context({
+    name: 'yushe:recall',
+    order: RECALL_ORDER,
+    text: (context) => {
+      try {
+        if (!work?.inUserSession(context)) return ''; // 不是爸妈开的对话（子任务 / 别的插件 / 老宿主拼装）不放
+        const f = pond.current();
+        if (!f) return ''; // 没有鱼
+        const said = work.lastTyped(context?.agent?.id);
+        if (!said?.text || nowMs() - said.at > 30 * 60_000) return ''; // 没有这一句，或已经隔了半小时以上：不当「正在说的事」
+        return memory?.related?.(f, said.text) || ''; // 本地召回，不调模型
+      } catch { return ''; } // 记忆坏了不影响主会话
+    },
+  }), 'dsh-yushe: recall context');
   return true;
 }

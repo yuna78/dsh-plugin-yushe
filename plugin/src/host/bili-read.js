@@ -26,8 +26,10 @@ const PATHS = new Set(['/x/web-interface/nav', '/x/web-interface/wbi/index/top/f
 const VC = 'https://api.vc.bilibili.com';
 const VC_PATHS = new Set(['/session_svr/v1/session_svr/get_sessions', '/svr_sync/v1/svr_sync/fetch_session_msgs']);
 export const DAILY_BUDGET = 300;
-export const PER_MINUTE = 6;
+export const PER_MINUTE = 4;
 export const PER_HOUR = 60;
+// 每次请求前随机停一下：别让一串请求按整秒排开（07:12:07 和 07:12:08 挨着发，B站 一眼看出是脚本）
+const JITTER_MIN = 180, JITTER_MAX = 420;
 // F-81：读预算拆两个池子——互动（私信 / 收件箱）先留够，内容（刷视频 / 新闻）用剩下的，还能借互动当天没用的。
 export const INTERACT_SHARE = 0.8;
 export const poolsOf = (total) => { const cap = Math.max(2, Number(total) || DAILY_BUDGET); const interact = Math.max(1, Math.round(cap * INTERACT_SHARE)); return { interact, content: Math.max(1, cap - interact), total: cap }; };
@@ -95,13 +97,23 @@ export function createBiliRead(storage, fetchImpl = fetch, { extraPaths = null, 
     if ((s.recent || []).filter((t) => nowMs() - t < 3600_000).length >= perHour) return { ok: false, why: `这一小时 B站已经读了 ${perHour} 次，慢一点` };
     return { ok: true };
   };
-  /** 放行一次读：过 gate；分钟窗口满了就等到有空位（最多等一分钟）；放行时就计数（失败也算）。串行，免得并发绕过窗口。 */
+  /**
+   * 放行一次读：过 gate → 分钟窗口满了就等出窗口（再多停 0–800ms）→ 放行前再随机停 180–420ms → 计数。
+   * 为什么既等又停：直接拒会让她出门一趟被砍掉一半工具（一趟要调 12–20 次）；
+   * 而按整秒等出窗口再立刻发，节奏太整齐 —— 2026-11-11 连着三分钟「每分钟正好 6 次」就被 -509 了。
+   * 所以：峰值降到 4 次/分钟 + 两处随机停顿，把节奏打散。串行，免得并发绕过窗口。
+   */
   let queue = Promise.resolve();
   const admit = (kind = 'content') => {
     const run = queue.then(async () => {
       let g = gate(kind); if (!g.ok) throw new Error(g.why);
       const inMinute = (state().recent || []).filter((t) => nowMs() - t < 60_000).sort((a, b) => a - b);
-      if (inMinute.length >= perMinute) { await sleep(Math.max(0, 60_000 - (nowMs() - inMinute[inMinute.length - perMinute]))); g = gate(kind); if (!g.ok) throw new Error(g.why); }
+      if (inMinute.length >= perMinute) {
+        const wait = Math.max(0, 60_000 - (nowMs() - inMinute[inMinute.length - perMinute]));
+        await sleep(wait + Math.floor(Math.random() * 800));
+        g = gate(kind); if (!g.ok) throw new Error(g.why);
+      }
+      await sleep(JITTER_MIN + Math.floor(Math.random() * (JITTER_MAX - JITTER_MIN)));
       const s = state(), c = countsOf(s);
       c[kind] = (c[kind] || 0) + 1;
       saveState({ ...s, day: today(), count: c.interact + c.content, counts: c, recent: [...(s.recent || []).filter((t) => nowMs() - t < 3600_000), nowMs()] });

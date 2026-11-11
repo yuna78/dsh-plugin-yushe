@@ -15,6 +15,7 @@
  * 宿主太旧、拼装时不带 agent 的话，退回老办法（照样注入），免得她整个消失。
  */
 import { inWorkspace, cwdOfAgent } from './workspaces.js';
+import { nowMs } from './clock.js';
 
 const filled = (v) => typeof v === 'string' && v.length > 0;
 export const isTypedByUser = (message) => {
@@ -23,9 +24,28 @@ export const isTypedByUser = (message) => {
   return filled(s.rpcId) || (filled(s.channel) && s.chatType !== 'group');
 };
 
+/* 五期-1（F-95）：爸妈这一句只在内存里存一份，只当检索词用一次——不写文件、不进日志、不进档案、不打印。
+ * 主会话的 context 每一步都会重算，但那句拿不到（探针结果），只能在这里从 agent/inbox/claimed 顺手记下；
+ * 用完即丢的意思：不落任何盘，实例重启就没了。 */
+const LAST_TYPED_MAX = 200; // 最多记 200 个会话，满了丢最老的
+
 export function createWorkSessions({ ctx, pond, life, log }) {
   const userSessions = new Set();
   const track = (agent) => { if (agent?.id) { userSessions.add(String(agent.id)); if (userSessions.size > 2000) userSessions.delete(userSessions.values().next().value); } };
+  const lastTypedMap = new Map(); // agentId → { text, at }
+  /** 记下这个会话里爸妈最新亲手打的一句（text 块拼起来，截前 200 字）。 */
+  const rememberTyped = (agentId, message) => {
+    const text = (Array.isArray(message?.content) ? message.content : [])
+      .filter((b) => b?.type === 'text')
+      .map((b) => String(b?.text ?? ''))
+      .join('')
+      .slice(0, 200);
+    if (!text) return;
+    const id = String(agentId);
+    lastTypedMap.delete(id); // 重新插到队尾：最近还在说话的会话不算最老
+    lastTypedMap.set(id, { text, at: nowMs() });
+    if (lastTypedMap.size > LAST_TYPED_MAX) lastTypedMap.delete(lastTypedMap.keys().next().value);
+  };
   const ws = {
     /** 宿主事件：一条消息进了一轮。人打的字 → 记会话 + 算一次活。 */
     onClaimed(payload) {
@@ -33,6 +53,7 @@ export function createWorkSessions({ ctx, pond, life, log }) {
       track(payload.agent);
       const f = pond.current();
       if (!f || !inWorkspace(cwdOfAgent(payload.agent), f.workspace)) return false; // 别的工作区的对话不算她的活
+      if (payload.agent?.id) rememberTyped(payload.agent.id, payload.message); // 和 bumpWork 同一道关：工作区不对的也不记这一句
       try { life.bumpWork(f); } catch { /* 记账失败不影响对话 */ }
       return true;
     },
@@ -42,6 +63,12 @@ export function createWorkSessions({ ctx, pond, life, log }) {
       if (!agent) return !context?.scope; // 老宿主：拼装不带 agent → 照旧注入；带了 scope 却没有 agent 的（别的东西）不注入
       if (!userSessions.has(String(agent.id))) return false;
       return inWorkspace(cwdOfAgent(agent), pond.current()?.workspace || null);
+    },
+    /** 五期-1：这个会话里爸妈最新亲手打的一句（没有 / 不是这个会话 → null）。子任务、任务板、别的插件塞的话不会在这里。 */
+    lastTyped(agentId) {
+      if (agentId == null) return null;
+      const x = lastTypedMap.get(String(agentId));
+      return x ? { ...x } : null;
     },
     size: () => userSessions.size,
   };

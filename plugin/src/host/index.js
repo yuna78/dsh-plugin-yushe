@@ -16,7 +16,7 @@ import { hostSay, hostModel, SAY_PROMPT, startRoam, roamStatus, logProbe } from 
 import { createPond } from './pond.js';
 import { registerGameRoutes, registerPersona } from './game-routes.js';
 import { createLife, snapshot, setSleepWindow } from './life-engine.js';
-import { registerLifeRoutes, registerLifeSection } from './life-routes.js';
+import { registerLifeRoutes, registerLifeSection, registerRecallContext } from './life-routes.js';
 import { registerRoomRoutes } from './room-routes.js';
 import { initClock, clockSkewed, nowDate } from './clock.js';
 import { createWallet, registerWalletRoutes } from './wallet.js';
@@ -46,7 +46,7 @@ import { createWorkspaces, registerWorkspaceRoutes } from './workspaces.js';
 export const name = 'dsh-plugin-yushe'; // 包名；存档目录、路由前缀仍叫 dsh-yushe（老存档不丢）
 // 人设注入要用 systemPrompt（所有带 dsh-base 的 profile 都有）
 export const inject = ['systemPrompt'];
-export const VERSION = '0.50.1';
+export const VERSION = '0.51.0';
 export const STATUS_PATH = '/api/dsh-yushe/status';
 export const SAY_PATH = '/api/dsh-yushe/probe/say';
 export const ROAM_PATH = '/api/dsh-yushe/probe/roam';
@@ -158,6 +158,7 @@ export function apply(ctx) {
   const work = createWorkSessions({ ctx, pond, life, log }); // 哪些对话是爸妈开的 + 干了几次活（F-63）
   const personaOrder = registerPersona(ctx, pond, life, work);
   if (personaOrder !== null) registerLifeSection(ctx, pond, life, personaOrder, work, memory);
+  if (personaOrder !== null) registerRecallContext(ctx, pond, work, memory); // 五期-1：主会话按这一句另挂一段（宿主没有 systemPrompt.context 时它自己不挂）
   log?.info?.(`人设段落 yushe:persona + 近况 yushe:life ${personaOrder !== null ? '已注册' : '未注册（没有 systemPrompt）'}；当前鱼：${pond.current()?.name ?? '无'}`);
 
   if (typeof ctx.inject !== 'function') {

@@ -12,7 +12,7 @@ import PROMPTS from '../prompts/_all.js';
 const DAY = 86400e3;
 export const STAGES = ['clear', 'fuzzy', 'trace', 'forgotten'];
 export const STAGE_TEXT = { clear: '清晰', fuzzy: '模糊', trace: '只剩印象', forgotten: '忘了' }; // 修补-3 S2：给人看的阶段说法和统计条 / 周记一致（原来是「印象」）
-export const MAX_EPISODES = 1000;
+export const MAX_EPISODES = 2000; // 五期-1b：1000 → 2000（只点开的按天合并后一天约 47 条，imp 3 以上一天约 11 条、寿命 100 天左右，1000 装不下；docs/设计/18-记忆五期.md 2.2）
 export const MAX_PEOPLE = 120;
 const IMP_MULT = [0.15, 0.3, 0.6, 1, 1.8, 4];
 const REINFORCE_MAX = 5;
@@ -281,8 +281,9 @@ export function settleMemory(mem, now, baseDays = 30) {
     eps.push(d);
   }
   if (eps.length > MAX_EPISODES) {
-    // 排序先钉住后留存，超上限时钉住的排在前面永远留（测试 E：钉住的不因上限丢）
-    const keep = new Set(eps.map((e) => [e, retention(e, now, baseDays)]).sort((a, b) => (Number(Boolean(b[0].pinned)) - Number(Boolean(a[0].pinned))) || b[1] - a[1]).slice(0, MAX_EPISODES).map(([e]) => e.id));
+    // 排序先钉住、再重要性高的在前、同级的按留存高的在前，超上限从后面丢（五期-1b E）：
+    // 满了先挤 imp 低的，同一级里先挤留存（老的）低的——今天刚点开的小事挤不掉三周前的心情 / 日记；钉住的照旧永远留
+    const keep = new Set(eps.map((e) => [e, retention(e, now, baseDays)]).sort((a, b) => (Number(Boolean(b[0].pinned)) - Number(Boolean(a[0].pinned))) || (b[0].imp || 0) - (a[0].imp || 0) || b[1] - a[1]).slice(0, MAX_EPISODES).map(([e]) => e.id));
     forgot += eps.length - keep.size;
     mem.episodes = eps.filter((e) => keep.has(e.id));
   } else mem.episodes = eps;
@@ -425,6 +426,86 @@ export function recall(mem, { query = '', scope = 'all', limit = 5, chars = 600,
     out.push({ id: ep.id, stage: st, kind: ep.kind, at: ep.at, text, url: st === 'clear' ? ep.url : undefined });
   }
   return out;
+}
+
+/* ---------- 五期-1（F-95）：主会话里按爸妈这一句，想起相关的经历 ----------
+ * 另挂一段 context（宿主端 registerRecallContext），不动近况段的常驻召回。
+ * 宁可不想：BV 号 / UID 完全一样才算铁的；否则要 ≥ 2 个不同的词都对上，相关分还得过门槛；
+ * 满屏都是的常见词（「视频」「的视」这种）不算命中。别人的原话不出现在这段里（同 recall 的 quotes:false）。
+ * 纯函数：不改 mem、不加深、不记日志；这一句本身只在本地当检索词用一次，不落任何地方。
+ */
+export const RELATED_MAX = 3; // 最多想起 3 条（docs/设计/18-记忆五期.md 第 1 节：另挂一段、最多 3 条、≤ 200 字）
+export const RELATED_CHARS = 200; // 这一段的总字数上限（含标题行）；没命中就是空串，context 快照不变
+export const RELATED_TITLE = '【这句话让你想起的】';
+/** 常见词比例：一个词出现在超过一半的活着的经历里，就是「满屏都是」的词，不算命中。
+ *  任务书先估的是 15%，但验收 A8 里正主词「小猫」也出现在 7/31 ≈ 23% 的经历里（同一部片的几集），15% 会把正主一起挡掉；
+ *  真正泛滥的词都远过一半（「视频」「的视」八九成、「在」几乎条条都有），0.5 两边都留足余量。 */
+export const RELATED_COMMON = 0.5;
+/** 相关分门槛：对上的词数按问句长度和经历长度规整（和 recall 同一把尺：hit / √(词数 × 经历词数 / 4)）。
+ *  问句常带口水词（「你还记得……吗」占了一大半），0.3 ≈ 对上的词要顶得起问句的三成；再高真实问题会被挡掉，再低压不住只沾一边的。 */
+export const RELATED_MIN_SCORE = 0.3;
+/** 想起的由头（总指挥验收时加）：主会话大多是在干活，「部署一下服务」「测试挂了」也能和她的旧事对上两三个词。
+ *  所以光词对上不够，这一句得像是在问往事（还记得 / 上次 / 之前 / 你看过…），或者点名了她认得的东西（BV 号、UID、认识的人的名字）。
+ *  这是闸门不是判断：宁可漏想一次，也不往工作会话里塞沾边的旧事（docs/设计/18-记忆五期.md 第 9 节代言人问题 3）。 */
+export const RELATED_CUES = /记得|还记|记不记|忘了吗|上次|上回|之前|以前|那次|那天|前几天|前阵子|你看过|你看的|看过的|你说过|你提过|你写过|跟你说过|你学会|想起/;
+
+/** 主会话按这一句想起相关的经历。返回 { text, ids }；没命中 text === ''、ids = []。坏输入不抛，返回空。 */
+export function recallRelated(mem, query, { now, baseDays = 30, limit = RELATED_MAX, chars = RELATED_CHARS } = {}) {
+  const empty = { text: '', ids: [] };
+  if (!mem || typeof mem !== 'object' || !Array.isArray(mem.episodes)) return empty;
+  const said = typeof query === 'string' ? query.slice(0, 200) : ''; // 这一句最多拿前 200 字当检索词
+  const tr = timeRange(said, now); // 时间词只用来去掉，不算命中、也不按日子筛（那是 recall 的事）
+  const rest = tr ? tr.rest : said;
+  const wantIds = String(rest).match(/BV[0-9A-Za-z]{10}|\d{5,}/g) || [];
+  const q = [...tokens(rest)].filter((w) => !STOP.has(w));
+  if (!q.length && !wantIds.length) return empty; // 「昨天干了啥」这种去掉时间词就剩空话：不想
+  // 点名了她认识的人（名字 ≥ 2 个字、原样出现在这一句里）：和 BV 号 / UID 一样算铁的
+  const names = new Set();
+  const known = [...Object.values(mem.people || {}).map((p) => p?.who), ...mem.episodes.map((e) => (e && !e.muted ? e.keys?.who : null))]; // 认人表 + 经历里记着的人
+  for (const x of known) { const w = String(x || ''); if (w.length >= 2 && w !== '网友' && rest.includes(w)) names.add(w); }
+  const cued = RELATED_CUES.test(said); // 像在问往事（看原句，时间词也算语气：「上次」「前几天」）
+  if (!cued && !wantIds.length && !names.size) return empty; // 没有由头、也没点名：干活的话不往旧事上扯
+  // 候选：还没忘、没被「不再提」的经历，家里 / B站都算（这是跟爸妈说话）；回忆录不在这段里（问一段日子走 recall）
+  const alive = [];
+  for (const ep of mem.episodes || []) {
+    if (!ep || ep.muted) continue;
+    if (stageOf(ep, now, baseDays) === 'forgotten') continue;
+    alive.push({ ep, hay: tokens(`${ep.text} ${ep.gist} ${ep.keys?.tag || ''} ${ep.keys?.who || ''}`) });
+  }
+  // 常见词：经历够多（≥ 20 条）才值得算；不再提的经历也「活着」，词频按她整个记忆算
+  const common = new Set();
+  if (alive.length >= 20 && q.length) {
+    for (const w of q) {
+      const df = alive.reduce((n, { hay }) => n + (hay.has(w) ? 1 : 0), 0);
+      if (df / alive.length > RELATED_COMMON) common.add(w);
+    }
+  }
+  const words = q.filter((w) => !common.has(w));
+  const cands = [];
+  for (const { ep, hay } of alive) {
+    const direct = wantIds.some((x) => x === ep.keys?.bvid || x === ep.keys?.mid) || (names.size > 0 && names.has(String(ep.keys?.who || ''))); // BV 号 / UID / 认识的人的名字完全一样：铁的
+    let hit = 0;
+    for (const w of words) if (hay.has(w)) hit += 1;
+    if (!direct && (!cued || hit < 2)) continue; // 宁可不想：没由头只认点名的；有由头也要 ≥ 2 个不同的词都对上
+    const rel = hit ? hit / Math.sqrt(words.length * Math.max(4, hay.size) / 4) : 0;
+    if (!direct && rel < RELATED_MIN_SCORE) continue; // 相关分门槛：沾一点边的不算
+    const st = stageOf(ep, now, baseDays);
+    const score = 0.6 * Math.min(1.5, rel + (direct ? 1 : 0)) + 0.25 * retention(ep, now, baseDays) + 0.15 * (ep.imp || 0) / 5; // 和 recall 同一把尺
+    cands.push({ ep, st, score });
+  }
+  cands.sort((a, b) => b.score - a.score || (a.ep.id < b.ep.id ? -1 : a.ep.id > b.ep.id ? 1 : 0)); // 分高的在前，一样按 id：同样的输入永远同样的输出
+  const lines = []; const ids = [];
+  let used = RELATED_TITLE.length + 1;
+  for (const { ep, st } of cands) {
+    if (lines.length >= limit) break;
+    const line = `- ${phrase(shownEpisode(ep, false), st)}`; // 别人的原话不出现在这段里（同 recall 的 quotes:false，只给规则写的概括）
+    if (lines.length && used + line.length > chars) break; // 整行截：这条放不下就到此为止
+    if (!lines.length && used + line.length > chars) return empty; // 连一条都放不下：宁可整段不给
+    lines.push(line); ids.push(ep.id);
+    used += line.length + 1;
+  }
+  if (!lines.length) return empty;
+  return { text: `${RELATED_TITLE}\n${lines.join('\n')}`, ids };
 }
 
 /** 认识的人（按熟悉程度）：[{ who, mid?, tier, n, last }]。 */

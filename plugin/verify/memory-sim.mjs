@@ -34,7 +34,7 @@ export function createSim({ start = new Date(), model: userModel, parentMid = ''
   const wallet = { say: async (kind, prompt) => ({ text: model(kind, prompt) }) };
 
   // 档案在内存里维护（形状和 archiveItems 读的一致）
-  const life = { events: [], chat: [], diary: [], journal: [], album: [] };
+  const life = { events: [], chat: [], diary: [], journal: [], album: [], homeCards: [] }; // 五期-1b：homeCards = 在家刷 B站的清单卡
   const footprints = [];
   const inbox = [];
   const dms = [];
@@ -84,6 +84,8 @@ export function createSim({ start = new Date(), model: userModel, parentMid = ''
     },
     dm({ who = '', mid = '', text = '' } = {}) { dmConv(mid, who).history.push({ from: 'them', text, at: atIo() }); },
     tell(text) { return memory.tell(fish, text); },
+    /** 五期-1b：在家刷了一轮 B站（清单卡）。read = [{ title, url?, tag?, depth: 'title'|'detail'|'comments'|'subtitle', acts?: [] }]；没给 url 自动生成。 */
+    home(read = []) { life.homeCards.push({ at: atIo(), read: read.map((x) => ({ ...x, url: x.url || `https://www.bilibili.com/video/BV1${String(++seq).padStart(9, '0')}` })) }); },
 
     /** 调一次 memory.sync（minGapMs: 0，每次都真同步）。 */
     sync() { return memory.sync(fish, { minGapMs: 0 }); },

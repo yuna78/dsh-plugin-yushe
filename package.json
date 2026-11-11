@@ -10,7 +10,8 @@
     "verify": "node plugin/verify/run.mjs",
     "smoke": "node scripts/smoke.mjs",
     "bili:login": "node tools/bili-login.mjs",
-    "bili:check": "node tools/bili-login.mjs --check"
+    "bili:check": "node tools/bili-login.mjs --check",
+    "ci": "npm ci && npm run build && git diff --exit-code -- plugin/lib plugin/game && npm run verify"
   },
   "dependencies": {
     "@fontsource/zcool-kuaile": "^5.3.0",

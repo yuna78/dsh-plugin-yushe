@@ -8,6 +8,7 @@
  *   memory.recall(fish, { query, scope }) 召回；scope 'public' = 对外说话，只给 B站范围
  *   memory.reinforce(fish, ids)          她主动想起来了：加深（半衰期变长）
  *   memory.section(fish, …)              给模型的一段「你记得的事」
+ *   memory.related(fish, 这一句)         五期-1：主会话按爸妈这句话另挂一段（只读，不写盘）
  *   memory.summarize(fish, wallet, {day}) 三期：写完日记、反思之后写周记 / 章节（一晚最多各一篇）
  *   GET /api/dsh-yushe/memory            给页面：各阶段几条、认识几个人、最近记得的事
  *
@@ -16,7 +17,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { nowMs } from './clock.js';
-import { emptyMemory, migrateMemory, makeEpisode, meet, settleMemory, recall, knownPeople, aboutPerson, memoryText, memoryStats, stageOf, STAGE_TEXT, reflectCandidates, reflectPrompt, applyReflection, settleBeliefs, beliefsFor, activeBeliefs, tell, untell, localDay, defang, logOp, toldDueAge, toldLine, pickWeek, pickMonth, weekMaterial, monthMaterial, checkWeekly, checkChapter, weeklyPrompt, chapterPrompt, settleWeeklies, mergeChapters, recentLines, weeklyStage, weeklyStatus, nextIdFor, WEEKLY_STAGE_TEXT, MAX_PINNED, cleanTold, dueOf, fixBelief, fixLogText, dropItem, dropLogText, findTarget, PARENT_OPS } from '../shared/memory.js';
+import { emptyMemory, migrateMemory, makeEpisode, meet, settleMemory, recall, recallRelated, knownPeople, aboutPerson, memoryText, memoryStats, stageOf, STAGE_TEXT, reflectCandidates, reflectPrompt, applyReflection, settleBeliefs, beliefsFor, activeBeliefs, tell, untell, localDay, defang, logOp, toldDueAge, toldLine, pickWeek, pickMonth, weekMaterial, monthMaterial, checkWeekly, checkChapter, weeklyPrompt, chapterPrompt, settleWeeklies, mergeChapters, recentLines, weeklyStage, weeklyStatus, nextIdFor, WEEKLY_STAGE_TEXT, MAX_PINNED, cleanTold, dueOf, fixBelief, fixLogText, dropItem, dropLogText, findTarget, PARENT_OPS } from '../shared/memory.js';
 import { personaFor } from '../shared/growth.js';
 import { homeMemKind } from '../shared/home.js'; // F-87 在家：读到哪层 → 记多重
 
@@ -101,7 +102,11 @@ export function archiveItems({ fish, life = {}, footprints = [], inbox = [], dms
   // F-87 在家-1：清单「刷过的」里点开过的每条都进记忆（读多深定 imp，只扫标题的不进，流水账里查得到）。
   // 带态度：喜欢 / 不喜欢（带理由）照抄她的话，踩雷也是她。别人写的标题先防投毒。
   // 在家写了便利贴的那条，便利贴已经记过一次（note / seen），清单卡里同一天同一条不再记
+  // 五期-1b M：只点开、没互动也没说态度的（glance），按「本机日 + 分区」攒着，过完一天合成一条
+  // （今天还没过完的先不出，明天再合；now 没给就当所有日子都过完了）；说了态度的照旧单独一条、马上记——她的话不能并掉。
   const homeNoted = new Set((life.journal || []).filter((j) => j?.home && j.note && j.at).flatMap((j) => (j.seen || []).map((x) => `${String(x?.url || '').match(/BV[0-9A-Za-z]{10}/)?.[0] || x?.url}:${localDay(j.at)}`)));
+  const today = nowT > 0 ? localDay(nowT) : ''; // 「今天」按本机日子；now 缺省（老测试直调）当所有日子都过完了
+  const glances = new Map(); // 五期-1b：`${day}\u0001${tag || '别的'}` → { day, tag, at, ones: [{ one, title }] }
   for (const card of life.homeCards || []) {
     if (!card?.at) continue;
     const day = localDay(card.at);
@@ -117,8 +122,30 @@ export function archiveItems({ fish, life = {}, footprints = [], inbox = [], dms
       const like = String(x.like || '').slice(0, 4);
       const why = short(x.why, 20);
       const att = like === '不喜欢' ? `，不喜欢${why ? `：${why}` : ''}` : like === '喜欢' ? `，说了喜欢${why ? `，因为${why}` : ''}` : like ? `，觉得${like}` : '';
-      out.push({ key, at: card.at, kind, text: `在家刷 B站点开了《${defang(short(x.title, 50))}》${att}`, url: x.url, keys: { bvid, tag: x.tag, who: defangWho(x.up) } });
+      const one = { key, at: card.at, kind, text: `在家刷 B站点开了《${defang(short(x.title, 50))}》${att}`, url: x.url, keys: { bvid, tag: x.tag, who: defangWho(x.up) } };
+      if (kind !== 'glance' || like) { out.push(one); continue; } // 看了评论 / 读了字幕 / 点过赞 / 说了态度的：照旧单独一条、马上记（key、文字都不变）
+      const gk = `${day}\u0001${x.tag || '别的'}`; // 没写分区的当一组「别的」
+      let g = glances.get(gk);
+      if (!g) glances.set(gk, (g = { day, tag: String(x.tag || ''), at: card.at, ones: [] }));
+      if ((Date.parse(card.at) || 0) > (Date.parse(g.at) || 0)) g.at = card.at; // at = 这组最后一张卡的时间
+      g.ones.push({ one, title: String(x.title || '') });
     }
+  }
+  for (const g of glances.values()) {
+    if (today && g.day >= today) continue; // 今天还没过完：只点开的先不出（明天再合）
+    if (g.ones.length < 2) { out.push(...g.ones.map((o) => o.one)); continue; } // 只有一条：和原来一模一样（文字、key 都是老的）
+    // ≥ 2 条合成一条「在家刷 B站点开了 N 个讲X的视频，比如《a》《b》」：最多带 2 个标题（照旧 defang）、整句 ≤ 140、key 由日子 + 分区决定（同样的档案同样的 key）
+    const names = g.ones.slice(0, 2).map((o) => `《${defang(short(o.title, 50))}》`).join('');
+    const text = `在家刷 B站点开了 ${g.ones.length} 个${g.tag ? `讲${g.tag}的视频` : '视频'}${names ? `，比如${names}` : ''}`;
+    out.push({
+      key: `hg:${g.day}:${g.tag || '别的'}`,
+      at: g.at,
+      kind: 'glance',
+      text: text.slice(0, 140), // makeEpisode 那边也会截到 140，这里先截好
+      gist: g.tag ? `在家点开过一批讲${g.tag}的视频` : '在家点开过一批视频', // 印象阶段剩的那句；这条没有单个 bvid，不写的话 gistOf 会说成「看过一条新闻」
+      keys: g.tag ? { tag: g.tag } : {},
+      srcKeys: g.ones.map((o) => o.one.key), // 五期-1b M5：组里每条原来的 key（h:<BV 或链接>:<日子>），ingest 拿它们挡「升级前按老办法单独记过」的重复合并
+    });
   }
   // F-84/F-85：路上寄回的明信片（没拍成照片的那张）。她说哪种就记成哪种（想你的 / 口信明信片）；见闻照旧带着是看《什么》时写的
   const SAY_TEXT = { 想你: '想你的', 口信: '口信' };
@@ -181,8 +208,12 @@ export function ingest(mem, items, { now } = {}) {
     const t = it?.at ? Date.parse(it.at) : NaN;
     if (Number.isFinite(floorMs) && Number.isFinite(t) && t < floorMs) continue; // 早于 lastAt − 3 天：老档案，跳过
     if (seen.has(it.key)) continue; // 窗口内（含晚到的）按 key 去重；同批里时间相同的条目 key 不同，都能进来
+    // 五期-1b M5：按天合并出来的那条带组里每条原来的 key（srcKeys）；任何一条已经记过（升级前按老办法单独记过）→ 这条合并的就不再记
+    const srcKeys = Array.isArray(it.srcKeys) ? [...new Set(it.srcKeys.map(String).filter(Boolean))] : [];
+    if (srcKeys.some((k) => seen.has(k))) continue;
     seen.add(it.key);
     keep[it.key] = it.at || '';
+    for (const k of srcKeys) { seen.add(k); keep[k] = it.at || ''; } // 记下了就把组里原来的 key 也记进去重记号（跟主 key 同一个窗口，按时间清）
     mem.episodes.push(makeEpisode(mem, it));
     if (it.person) meet(mem, { ...it.person, at: it.at });
     added += 1; // 更晚（甚至未来）的那条照样记下，去重记号照记
@@ -346,6 +377,11 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
         const recent = scope === 'all' ? recentLines(m, { now: tnow(), baseDays: days() }) : []; // 三期【这阵子】：只在家里（主会话 / 鱼社房间），出门没有
         return memoryText(items, ppl, { title, tail, beliefs: bl, told, recent });
       } catch { return ''; }
+    },
+    /** 五期-1：主会话按「爸妈这一句」想起相关的经历（那段文字）。只 load 不 sync——不触发写盘、不加深、不记日志；没有鱼 / 出错都按空串。 */
+    related(fish, query) {
+      if (!fish) return '';
+      try { return recallRelated(load(fish), String(query ?? ''), { now: tnow(), baseDays: days() }).text; } catch { return ''; }
     },
     /** 她的认识（生效 + 暂定）：每条带白话 state，规则词不出门（yushe_recall 的 beliefs 用）。不再提的（四期-2 D）不还它。 */
     beliefs(fish, { scope = 'all', limit = 30 } = {}) {
