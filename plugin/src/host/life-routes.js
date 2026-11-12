@@ -13,6 +13,7 @@ import { nowMs } from './clock.js';
 import { readJsonBody } from './game-routes.js';
 import { snapshot, lifeSection, dayOf } from './life-engine.js';
 import { SIG_INSTRUCTION, sigFilter, parseSignals, sigEvents } from '../shared/mood.js';
+import { isUndoNote } from '../shared/memory.js'; // 五期-3：爸妈说「不用记」的判断（规则在 shared，房间路由只接线）
 import { feelSection, temperOf } from '../shared/feel.js';
 import { gainXp, leanOnce, feedInterests, growthView } from '../shared/growth.js';
 import { asksAboutGame, kbText } from '../shared/tips.js';
@@ -68,6 +69,35 @@ export const TOOL_STATUS = { yushe_seen: '在翻今天的见闻…', yushe_recal
 const SEEN_RE = /(?:看|刷|逛)(?:了|到|过)?.{0,4}(?:什么|啥)|(?:视频|新闻|B\s*站|见闻)/i;
 export function asksAboutSeen(text) {
   return SEEN_RE.test(String(text || ''));
+}
+
+/* ---------- 五期-3：房间聊天里的随手记（<sig> 的 note）——规则在 shared/memory.js，这里只接线 ---------- */
+
+/** 爸妈说「不用记 / 别记这个」→ 撤掉刚随手记下的那条；挂着惦记就顺手撤（没有不报错）。返回 true = 撤了；其余 false。异常吞掉。 */
+export function roomUndo({ memory, life, fish, text }) {
+  try {
+    if (!isUndoNote(text)) return false;
+    const r = memory?.undoNote?.(fish);
+    if (!r?.ok) return false;
+    const id = r.item?.id;
+    if (id) life?.dropHope?.(fish, id); // 这条还挂着惦记就撤掉；没有就算了
+    return true;
+  } catch { return false; }
+}
+
+/** sig.note 有内容 → 随手记一条「先随手记着」；是答应她的、带日子的 → 挂惦记（和五期-2 共用）。
+ *  她回复里已经说了「记下」就不补；没说 → 返回「我记下了：「…」」（代言人：必须明说，不说像被监视）。没 note / 没记成 → ''。异常吞掉。 */
+export function roomNote({ memory, life, fish, sig, reply }) {
+  try {
+    const note = sig?.note;
+    if (!note) return '';
+    const r = memory?.note?.(fish, note);
+    if (!r?.ok || r.already) return '';
+    const item = r.item;
+    if (sig?.promise === true && item?.due) life?.addHope?.(fish, { cause: item.text, until: item.due, ref: item.id });
+    if (/记下/.test(String(reply || ''))) return '';
+    return `我记下了：「${item.text}」`;
+  } catch { return ''; }
 }
 
 /** 房间聊天的工具版提示词（本体在 prompts/chat-tools.md，F-86 见闻-2）：多一个 overview（今天的见闻概览，空就整段不加）。 */
@@ -164,6 +194,7 @@ export function registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, ga
     const before = life.state(f);
     const history = (before.chat || []).slice(-12).map((c) => `${c.role === 'user' ? f.parentCall : '你'}：${c.text}`);
     life.pushChat(f, 'user', text);
+    roomUndo({ memory, life, fish: f, text }); // 五期-3：爸妈说「不用记」→ 说之前先撤掉刚随手记的，别等她回完（异常吞在里面）
     const wasAsleep = snapshot(before).where === 'sleep'; // 心情二期-1a C：这话来的时候她本来在睡
     const s = life.record(f, 'chat', `和${f.parentCall}聊天：「${text.slice(0, 30)}」`, { mood: 3, visit: true });
     if (wasAsleep) life.record(f, 'woken', `睡得正香被${f.parentCall || '妈妈'}叫醒了`, {}); // 睡着被叫醒 → 烦躁（对自己）
@@ -173,7 +204,7 @@ export function registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, ga
     // F-76：爸妈这句话让她想起的事（本地召回，不花 token）；问到鱼社怎么玩才带说明书（F-42，平常聊天不带，省 token）
     // F-86 见闻-2：问「看了啥」时排掉聊天类经历，不复读她自己的含糊话
     const askSeen = asksAboutSeen(text);
-    const memoryText = (() => { try { return memory?.section?.(f, { query: text, scope: 'all', people: 0, title: '【这句话让你想起的事】', ...(askSeen ? { excludeKinds: ['chat'] } : {}) }) || ''; } catch { return ''; } })();
+    const memoryText = (() => { try { return memory?.section?.(f, { query: text, scope: 'all', people: 0, title: '【这句话让你想起的事】', loose: true, ...(askSeen ? { excludeKinds: ['chat'] } : {}) }) || ''; } catch { return ''; } })(); // 五期-3：房间召回带上随手记的（放在 askSeen 展开之前，主会话那次不带）
     const sayArgs = { persona: f.personaText, lifeText: lifeSection(f, s), sleeping: snap.where === 'sleep', call: f.parentCall, moodText: feelSection(s.feel, { call: f.parentCall, temper: temperOf(s.growth), scene: 'home' }), memoryText, history, kb: asksAboutGame(text) ? kbText() : '', text };
     /** 说完共用的收尾：剥信号、记聊天、记心情、长成长、给页面 done（老路和工具路一样）。 */
     const finishChat = (r, filt) => {
@@ -181,7 +212,11 @@ export function registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, ga
       // 工具路一句话可能分好几轮：只认最后一个信号块（前面轮里的丢掉，parseSignals 只取第一个）
       const sigs = String(r.text || '').match(/<sig>[\s\S]*?<\/sig>/gi) || [];
       const { clean, sig } = parseSignals(sigs.length > 1 ? String(r.text).replace(/<sig>[\s\S]*?<\/sig>/gi, '') + sigs.at(-1) : r.text);
-      life.pushChat(f, 'fish', clean);
+      // 五期-3：sig.note 有内容 → 随手记一条「先随手记着」；她回复里没明说「记下了」就补一句（推给页面、记进聊天、带进 done）
+      const noteLine = roomNote({ memory, life, fish: f, sig, reply: clean });
+      const said = noteLine ? `${clean}\n${noteLine}` : clean;
+      if (noteLine) send({ type: 'delta', text: `\n${noteLine}` });
+      life.pushChat(f, 'fish', said);
       // 心情-一期-2 E：信号过 sigEvents → 生活引擎里的 applyFeel（情绪事件，每条 change 记进「今天」）
       const beforeMood = life.state(f).mood;
       const ap = life.applyFeel(f, sigEvents(sig));
@@ -199,7 +234,7 @@ export function registerLifeRoutes({ ctx, scope, pond, life, wallet, letters, ga
       } catch { /* 成长记账失败不影响聊天 */ }
       const after = snapshot(ap.state);
       try { letters?.onMood(f, beforeMood, after.mood); } catch { /* 不影响 */ }
-      send({ type: 'done', text: clean, moodDelta: after.mood - beforeMood, ...(r.tokens ? { tokens: r.tokens, toolCalls: (r.calls || []).length } : {}), ...after }); // tokens：这一句花了多少（用户审查：钱花在哪要看得见）
+      send({ type: 'done', text: said, moodDelta: after.mood - beforeMood, ...(r.tokens ? { tokens: r.tokens, toolCalls: (r.calls || []).length } : {}), ...after }); // tokens：这一句花了多少（用户审查：钱花在哪要看得见）
     };
     const brokeLine = () => {
       const line = snap.where === 'sleep' ? '……呼……（零花钱花光了，睡得更香了）' : `${f.parentCall}，零花钱花光啦，本鱼先躺平～去右上角的设置里给我放点零花钱嘛。`;

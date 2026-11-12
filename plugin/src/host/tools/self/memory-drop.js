@@ -21,7 +21,10 @@ export default defineTool({
       if (a.confirm !== true) return { ok: false, needsConfirmation: true, error: '还没有真的忘掉。要爸妈在这次对话里听完复述、点头了，再设 confirm=true 调一次。' };
       const r = memory.applyDrop(f, a.proposalId, { from: ctx?.from }); // 修补-2 J：把出口（room / main）交给宿主——房间里要等爸妈再说一句才能办
       if (!r.ok) return { ok: false, error: r.why };
-      if (r.kind === '要记的') life?.record?.(f, 'told', `${f.parentCall}让本鱼忘掉一条嘱咐`, {});
+      if (r.kind === '要记的') {
+        life?.record?.(f, 'told', `${f.parentCall}让本鱼忘掉一条嘱咐`, {});
+        life?.dropHope?.(f, r.item); // 五期-2 C：爸妈改口了——那条嘱咐挂着的惦记一起撤掉，不产生情绪
+      }
       return { ok: true, dropped: r.item, archive: r.archive, hint: '忘掉了，档案页里照旧看得见' };
     }
     const r = memory.propose(f, 'drop', a.target);

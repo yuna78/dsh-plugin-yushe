@@ -1038,7 +1038,7 @@ function memPanel(m) {
   return `<div class="her">
     <h4>${ICON('brain')} 她还记得多少 <small style="font:11px var(--body);color:var(--mute)">聊天、日记、她自己说过的话记得久；刷过的视频、扫一眼的东西忘得快</small></h4>${stat}
     ${memoirHtml(m)}
-    ${(m.told || []).length ? memFold('told', 'bookmark', `${call}让她记住的`, m.told.length, m.told.map((x) => { const flag = flagOf(x); const when = toldWhen(x); return `<div class="belief">${esc(x.text)}<small>${when ? `${when} · ` : ''}${flag ? `${esc(flag)} · ` : ''}只在家里说</small></div>`; }).join(''), open) : ''}
+    ${(m.told || []).length ? memFold('told', 'bookmark', `${call}让她记住的`, m.told.length, m.told.map((x) => { const flag = flagOf(x); const when = toldWhen(x); return `<div class="belief">${esc(x.text)}<small>${when ? `${when} · ` : ''}${flag ? `${esc(flag)} · ` : ''}${x.loose ? '先随手记着 · ' : ''}只在家里说</small></div>`; }).join(''), open) : ''}
     ${memFold('beliefs', 'sparkle', '对自己的认识', sure.length, `${bl}${germRow}`, open)}
     ${chgN ? memFold('changes', 'sparkle', '想法变了', chgN, chg, open) : ''}
     ${memFold('people', 'heart', 'B站上认识的人', ppl.length, pp, open)}

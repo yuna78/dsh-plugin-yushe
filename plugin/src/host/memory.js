@@ -17,7 +17,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { nowMs } from './clock.js';
-import { emptyMemory, migrateMemory, makeEpisode, meet, settleMemory, recall, recallRelated, knownPeople, aboutPerson, memoryText, memoryStats, stageOf, STAGE_TEXT, reflectCandidates, reflectPrompt, applyReflection, settleBeliefs, beliefsFor, activeBeliefs, tell, untell, localDay, defang, logOp, toldDueAge, toldLine, pickWeek, pickMonth, weekMaterial, monthMaterial, checkWeekly, checkChapter, weeklyPrompt, chapterPrompt, settleWeeklies, mergeChapters, recentLines, weeklyStage, weeklyStatus, nextIdFor, WEEKLY_STAGE_TEXT, MAX_PINNED, cleanTold, dueOf, fixBelief, fixLogText, dropItem, dropLogText, findTarget, PARENT_OPS } from '../shared/memory.js';
+import { emptyMemory, migrateMemory, makeEpisode, meet, settleMemory, recall, recallRelated, knownPeople, aboutPerson, memoryText, memoryStats, stageOf, STAGE_TEXT, reflectCandidates, reflectPrompt, applyReflection, settleBeliefs, beliefsFor, activeBeliefs, tell, untell, noteLoose, settleLoose, undoLoose, localDay, defang, logOp, toldDueAge, toldLine, pickWeek, pickMonth, weekMaterial, monthMaterial, checkWeekly, checkChapter, weeklyPrompt, chapterPrompt, settleWeeklies, mergeChapters, recentLines, weeklyStage, weeklyStatus, nextIdFor, WEEKLY_STAGE_TEXT, MAX_PINNED, cleanTold, dueOf, fixBelief, fixLogText, dropItem, dropLogText, findTarget, PARENT_OPS } from '../shared/memory.js';
 import { personaFor } from '../shared/growth.js';
 import { homeMemKind } from '../shared/home.js'; // F-87 在家：读到哪层 → 记多重
 
@@ -47,7 +47,7 @@ const dailyLog = (m, now) => {
   for (const x of Array.isArray(m.log) ? m.log : []) {
     const d = localDay(x.at);
     if (!d || d > today || d < start) continue;
-    if (PARENT_OPS.has(x.op)) continue; // 爸妈让办的在 asked 里，不占这行
+    if (PARENT_OPS.has(x.op) || x.op === 'note') continue; // 爸妈让办的在 asked 里，不占这行；随手记的（五期-3）页面在「爸妈让她记住的」里已经标出来了，不进「她自己整理的」
     const row = byDay.get(d) || { day: d, add: 0, forget: 0, thought: 0, weekly: 0, chapter: 0 };
     if (x.op === 'add') row.add += Number(x.n) || 1;
     else if (x.op === 'forget') row.forget += Number(x.n) || 1;
@@ -79,7 +79,12 @@ export function archiveItems({ fish, life = {}, footprints = [], inbox = [], dms
   }
   for (const e of life.events || []) {
     const kind = EVENT_KINDS[e.kind];
-    if (kind && e.at) out.push({ key: `e:${e.at}:${e.kind}`, at: e.at, kind, text: e.text });
+    if (!kind || !e.at) continue;
+    // 五期-2 A：心情事件按那一刻的强度记重要性（没兑现的失落 noBoost 封顶 3，拍板 b）；概括用那句原因，不再用固定的「爸妈说过一句让本鱼心情变了的话」
+    if (kind === 'mood') {
+      const peak = Number(e.peak);
+      out.push({ key: `e:${e.at}:${e.kind}`, at: e.at, kind, text: e.text, imp: e.noBoost ? 3 : Number.isFinite(peak) ? (peak >= 80 ? 5 : peak >= 50 ? 4 : 3) : 3, gist: short(e.text, 40) });
+    } else out.push({ key: `e:${e.at}:${e.kind}`, at: e.at, kind, text: e.text });
   }
   for (const d of life.diary || []) if (d.ai && d.at) out.push({ key: `d:${d.day}`, at: d.at, kind: 'diary', text: `写日记（${d.day}）：${short(d.text, 100)}` });
   for (const j of life.journal || []) {
@@ -334,10 +339,12 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
         }
         const { forgot, faded } = settleMemory(m, now, days());
         settleWeeklies(m, now, days()); // 三期：周记也慢慢模糊（半衰期 × 6）；章节不忘
+        const loose = settleLoose(m, { today: localDay(now), now }); // 五期-3：随手记的收尾（带日子的到前一天转正，没日子的 7 天没再提放下）
         if (added) logOp(m, { op: 'add', n: added, at: new Date(now).toISOString() });   // 改动日志：这轮记了什么
         if (forgot) logOp(m, { op: 'forget', n: forgot, at: new Date(now).toISOString() });
         save(fish, m);
         if (added || forgot) log?.info?.(`[dsh-yushe] 记忆：新记下 ${added} 条，变模糊 ${faded} 条，忘掉 ${forgot} 条`);
+        if (loose.promoted.length || loose.expired.length) log?.info?.(`[dsh-yushe] 随手记：转正 ${loose.promoted.length} 条，放下 ${loose.expired.length} 条`);
       } catch (e) { log?.warn?.(`[dsh-yushe] 记忆同步出错：${String(e?.message || e).slice(0, 120)}`); }
       return m;
     },
@@ -365,15 +372,17 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
       const m = memory.sync(fish), now = tnow();
       return m.episodes.filter((e) => ['comment', 'reply'].includes(e.kind) && e.keys?.bvid && stageOf(e, now, days()) === 'clear').slice(-n).map((e) => e.keys.bvid);
     },
-    /** 给模型的一段。scope 'public' 用在对外说话的地方；quotes=false（主会话）时别人的原话只给概括。 */
-    section(fish, { query = '', scope = 'all', limit = recallN(), people = 3, beliefs = 5, title, tail, quotes = true, excludeKinds = null } = {}) {
+    /** 给模型的一段。scope 'public' 用在对外说话的地方；quotes=false（主会话）时别人的原话只给概括。
+     *  loose = true（只有鱼社房间聊天传）：带上「先随手记着」的那几条，行尾标一句白话；主会话 / 出门（默认 false）不带，scope 'public' 照旧一条 told 都不带。 */
+    section(fish, { query = '', scope = 'all', limit = recallN(), people = 3, beliefs = 5, title, tail, quotes = true, excludeKinds = null, loose = false } = {}) {
       try {
         const items = memory.recall(fish, { query, scope, limit, quotes, excludeKinds });
         const ppl = people ? memory.people(fish, { limit: people, parents: false }) : [];
         const m = load(fish);
         const bl = beliefs ? beliefsFor(m, { scope, limit: beliefs }) : []; // 只给想明白了的（二期：暂定的先不注入）
         const today = localDay(tnow()); // 四期-1 C：带日子的嘱咐按「现在」解释（due 在记下那一刻就定死了）；没日子的那行一字不差
-        const told = scope === 'public' ? [] : (m.told || []).filter((x) => !x.muted).map((x) => ({ ...x, text: toldLine(x, today) })).filter((x) => x.text).slice(-8); // 先滤掉不提的（四期-2 D）和过期 > 7 天的再取最后 8 条，到日子的那条不会被挤出窗 // 爸妈让记的只在家里说
+        const told = scope === 'public' ? [] : (m.told || []).filter((x) => !x.muted && (loose || !x.loose)).map((x) => ({ ...x, text: toldLine(x, today) })).filter((x) => x.text).slice(-8); // 先滤掉不提的（四期-2 D）、随手记的（五期-3，房间才带）和过期 > 7 天的再取最后 8 条，到日子的那条不会被挤出窗 // 爸妈让记的只在家里说
+        if (loose) for (const x of told) if (x.loose) x.text = `${x.text}（爸妈随口提过的）`;
         const recent = scope === 'all' ? recentLines(m, { now: tnow(), baseDays: days() }) : []; // 三期【这阵子】：只在家里（主会话 / 鱼社房间），出门没有
         return memoryText(items, ppl, { title, tail, beliefs: bl, told, recent });
       } catch { return ''; }
@@ -509,6 +518,23 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
       if (r.ok) { logOp(m, { op: 'untell', at: new Date(tnow()).toISOString(), text: String(r.item?.text ?? '').slice(0, 30) }); save(fish, m); } // 改动日志：爸妈让忘的
       return r;
     },
+    /** 五期-3：房间 <sig> 的 note → 先随手记着的一条（不占 20 件名额）。有变化才落盘；新记的写一条改动日志（op 'note'）。 */
+    note(fish, text) {
+      const m = load(fish), now = tnow(), at = new Date(now).toISOString(), today = localDay(now);
+      const r = noteLoose(m, text, { at, today });
+      if (r.ok && !r.already) {
+        if (!r.promoted) logOp(m, { op: 'note', at, text: String(r.item?.text ?? '').slice(0, 30) }); // 改动日志：随手记下的；转正不动日志
+        save(fish, m);
+      }
+      return r;
+    },
+    /** 五期-3：爸妈说「不用记」→ 撤掉刚随手记下的那条（改动日志 op 'untell'，和忘掉爸妈让记的一样记）。 */
+    undoNote(fish) {
+      const m = load(fish);
+      const r = undoLoose(m, { now: tnow() });
+      if (r.ok) { logOp(m, { op: 'untell', at: new Date(tnow()).toISOString(), text: String(r.item?.text ?? '').slice(0, 30) }); save(fish, m); }
+      return r;
+    },
     /**
      * 四期-3 I / J：两步走的第一步——只起草、不办事，按 now() 存起草单（30 分钟有效、用一次就删、只对同一条鱼）。
      * tool 拿返回值把 before / after（fix）或 what（drop）用大白话复述给爸妈，爸妈说对了再带 proposalId + confirm:true 调确认。
@@ -618,12 +644,12 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
       save(fish, m);
       return { ok: true, id: item.id, mark: cmd, kind: k.name, text: String(item.text || item.headline || '').slice(0, 60), muted: Boolean(item.muted), pinned: Boolean(item.pinned) };
     },
-    /** 爸妈让她记住的（yushe_remember 的 list 用）：每条带 due（可能没有）和 past（布尔），四期-1 C16。muted / pinned（四期-2）也带。 */
+    /** 爸妈让她记住的（yushe_remember 的 list 用）：每条带 due（可能没有）和 past（布尔），四期-1 C16。muted / pinned（四期-2）、loose（五期-3：先随手记着的）也带。 */
     told(fish) {
       const today = localDay(tnow());
       return (load(fish).told || []).map((x) => {
         const age = toldDueAge(x, today);
-        return { id: x.id, text: x.text, at: x.at, ...(x.due ? { due: x.due } : {}), past: age != null && age > 0, muted: Boolean(x.muted), pinned: Boolean(x.pinned) };
+        return { id: x.id, text: x.text, at: x.at, ...(x.due ? { due: x.due } : {}), past: age != null && age > 0, muted: Boolean(x.muted), pinned: Boolean(x.pinned), loose: Boolean(x.loose) };
       });
     },
     view(fish) {
@@ -639,7 +665,7 @@ export function createMemory({ storage, life, gate, inbox, dms, habits, log, now
           .sort((a, b) => (Date.parse(b.e.at) || 0) - (Date.parse(a.e.at) || 0)).slice(0, 20)
           .map(({ e, stage }) => ({ id: e.id, at: e.at, kind: e.kind, scope: e.scope, stage, text: page(e.text), pinned: Boolean(e.pinned), muted: Boolean(e.muted) })), // pinned / muted 给页面标「记牢了」「不再提」
         people: knownPeople(m, { now, baseDays: days(), limit: 20 }).map((p) => ({ ...p, last: (p.last || []).map(page) })), // 修补-3 S3：people 里的「话」也不用接生员的名字
-        told: (m.told || []).slice().reverse().map((x) => { const age = toldDueAge(x, localDay(now)); return { id: x.id, text: x.text, at: x.at, ...(x.due ? { due: x.due } : {}), past: age != null && age > 0, muted: Boolean(x.muted), pinned: Boolean(x.pinned) }; }), // 四期-1：带 id、due、past（页面给带日子的那条显示日子）；四期-2：带 pinned / muted
+        told: (m.told || []).slice().reverse().map((x) => { const age = toldDueAge(x, localDay(now)); return { id: x.id, text: x.text, at: x.at, ...(x.due ? { due: x.due } : {}), past: age != null && age > 0, muted: Boolean(x.muted), pinned: Boolean(x.pinned), loose: Boolean(x.loose) }; }), // 四期-1：带 id、due、past（页面给带日子的那条显示日子）；四期-2：带 pinned / muted；五期-3：带 loose（页面标「先随手记着」）
         log: (m.log || []).slice(-20).reverse(), // 改动日志：最近的 20 条，新的在前（老页面 / 老检查用，照旧保留）
         asked: askedLog(m).map((x) => ({ ...x, text: page(x.text) })), // 修补-3 T：爸妈让办的新的在前最多 20 条；文字也换自称（审查 2）
         daily: dailyLog(m, now), // 修补-3 T：自动的合成一天一条，最近 7 天

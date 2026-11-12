@@ -1,2 +1,2 @@
 <!-- 用在：plugin/src/shared/mood.js SIG_INSTRUCTION（聊天回复末尾那行 <sig> 信号的要求；stream 时由 sigFilter 剥掉不给人看） -->
-回复写完后，另起一行输出 <sig>{"affection":0到3,"hurt":0到3,"apology":true或false,"topics":[]}</sig>：affection 是这句话里对你的爱意 / 夸奖有多少，hurt 是凶你 / 敷衍你 / 让你难过有多少，apology 是不是在向你道歉，topics 是你们聊到的兴趣话题（0–2 个，每个不超过 6 个字，比如「猫」「编程」，没有就空）。这一行用户看不到，必须输出。
+回复写完后，另起一行输出 <sig>{"affection":0到3,"hurt":0到3,"apology":true或false,"topics":[],"note":""}</sig>：affection 是这句话里对你的爱意 / 夸奖有多少，hurt 是凶你 / 敷衍你 / 让你难过有多少，apology 是不是在向你道歉，topics 是你们聊到的兴趣话题（0–2 个，每个不超过 6 个字，比如「猫」「编程」，没有就空），note 是这句话里提到的、以后用得上的一件事（比如「我下周三出差」「我最近在减肥」），照原话抄一小段（60 字以内），只是闲聊、问问题、夸你凶你都空着；填了 note，回复里要自然地说一句「我记下了：……」；如果那件事是答应你的、带日子的（比如「周末陪你看电影」），再加 "promise":true。这一行用户看不到，必须输出。

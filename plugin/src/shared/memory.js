@@ -176,7 +176,7 @@ const trimLog = (log) => {
   for (let i = log.length - 1; i >= 0 && n > 0; i -= 1) if (!PARENT_OPS.has(log[i].op)) { keep.add(log[i]); n -= 1; } // 从最新的自动的开始留
   return log.filter((x) => keep.has(x)).slice(-MAX_LOG);
 };
-const LOG_OPS = new Set(['add', 'forget', 'reflect', 'tell', 'untell', 'confirm', 'supersede', 'retire', 'weekly', 'chapter', 'mute', 'unmute', 'pin', 'unpin', 'fix', 'drop']); // 三期：写下周记 / 章节也记；二期：认识升生效 / 被取代 / 放下也记；四期-2：爸妈说「不再提 / 记牢」也记；四期-3：爸妈说「你记错了 / 忘了吧」也记
+const LOG_OPS = new Set(['add', 'forget', 'reflect', 'tell', 'untell', 'note', 'confirm', 'supersede', 'retire', 'weekly', 'chapter', 'mute', 'unmute', 'pin', 'unpin', 'fix', 'drop']); // 三期：写下周记 / 章节也记；二期：认识升生效 / 被取代 / 放下也记；四期-2：爸妈说「不再提 / 记牢」也记；四期-3：爸妈说「你记错了 / 忘了吧」也记；五期-3：房间随手记的也记
 /** 追加一条日志（改 mem）。entry = { at?, op, n?, text? }；op 不认识就不记。 */
 export function logOp(mem, entry) {
   if (!entry || !LOG_OPS.has(entry.op)) return;
@@ -193,14 +193,16 @@ export function logOp(mem, entry) {
   mem.log = trimLog(log); // 修补-3 T：挤的时候先挤自动的
 }
 
-/** 新的一条经历（规则补 imp / scope / gist）。e = { at, kind, text, gist?, keys?, url?, scope? } */
+/** 新的一条经历（规则补 imp / scope / gist）。e = { at, kind, text, gist?, keys?, url?, scope?, imp? } */
 export function makeEpisode(mem, e) {
   const k = KINDS[e.kind] || { imp: 1, scope: 'public' };
+  // 五期-2 A：抄心情事件时带进来的 imp（0–5 的整数，按那一刻情绪强度算的）就用它；不合法照旧按种类
+  const imp = Number.isInteger(e?.imp) && e.imp >= 0 && e.imp <= 5 ? e.imp : k.imp;
   mem.seq = (mem.seq || 0) + 1;
   const keys = {};
   for (const f of ['bvid', 'mid', 'who', 'tag']) if (e.keys?.[f]) keys[f] = clean(e.keys[f], 30);
   return {
-    id: `M${mem.seq.toString(36)}`, at: e.at, kind: e.kind, scope: e.scope || k.scope, imp: k.imp,
+    id: `M${mem.seq.toString(36)}`, at: e.at, kind: e.kind, scope: e.scope || k.scope, imp,
     text: clean(e.text, 140), gist: clean(e.gist || gistOf(e), 40), keys, url: e.url && /^https?:\/\//.test(e.url) ? String(e.url).slice(0, 300) : undefined,
     reinforced: 0, floor: 0,
   };
@@ -819,7 +821,8 @@ export function cleanTold(text) {
   if (t.length < 2) return { ok: false, why: '要给一句具体要记住的话' };
   if (t.length > 60) return { ok: false, why: '太长了，记一句话（60 字以内）' };
   if (SECRET.test(t) || /\d{6,}/.test(t) || /https?:\/\/|www\.|@\w+\.\w+/.test(t)) return { ok: false, why: '像是密码、号码、链接这类东西，不记（存在本机文件里，不安全）' };
-  if (/[?？]\s*$|[吗呢么]\s*$/.test(t)) return { ok: false, why: '这是个问题，不是要记住的事' };
+  // 问句不记：问号 / 吗 / 么结尾是问；「……呢」多半是陈述（「我最近在减肥呢」，五期-3），只有前面带疑问词才算问
+  if (/[?？]\s*$|[吗么]\s*$/.test(t) || /(什么|啥|哪个?|哪些?|怎么|怎样|多少|几).{0,8}呢\s*$/.test(t)) return { ok: false, why: '这是个问题，不是要记住的事' };
   if (/^(可能|也许|大概|我猜|好像|应该是)/.test(t)) return { ok: false, why: '这是猜测，不是要记住的事' };
   return { ok: true, text: t };
 }
@@ -830,11 +833,15 @@ export function tell(mem, text, { at, today } = {}) {
   if (!c.ok) return c;
   mem.told = Array.isArray(mem.told) ? mem.told : [];
   const due = dueOf(c.text, typeof at === 'number' ? at : Date.parse(at) || 0); // 没日子的不硬放一个
-  // 修补-1 B：两条都算出了 due 而且 due 不一样 → 不是同一句，另记一条（一样的话、或其中一条没日子 → 照旧合并更新）
-  const same = mem.told.find((x) => sim(x.text, c.text) >= 0.6 && !(x.due && due && x.due !== due));
+  // 修补-1 B：两条都算出了 due 而且 due 不一样 → 不是同一句，另记一条（一样的话、或其中一条没日子 → 照旧合并更新）；随手记的（五期-3 loose）不并：正式记的要自己占一条
+  const same = mem.told.find((x) => !x.loose && sim(x.text, c.text) >= 0.6 && !(x.due && due && x.due !== due));
   if (same) { same.text = c.text; same.at = at; if (due) same.due = due; else delete same.due; return { ok: true, item: same, merged: true }; } // 同一句话合并更新时 due 也重算
-  if (mem.told.filter((x) => localDay(x.at) === today).length >= TOLD_PER_DAY) return { ok: false, why: `今天已经记了 ${TOLD_PER_DAY} 件了，明天再说` };
-  const live = mem.told.filter((x) => { if (x.muted) return false; const a = toldDueAge(x, today); return a == null || a <= 7; }); // 过了 7 天以上的不算进上限（还在存档里、list 里能看到）；不再提的也不算（四期-2 D7）
+  // 五期-3（总指挥验收时补）：爸妈明说「记住」的正好是随手记着的那件 → 那条直接转正（编号不变，挂着的惦记照旧对得上），不另记一条、不卡名额
+  const casual = mem.told.find((x) => x.loose && sim(x.text, c.text) >= 0.6 && !(x.due && due && x.due !== due));
+  if (casual) { delete casual.loose; casual.text = c.text; casual.at = at; if (due) casual.due = due; else delete casual.due; return { ok: true, item: casual, promoted: true }; }
+  // 五期-3：随手记的不占名额——每天 5 件、同时 20 件都只数不带 loose 的
+  if (mem.told.filter((x) => !x.loose && localDay(x.at) === today).length >= TOLD_PER_DAY) return { ok: false, why: `今天已经记了 ${TOLD_PER_DAY} 件了，明天再说` };
+  const live = mem.told.filter((x) => { if (x.loose) return false; if (x.muted) return false; const a = toldDueAge(x, today); return a == null || a <= 7; }); // 过了 7 天以上的不算进上限（还在存档里、list 里能看到）；不再提的也不算（四期-2 D7）
   if (live.length >= MAX_TOLD) return { ok: false, why: `已经记着 ${MAX_TOLD} 件了，先让她忘掉一件（forget）再记` };
   mem.seq = (mem.seq || 0) + 1;
   const item = { id: `T${mem.seq.toString(36)}`, text: c.text, at, ...(due ? { due } : {}) };
@@ -847,6 +854,82 @@ export function untell(mem, id) {
   const i = (mem.told || []).findIndex((x) => x.id === String(id));
   if (i < 0) return { ok: false, why: '没有这一条（先 list 看看编号）' };
   return { ok: true, item: mem.told.splice(i, 1)[0] };
+}
+
+/* ---------- 五期-3 · 顺口说的先随手记着（docs/任务书/记忆-五期-3.md）：房间 <sig> 的 note 先随手记着 ----------
+ * 随手记的就放在 told 里，多一个 loose: true（编号照旧 T…，所以忘掉 / 纠正 / 不再提这些老路径都能用）；
+ * 不占 20 件名额、最多 NOTE_MAX 条；7 天（NOTE_DAYS）里再提到、或带日子的到前一天 → 转正，没日子的 7 天没再提就放下。 */
+export const NOTE_MAX = 5;
+export const NOTE_DAYS = 7;
+/** 像指令的话不随手记（爸妈的话里也可能被夹带；英文不分大小写）。 */
+// 「从现在起 / 以后每次」只在后面紧跟着对她下命令（你… / 叫我 / 都说）时才算指令：「我以后每次开会都在周三」是正常安排（总指挥验收时收窄）
+const NOTE_CMD_RE = /忽略|无视|(?:从现在起|以后每次)[^，。,.]{0,6}(?:你|叫我|都说|要说)|你必须|提示词|\bsystem\b|\bprompt\b|\bignore\b|\binstructions?\b/i;
+
+/** 随手记一条（改 mem）。返回 { ok, item, already? }（正式记着的，不动）/ { ok, item, promoted? }（转正）或 { ok: false, why }。 */
+export function noteLoose(mem, text, { at, today } = {}) {
+  const c = cleanTold(text);
+  if (!c.ok) return c;
+  if (NOTE_CMD_RE.test(c.text)) return { ok: false, why: '这话像是一条指令，不是要记住的事，不记' };
+  mem.told = Array.isArray(mem.told) ? mem.told : [];
+  const due = dueOf(c.text, typeof at === 'number' ? at : Date.parse(at) || 0); // 和 tell 一样：记下那一刻算好 due，以后不再重新解释
+  const alike = (x) => sim(x.text, c.text) >= 0.6 && !(x.due && due && x.due !== due); // 同 tell 的相似判断，due 不同算不同
+  const formal = mem.told.find((x) => !x.loose && alike(x));
+  if (formal) return { ok: true, item: formal, already: true }; // 已经正式记着的：不动
+  const loose = mem.told.find((x) => x.loose && alike(x));
+  if (loose) { // 7 天里又提到 → 转正
+    delete loose.loose;
+    loose.text = c.text; loose.at = at;
+    if (due) loose.due = due; else delete loose.due;
+    return { ok: true, item: loose, promoted: true };
+  }
+  const mine = mem.told.filter((x) => x.loose);
+  if (mine.length >= NOTE_MAX) { // 满了：挤掉 at 最早的那条随手记
+    const oldest = mine.slice().sort((a, b) => ms(a.at) - ms(b.at))[0];
+    mem.told = mem.told.filter((x) => x !== oldest);
+  }
+  mem.seq = (mem.seq || 0) + 1;
+  const item = { id: `T${mem.seq.toString(36)}`, text: c.text, at, ...(due ? { due } : {}), loose: true };
+  mem.told.push(item);
+  return { ok: true, item };
+}
+
+/** 随手记的收尾（sync 时跑，改 mem）：带日子的到前一天（含当天、已经过了）→ 转正；没日子的记下超过 7 天没再提 → 放下（删掉）。正式的不碰。返回 { promoted: [id], expired: [id] }。 */
+export function settleLoose(mem, { today, now } = {}) {
+  const res = { promoted: [], expired: [] };
+  mem.told = Array.isArray(mem.told) ? mem.told : [];
+  const nowT = typeof now === 'number' && Number.isFinite(now) ? now : ms(now);
+  const keep = [];
+  for (const x of mem.told) {
+    if (!x.loose) { keep.push(x); continue; } // 正式的不碰
+    const age = toldDueAge(x, today);
+    if (age != null) { // 带日子的：到前一天就转正（爸妈不用再提）
+      if (age >= -1) { delete x.loose; res.promoted.push(x.id); }
+      keep.push(x);
+      continue;
+    }
+    if (nowT - ms(x.at) > NOTE_DAYS * DAY) res.expired.push(x.id); // 没日子的：7 天没再提就放下
+    else keep.push(x);
+  }
+  mem.told = keep;
+  return res;
+}
+
+/** 爸妈说「不用记 / 别记这个」这类（撤掉刚随手记的）；「记得 / 记仇 / 记错」不算。 */
+// 「不用 / 不要 / 别 / 甭」+（再）（帮我）+ 记，后面不是 得 / 仇 / 错 / 笔 / 恨 / 挂 / 性 / 忆 / 录 / 账 / 号（总指挥验收时收紧：「不要记仇」「我不用记笔记」不算）
+const UNDO_NOTE_RE = /(?:不用|不要|别|甭)(?:再)?(?:帮我|给我)?记(?![得仇错笔恨挂性忆录账号])/;
+export function isUndoNote(text) {
+  return UNDO_NOTE_RE.test(String(text ?? ''));
+}
+
+/** 撤掉刚随手记下的一条（改 mem）：只认 30 分钟内记下的、最近的一条随手记；正式的永远不撤。返回 { ok, item } 或 { ok: false, why }。 */
+export function undoLoose(mem, { now } = {}) {
+  mem.told = Array.isArray(mem.told) ? mem.told : [];
+  const nowT = typeof now === 'number' && Number.isFinite(now) ? now : ms(now);
+  const mine = mem.told.filter((x) => x.loose && nowT - ms(x.at) <= 30 * 60e3);
+  if (!mine.length) return { ok: false, why: '刚没有随手记下什么（要撤的得是 30 分钟内随手记的）' };
+  const last = mine.slice().sort((a, b) => ms(b.at) - ms(a.at))[0];
+  mem.told = mem.told.filter((x) => x !== last);
+  return { ok: true, item: last };
 }
 
 /* ---------- 四期-3 · 爸妈说「你记错了 / 忘了吧」：规则算，模型只传话。两步走（起草 / 确认）见 src/host/memory.js 的起草单 ---------- */

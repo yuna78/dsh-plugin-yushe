@@ -2,9 +2,10 @@
  * 心情的脾气（F-33）+ 精力规则（F-34）+ 信（F-37）的触发规则。纯函数，宿主和 verify 共用。
  *
  * 原则「AI 听懂，规则记账」：
- *   - 模型在聊天回复末尾附一行 <sig>{"affection":0-3,"hurt":0-3,"apology":true|false}</sig>，宿主剥掉不给人看；
+ *   - 模型在聊天回复末尾附一行 <sig>{"affection":0-3,"hurt":0-3,"apology":true|false,"note":""}</sig>，宿主剥掉不给人看；
  *   - 规则按每日上限把信号记成心情变化，变化带原因写进今天的事；
  *   - 心情分档决定她说话的口气，只写进她的提示词，不告诉玩家规则（藏起来的机制）。
+ *   五期-3：note 是爸妈话里以后用得上的一件事（可选），宿主按规则清洗后随手记一条（shared/memory.js 的 noteLoose）；promise 只有 true 才算。
  */
 // 提示词本体在 src/prompts/sig.md、letter.md（F-80 搬家-2a）：这里只准备变量再 fill
 import { fill } from './prompt.js';
@@ -24,7 +25,9 @@ export function parseSignals(text) {
     const j = JSON.parse(m[1]);
     const n = (v) => Math.max(0, Math.min(3, Math.round(Number(v) || 0)));
     const topics = (Array.isArray(j.topics) ? j.topics : []).map((x) => String(x).replace(/[<>\s]/g, '').slice(0, 6)).filter(Boolean).slice(0, 2);
-    return { clean, sig: { affection: n(j.affection), hurt: n(j.hurt), apology: j.apology === true, topics } };
+    // 五期-3：note 照原话抄的一小段——去掉 <> 和控制字符、收拢空白、trim、截 60 字；不是字符串就当没有。promise 只有 true 才算 true
+    const note = typeof j.note === 'string' ? String(j.note).replace(/[<>\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60) : '';
+    return { clean, sig: { affection: n(j.affection), hurt: n(j.hurt), apology: j.apology === true, topics, note, promise: j.promise === true } };
   } catch { return { clean, sig: null }; }
 }
 

@@ -9,6 +9,7 @@
  * 这里只准备变量再 fill（情绪名、程度词、表露习惯是短句数据表，同 letterPrompt 的由头表）。
  *
  * 数据形状（任务书）：feel = { v: 1, valence, emotions: [{kind, intensity, about, cause, at}],
+ *   ties: [{ kind: 'hope', about: 'parent', cause, until: 'YYYY-MM-DD', ref, at }]（五期-2 惦记，最多 MAX_TIES 个）,
  *   seen: { kind: { day, n, lastAt } }, lastAt }。
  * 不读时钟、不读文件、不用随机数：时间一律从参数传进来。
  */
@@ -18,6 +19,7 @@ import PROMPTS from '../prompts/_all.js';
 const clampN = (v, a, b) => Math.max(a, Math.min(b, v));
 const round2 = (x) => Math.round(x * 100) / 100;
 const clip = (s) => String(s || '').slice(0, 40);
+const TIE_DAY_RE = /^\d{4}-\d{2}-\d{2}$/; // 惦记的日子只认这个格式（惦记由带日子的嘱咐来，dueOf 出的就是它）
 const isoOf = (ts) => new Date(ts).toISOString();
 /** 「哪一天」按本机时区算（不拿 ISO 字符串的前 10 位当日子）。 */
 const dayOfTs = (ts) => {
@@ -153,6 +155,9 @@ export const EVENT_FEELS = {
   drained:         { up: 'cranky', about: 'self', n: 16 },      // 醒着精力见底（引擎每 3 小时过一次）
   'voice-rejected': { up: 'frustrated', about: 'web', n: 20 },  // 评论 / 动态没发出去（单独一条不至于闭嘴）
   bored:           { up: 'bored', about: 'self', n: 14 },       // 24 小时没新鲜事（一天一次）
+  // 五期-2：惦记的了结（settleHopes 走同一套剂量规则）。missed 是低落不是委屈：基础 14 × 负面 1.5 ≈ 21，到不了低落的各条门槛线
+  'hope-kept':     { up: 'joy', about: 'parent', n: 20 },       // 到了日子爸妈真的来了：兑现了的开心（和好式的量）
+  'hope-missed':   { up: 'down', about: 'parent', n: 14 },      // 过了日子没来：失落（拍板 b：进记忆封顶 imp 3，不给强度加成）
   nap:             null,
 };
 
@@ -174,6 +179,15 @@ const normalizeFeel = (feel) => ({
     cause: clip(e && e.cause),
     at: e && e.at != null ? String(e.at) : '',
   })).filter((e) => e.kind && e.intensity > 0),
+  // 惦记（五期-2）：feelEvent / settleFeel 过一遍也不能丢；只认 hope（心结 grudge 三期另开）、日子只认 YYYY-MM-DD，坏的丢掉
+  ties: (feel && Array.isArray(feel.ties) ? feel.ties : []).map((t) => ({
+    kind: t && t.kind === 'hope' ? 'hope' : null,
+    about: 'parent',
+    cause: clip(t && t.cause),
+    until: t && TIE_DAY_RE.test(String((t && t.until) ?? '')) ? String(t.until) : '',
+    ref: String((t && t.ref) ?? ''),
+    at: t && t.at != null ? String(t.at) : '',
+  })).filter((t) => t.kind && t.until && t.cause),
   seen: Object.fromEntries(Object.entries((feel && feel.seen) || {}).map(([k, s]) => [k, {
     day: String((s && s.day) || ''),
     n: Math.max(0, Math.round(Number(s && s.n) || 0)),
@@ -345,6 +359,80 @@ export function settleFeel(inputFeel, opts = {}) {
   return f;
 }
 
+/* ---------------- D2. 惦记（五期-2，docs/设计/18-记忆五期.md 第 3 节、16-心情.md 4.1 的 ties） ---------------- */
+
+/** 惦记最多同时几个（16-心情 4.1：ties 上限 5）。 */
+export const MAX_TIES = 5;
+const WEEKDAY_TEXT = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
+/** 日子说成白话（周几）；格式不对就空串。按本机时区解析，不拿字符串前 10 位当日子。 */
+export function dayWord(until) {
+  const m = TIE_DAY_RE.exec(String(until || ''));
+  if (!m) return '';
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (Number.isNaN(d.getTime()) || d.getDate() !== Number(m[3]) || d.getMonth() !== Number(m[2]) - 1) return '';
+  return WEEKDAY_TEXT[d.getDay()];
+}
+
+/**
+ * 挂惦记：爸妈答应她的、带日子的事（「周末陪你看电影」）。挂上那一刻不产生情绪（她说一句、给爸妈改口的机会，由工具的 hint 管）。
+ * until 格式不对或早于 today 不收；同一个 ref 更新（爸妈改了日子 / 说法）；超过 MAX_TIES 丢最早的（按 at）。
+ * 返回新 feel，不改入参。
+ */
+export function addHope(inputFeel, { cause, until, ref, at, today } = {}) {
+  const f = normalizeFeel(inputFeel);
+  const c = clip(cause).trim();
+  const u = String(until ?? '');
+  const day = String(today ?? '');
+  if (!c || !TIE_DAY_RE.test(u) || !TIE_DAY_RE.test(day) || u < day) return f;
+  const ties = (f.ties || []).filter((t) => t && t.kind === 'hope');
+  const next = { kind: 'hope', about: 'parent', cause: c, until: u, ref: String(ref ?? ''), at: at != null ? String(at) : '' };
+  const i = next.ref ? ties.findIndex((t) => t.ref === next.ref) : -1;
+  if (i >= 0) ties[i] = next; else ties.push(next);
+  ties.sort((a, b) => (tsOf(a.at) || 0) - (tsOf(b.at) || 0)); // 最早的在前，超了从前面丢
+  f.ties = ties.length > MAX_TIES ? ties.slice(ties.length - MAX_TIES) : ties;
+  return f;
+}
+
+/** 撤惦记（爸妈改口了）：不产生任何情绪。返回新 feel，不改入参。 */
+export function dropHope(inputFeel, ref) {
+  const f = normalizeFeel(inputFeel);
+  const r = String(ref ?? '');
+  f.ties = (f.ties || []).filter((t) => !t || t.ref !== r);
+  return f;
+}
+
+/**
+ * 了结惦记（宿主在结算里跑；纯函数，不读时钟）：
+ *   until ≤ today 且 visitedOn(until)（那天爸妈来过）→ 了结 kept，产生对爸妈的开心（hope-kept，走 feelEvent 的剂量规则）；
+ *   until < today 且那天没来 → 了结 missed，产生对爸妈的低落（hope-missed，不是委屈，强度 < 50）；
+ *   那天当天还没来 → 继续等。原因里带那件事，不出现数字和机制词。
+ * 返回 { feel, changes, resolved }，resolved 每条 { ref, outcome, cause }。不改入参。
+ */
+export function settleHopes(inputFeel, opts = {}) {
+  let f = normalizeFeel(inputFeel);
+  const today = String(opts.today ?? '');
+  const visitedOn = typeof opts.visitedOn === 'function' ? opts.visitedOn : () => false;
+  const call = String(opts.call || '爸妈');
+  const done = [];
+  for (const t of f.ties || []) {
+    if (!t || t.kind !== 'hope' || !t.until || !today) continue;
+    if (t.until <= today && visitedOn(t.until)) done.push({ ref: t.ref, outcome: 'kept', cause: clip(`说好的${t.cause}，${call}来了`) });
+    else if (t.until < today) done.push({ ref: t.ref, outcome: 'missed', cause: clip(`说好的${t.cause}，${call}没来`) });
+  }
+  if (!done.length) return { feel: f, changes: [], resolved: [] };
+  const gone = new Set(done.map((r) => r.ref));
+  f.ties = (f.ties || []).filter((t) => !t || !gone.has(t.ref));
+  const changes = [];
+  const ctx = { temper: opts.temper, call };
+  for (const r of done) {
+    const re = feelEvent(f, { kind: r.outcome === 'kept' ? 'hope-kept' : 'hope-missed', cause: r.cause, at: opts.at }, ctx);
+    f = re.feel;
+    changes.push(...re.changes);
+  }
+  return { feel: f, changes, resolved: done.map(({ ref, outcome, cause }) => ({ ref, outcome, cause })) };
+}
+
 /* ---------------- E. 兼容的分数 ---------------- */
 
 /**
@@ -405,23 +493,28 @@ const HOMELINE = (e) => {
 
 /**
  * 给模型的一小段（可以为空）：
- *   home（鱼社聊天）：「此刻的你」；work（DSH 主会话）：≤ 80 字的一句；public（对外发声）：只带 B站 / 外面的情绪。
- * 所有场景不出现数字和机制词。没有强度 ≥ 15 的情绪就空串（按性格正常说话）。
+ *   home（鱼社聊天）：「此刻的你」+ 还在等的惦记；work（DSH 主会话）：≤ 80 字的一句；public（对外发声）：只带 B站 / 外面的情绪。
+ * 所有场景不出现数字和机制词。没有强度 ≥ 15 的情绪、也没有惦记（只有 home 说惦记）就空串（按性格正常说话）。
  */
 export function feelSection(feel, { call = '妈妈', temper = {}, scene = 'home' } = {}) {
   const strong = ((feel && Array.isArray(feel.emotions) ? feel.emotions : []) || [])
     .filter((e) => e && Number(e.intensity) >= 15)
     .slice().sort((a, b) => Number(b.intensity) - Number(a.intensity));
-  if (!strong.length) return '';
+  // 还在等的惦记（五期-2）：只有 home（鱼社房间）说；白话日子，不出现 YYYY-MM-DD。work / public 不说
+  const hopes = ((feel && Array.isArray(feel.ties) ? feel.ties : []) || [])
+    .filter((t) => t && t.kind === 'hope' && clip(t.cause))
+    .map((t) => { const d = dayWord(t.until); return `你在等：${safeCause(t.cause)}${d ? `（${d}）` : ''}。`; })
+    .join('');
+  if (!strong.length && !(scene === 'home' && hopes)) return '';
   const display = DISPLAY_NOTE[temper.display] || DISPLAY_NOTE['含蓄'];
 
   if (scene === 'home') {
     const w1 = strong[0], w2 = strong[1];
-    const main = HOMELINE(w1);
+    const main = w1 ? HOMELINE(w1) : '';
     const secondary = w2 ? HOMELINE(w2) : '';
     // 有对爸妈的情绪时加一句分界：对 B站上的人和外面的人不要带过去
     const webNote = strong.some((e) => e.about === 'parent') ? `对 B站上的人，别把这种情绪带过去。` : '';
-    return fill(PROMPTS['feel-home'], { main, secondary, display, webNote });
+    return fill(PROMPTS['feel-home'], { main, secondary, hope: hopes, display, webNote }); // hope：五期-2 挂上的惦记
   }
 
   if (scene === 'work') {
